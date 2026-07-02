@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { compileMDX } from "next-mdx-remote/rsc";
-import { articleJsonLd, breadcrumbJsonLd, JsonLd, pageMetadata } from "@krispy/seo";
+import { JsonLd, pageMetadata } from "@krispy/seo";
 import { Badge } from "@krispy/ui";
+import { postJsonLd } from "../../lib/blog-jsonld";
 import { getPost, getPostSlugs } from "../../lib/posts";
 import { SITE_URL } from "../seo";
 
@@ -80,6 +81,12 @@ function formatDate(iso: string): string {
   });
 }
 
+// Freshness signal — a visible "Updated: <Month YYYY>" line on every post (GEO: AI answers
+// favor recency, and readers trust a dated page). Month-precision, not the full day.
+function formatMonthYear(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-US", { year: "numeric", month: "long" });
+}
+
 export default async function PostPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const post = getPost(slug);
@@ -90,22 +97,9 @@ export default async function PostPage({ params }: { params: Promise<{ slug: str
     components: mdxComponents,
   });
 
-  const url = `${SITE_URL}/${post.slug}`;
-  const structuredData = [
-    articleJsonLd({
-      headline: post.title,
-      url,
-      description: post.description,
-      datePublished: post.date,
-      dateModified: post.updatedAt,
-      authorName: post.author,
-      ...(post.ogImage ? { image: post.ogImage } : {}),
-    }),
-    breadcrumbJsonLd([
-      { name: "Blog", url: `${SITE_URL}/` },
-      { name: post.title, url },
-    ]),
-  ];
+  // One schema.org @graph per post: BlogPosting + BreadcrumbList + FAQPage (+ conditional
+  // SoftwareApplication/HowTo by frontmatter `type`). See lib/blog-jsonld.ts.
+  const structuredData = postJsonLd(post, SITE_URL);
 
   return (
     <article className="mx-auto flex max-w-2xl flex-col px-6 py-16">
@@ -120,12 +114,8 @@ export default async function PostPage({ params }: { params: Promise<{ slug: str
           <time dateTime={post.date}>{formatDate(post.date)}</time>
           <span aria-hidden>·</span>
           <span>{post.author}</span>
-          {post.updatedAt !== post.date ? (
-            <>
-              <span aria-hidden>·</span>
-              <span>Updated {formatDate(post.updatedAt)}</span>
-            </>
-          ) : null}
+          <span aria-hidden>·</span>
+          <time dateTime={post.updatedAt}>{`Updated: ${formatMonthYear(post.updatedAt)}`}</time>
         </div>
         <h1 className="text-4xl font-semibold tracking-tight">{post.title}</h1>
         <p className="text-lg text-muted-foreground">{post.description}</p>

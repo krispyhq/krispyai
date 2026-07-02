@@ -20,6 +20,12 @@ export interface PostFrontmatter {
   tags: string[];
   /** Absolute or root-relative OG image. Omit to use the dynamic per-post card. */
   ogImage?: string;
+  /**
+   * Optional content shape — drives which extra JSON-LD nodes a post emits
+   * (comparison → SoftwareApplication, howto → HowTo). Omit and the post still
+   * builds as a plain BlogPosting. NOT a required field.
+   */
+  type?: "comparison" | "howto" | "category" | "story";
 }
 
 export interface Post extends PostFrontmatter {
@@ -63,6 +69,7 @@ function parse(fileName: string): Post {
     author: data.author,
     tags: data.tags,
     ...(data.ogImage ? { ogImage: data.ogImage } : {}),
+    ...(data.type ? { type: data.type } : {}),
   };
 }
 
