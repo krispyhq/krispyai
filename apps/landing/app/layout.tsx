@@ -1,14 +1,24 @@
 import type { Metadata } from "next";
-import { Fraunces, Geist, Geist_Mono } from "next/font/google";
+import { Bricolage_Grotesque, Fraunces, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Analytics, ConsentBanner } from "@krispy/analytics";
 import { JsonLd, organizationJsonLd, pageMetadata, websiteJsonLd } from "@krispy/seo";
 import { SITE_URL } from "./seo";
 
-// Fresh Baked type: Fraunces (warm display) · Geist (crisp UI) · Geist Mono (code).
-// Exposed as CSS vars the @krispy/ui theme reads (--font-fraunces/geist/geist-mono).
-const fraunces = Fraunces({ subsets: ["latin"], variable: "--font-fraunces", display: "swap" });
-const geist = Geist({ subsets: ["latin"], variable: "--font-geist", display: "swap" });
+// Fresh Baked type: Fraunces (warm display) · Bricolage Grotesque (characterful gen-z
+// UI/body) · Geist Mono (receipts/labels/code). Exposed as CSS vars the @krispy/ui theme
+// reads (--font-fraunces / --font-bricolage / --font-geist-mono).
+const fraunces = Fraunces({
+  subsets: ["latin"],
+  variable: "--font-fraunces",
+  display: "swap",
+  weight: ["400", "500", "600", "700", "900"],
+});
+const bricolage = Bricolage_Grotesque({
+  subsets: ["latin"],
+  variable: "--font-bricolage",
+  display: "swap",
+});
 const geistMono = Geist_Mono({
   subsets: ["latin"],
   variable: "--font-geist-mono",
@@ -32,7 +42,7 @@ const structuredData = [
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${fraunces.variable} ${geist.variable} ${geistMono.variable}`}>
+    <html lang="en" className={`${fraunces.variable} ${bricolage.variable} ${geistMono.variable}`}>
       <body className="min-h-screen font-sans antialiased">
         <JsonLd data={structuredData} />
         <Analytics>{children}</Analytics>

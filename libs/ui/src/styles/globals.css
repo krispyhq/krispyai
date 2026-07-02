@@ -108,7 +108,7 @@
   --color-cream: var(--cream);
   --color-espresso: var(--espresso);
 
-  --font-sans: var(--font-geist), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-sans: var(--font-bricolage), ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
   --font-display: var(--font-fraunces), Georgia, "Times New Roman", serif;
 

@@ -69,12 +69,14 @@ export function LiveDemo() {
   }, [shown, typing]);
 
   return (
-    <div className="w-full max-w-sm overflow-hidden rounded-2xl border border-border bg-card shadow-[0_24px_60px_-24px_rgba(60,40,20,0.35)]">
+    <div className="w-full max-w-sm overflow-hidden rounded-2xl border-2 border-espresso bg-card shadow-[8px_8px_0_0_var(--espresso)]">
       {/* header */}
-      <div className="flex items-center gap-3 border-b border-border px-4 py-3">
-        <span className="grid size-9 place-items-center rounded-full bg-butter text-lg">🥐</span>
+      <div className="flex items-center gap-3 border-b-2 border-espresso bg-butter/60 px-4 py-3">
+        <span className="grid size-9 place-items-center rounded-full border-2 border-espresso bg-gold text-lg">
+          🥐
+        </span>
         <div className="min-w-0 flex-1">
-          <div className="font-mono text-[13px] font-medium">krispy</div>
+          <div className="font-mono text-[13px] font-bold">krispy</div>
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <span
               className={`size-1.5 rounded-full transition-colors ${humanLive ? "bg-fresh" : "bg-muted-foreground/40"}`}
@@ -93,11 +95,15 @@ export function LiveDemo() {
       </div>
 
       {/* faux input */}
-      <div className="flex items-center gap-2 border-t border-border px-3 py-3">
+      <div className="flex items-center gap-2 border-t-2 border-espresso px-3 py-3">
         <div className="flex-1 rounded-full bg-muted px-4 py-2 text-sm text-muted-foreground">
           Message…
         </div>
-        <button className="grid size-9 place-items-center rounded-full bg-gold text-primary-foreground">
+        <button
+          type="button"
+          aria-label="Send message"
+          className="grid size-9 place-items-center rounded-full border-2 border-espresso bg-gold text-primary-foreground"
+        >
           ↑
         </button>
       </div>
