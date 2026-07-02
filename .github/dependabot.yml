@@ -1,0 +1,33 @@
+# Weekly dependency updates. npm ecosystem covers the whole bun workspace (bun reads
+# the same package.json manifests); github-actions keeps the CI workflow's pinned
+# actions current. Grouped so you review one PR per ecosystem, not a swarm.
+version: 2
+updates:
+  # Root + EVERY workspace package.json (apps/services/libs each declare their own deps —
+  # posthog-js, better-auth, … — so scanning only "/" would miss them). SOC2 supply-chain.
+  - package-ecosystem: "npm"
+    directories:
+      - "/"
+      - "/apps/*"
+      - "/services/*"
+      - "/libs/*"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      npm-dependencies:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci(deps)"
