@@ -275,8 +275,8 @@ export default function Landing() {
       <section className="bg-cream">
         <div className="mx-auto max-w-6xl px-6 pb-10">
           <ButtrSays img="/brand/buttr-beret.png">
-            bonjour — i&apos;m Buttr. that&apos;s me answering up there. stick around, i&apos;ll
-            show you how it works. 🥐
+            bonjour — i&apos;m Buttr. that&apos;s me answering up there. yes, a croissant runs your
+            support now. it&apos;s going great, actually. 🥐
           </ButtrSays>
         </div>
       </section>
@@ -327,6 +327,12 @@ export default function Landing() {
                 <p className="text-sm text-cream/70">{s.body}</p>
               </div>
             ))}
+          </div>
+          <div className="mt-12">
+            <ButtrSays img="/brand/buttr-sparkle.png" dark>
+              i handle the easy 3am questions so you can sleep. i don&apos;t sleep. i&apos;m bread.
+              🥐
+            </ButtrSays>
           </div>
         </div>
       </section>
@@ -492,8 +498,111 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ── Le Menu (id=cloud · the money-maker) ────────────── */}
+      {/* ponytail: trial CTA reuses CLOUD_URL (prod → app.krispy). Locally #cloud self-scrolls. */}
+      <section id="cloud" className="border-t-2 border-espresso bg-muted">
+        <div className="mx-auto max-w-5xl px-6 py-20">
+          <div className="mb-12 flex flex-col items-start gap-3">
+            <span className="font-mono text-xs font-bold uppercase tracking-[0.2em] text-crust">
+              le menu · choisissez
+            </span>
+            <h2 className="font-display text-4xl font-black tracking-tight sm:text-6xl">
+              own it, or let us run it
+            </h2>
+            <p className="max-w-xl text-lg font-medium text-muted-foreground">
+              Own the method — it&apos;s open source, free forever. Or pay us to never think about
+              hosting again. No per-seat tax either way.
+            </p>
+          </div>
+
+          <div className="grid items-start gap-6 md:grid-cols-2">
+            {/* Self-host — free */}
+            <div className={`rounded-[16px] bg-card p-8 ${BOLD}`}>
+              <span className="font-mono text-xs font-bold uppercase tracking-[0.2em] text-crust">
+                01 · pour les bricoleurs
+              </span>
+              <h3 className="mt-3 font-display text-3xl font-black tracking-tight">Self-host</h3>
+              <p className="mt-4 flex items-baseline gap-2">
+                <span className="font-display text-5xl font-black text-espresso">GRATUIT</span>
+                <span className="font-mono text-sm text-muted-foreground">$0 · forever</span>
+              </p>
+              <ul className="mt-6 space-y-2.5 text-sm text-foreground">
+                {[
+                  "MIT license — read & fork every line",
+                  "You run it on Cloudflare's free tier",
+                  "Your data never leaves your box",
+                  "Community support on Discord",
+                ].map((x) => (
+                  <li key={x} className="flex gap-2">
+                    <span className="font-black text-fresh">✓</span>
+                    {x}
+                  </li>
+                ))}
+              </ul>
+              <Button
+                asChild
+                size="lg"
+                variant="outline"
+                className="mt-8 w-full border-2 border-espresso bg-transparent font-mono font-semibold text-espresso hover:bg-acid hover:text-espresso"
+              >
+                <a href={GITHUB_URL}>Self-host free →</a>
+              </Button>
+              <p className="mt-3 text-center font-mono text-xs text-muted-foreground">
+                for the tinkerers.
+              </p>
+            </div>
+
+            {/* Krispy Cloud — the hero (how we make money) */}
+            <div className="relative rounded-[16px] border-2 border-espresso bg-espresso p-8 text-cream shadow-[8px_8px_0_0_var(--gold)] md:-translate-y-3">
+              <span className="absolute -top-3 right-6 rounded-full border-2 border-espresso bg-acid px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-wider text-espresso">
+                ★ recommended
+              </span>
+              <span className="font-mono text-xs font-bold uppercase tracking-[0.2em] text-acid">
+                02 · pour les gens occupés
+              </span>
+              <h3 className="mt-3 font-display text-3xl font-black tracking-tight">Krispy Cloud</h3>
+              <p className="mt-4 flex items-baseline gap-1">
+                <span className="font-display text-6xl font-black text-gold">$19</span>
+                <span className="font-mono text-sm text-cream/70">/mo</span>
+              </p>
+              <p className="font-mono text-sm text-fresh">14-day free trial · no credit card</p>
+              <ul className="mt-6 space-y-2.5 text-sm text-cream/90">
+                {[
+                  "We host, scale & auto-update it — zero ops",
+                  "No terminal, no server to babysit",
+                  "One flat price — no per-seat tax, ever",
+                  "Cancel anytime, export your data",
+                ].map((x) => (
+                  <li key={x} className="flex gap-2">
+                    <span className="font-black text-fresh">✓</span>
+                    {x}
+                  </li>
+                ))}
+              </ul>
+              <Button
+                asChild
+                size="lg"
+                className="mt-8 w-full border-2 border-cream bg-gold font-mono font-semibold text-espresso hover:bg-gold-hover hover:text-espresso"
+              >
+                <a href={CLOUD_URL}>Start free trial →</a>
+              </Button>
+              <p className="mt-3 text-center font-mono text-xs text-cream/50">
+                for the busy. * launch pricing, may change.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-12">
+            <ButtrSays img="/brand/buttr-shrug.png">
+              not into terminals? i gotchu — i&apos;ll run it, you just reply. it&apos;s cheaper
+              than the coffee you dip me in. 🥐
+            </ButtrSays>
+          </div>
+        </div>
+      </section>
+
       {/* ── Final CTA (ESPRESSO closer) ─────────────────────── */}
-      <section id="cloud" className="bg-cream px-6 pb-16">
+      <section id="ship" className="bg-cream px-6 pb-16 pt-16">
         <div className="relative mx-auto flex max-w-6xl flex-col items-center gap-6 overflow-hidden rounded-[16px] border-2 border-espresso bg-espresso px-6 py-20 text-center text-cream shadow-[8px_8px_0_0_var(--jam)]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
