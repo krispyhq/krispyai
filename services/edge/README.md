@@ -29,9 +29,25 @@ owner replies in topic ──POST /api/telegram/webhook──▶ Worker
 | POST | `/api/chat` | `{sessionId, message, tenantId?, history?}` → `{reply, handoff, handedOff, degraded?}` |
 | POST | `/api/contact` | `[!HANDOFF]` contact-capture → owner's topic |
 | POST | `/api/telegram/webhook` | owner reply → push to visitor via DO |
+| POST | `/api/billing/entitlement` | billing → gate: mirror an entitlement snapshot into KV *(secret-guarded)* |
+| GET | `/api/tenant/config?t=<tenant>` | dashboard → read a tenant's config `{botToken, chatId, systemPrompt?, model?}`, 404 if none *(secret-guarded)* |
+| POST | `/api/tenant/config` | dashboard → `{tenantId, config}` merge into the tenant's KV config *(secret-guarded)* |
 | GET | `/api/session/:id/ws?t=<tenant>` | visitor's live channel (WebSocket → DO) |
 | GET | `/api/usage?t=<tenant>` | metering + plan readout |
 | GET | `/health` | liveness |
+
+### Tenant-config sync (dashboard → gate)
+
+The Krispy Cloud dashboard (`apps/web`) manages a tenant's Telegram creds + prompt/
+model over `/api/tenant/config`. Both routes require the header
+`x-tenant-sync-secret: <TENANT_SYNC_SECRET>` — the payload holds a **bot token**, so
+without the secret they return **401** and never leak config. POST **merges** (unset
+fields are preserved), writing the exact KV shape `getTenant()` reads (key
+`tenant:<tenantId>`), so a saved bot token/prompt immediately drives the bot.
+
+Secrets are separate on purpose: `BILLING_SYNC_SECRET` guards the billing→gate push,
+`TENANT_SYNC_SECRET` guards the dashboard→config sync. Set both with
+`bunx wrangler secret put <NAME>`.
 
 ## Architecture
 

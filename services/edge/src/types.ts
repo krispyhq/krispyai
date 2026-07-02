@@ -33,6 +33,8 @@ export interface Env {
   AI_API_KEY?: string;
   /** Shared secret guarding POST /api/billing/entitlement (billing → gate push). */
   BILLING_SYNC_SECRET?: string;
+  /** Shared secret guarding /api/tenant/config (dashboard → tenant-config sync). */
+  TENANT_SYNC_SECRET?: string;
 }
 
 /** Message pushed over the DO WebSocket to the visitor's browser. */

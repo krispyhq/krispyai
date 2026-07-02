@@ -1,0 +1,27 @@
+meta {
+  name: Tenant - get config
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/tenant/config?t=self
+  auth: none
+}
+
+headers {
+  x-tenant-sync-secret: {{tenantSyncSecret}}
+}
+
+tests {
+  test("returns config with the secret, or 404 when none saved", function() {
+    expect([200, 404]).to.include(res.status);
+  });
+}
+
+docs {
+  Reads KV `tenant:<t>` and returns `{botToken, chatId, systemPrompt?, model?}` — the
+  exact shape `getTenant()` consumes. 404 if the tenant has no saved config. Requires
+  the `x-tenant-sync-secret` header (== TENANT_SYNC_SECRET) or it returns 401 and never
+  leaks the config (the payload holds a bot token).
+}

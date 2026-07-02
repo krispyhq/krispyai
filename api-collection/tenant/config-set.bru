@@ -1,0 +1,43 @@
+meta {
+  name: Tenant - set config (merge)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/tenant/config
+  body: json
+  auth: none
+}
+
+headers {
+  x-tenant-sync-secret: {{tenantSyncSecret}}
+}
+
+body:json {
+  {
+    "tenantId": "self",
+    "config": {
+      "botToken": "123456:BOT_TOKEN",
+      "chatId": "-1001234567890",
+      "systemPrompt": "You are the concierge for Krispy.",
+      "model": "@cf/meta/llama-3.1-8b-instruct"
+    }
+  }
+}
+
+tests {
+  test("responds 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("acknowledges the write", function() {
+    expect(res.getBody().ok).to.equal(true);
+  });
+}
+
+docs {
+  MERGEs the provided `config` fields into KV `tenant:<tenantId>` (unset fields are
+  preserved — send only what changed). Writes the exact shape `getTenant()` reads, so a
+  saved bot token/prompt immediately drives the bot. Requires the `x-tenant-sync-secret`
+  header (== TENANT_SYNC_SECRET) or returns 401.
+}

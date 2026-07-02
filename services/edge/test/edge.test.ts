@@ -1,6 +1,7 @@
 // Unit tests for everything local-testable WITHOUT Telegram / Workers AI / a
 // public webhook (those are service-gated — see README). Run: `bun test`.
 import { expect, test, describe } from "bun:test";
+import worker from "../src/index";
 import { buildSystemPrompt, parseHandoff, HANDOFF_MARKER } from "../src/system-prompt";
 import { parseOwnerReply } from "../src/telegram";
 import { broadcast } from "../src/session-do";
@@ -20,6 +21,8 @@ import {
   entitled,
   writeEntitlement,
   readEntitlement,
+  readTenantConfig,
+  mergeTenantConfig,
   type EntitlementSnapshot,
 } from "../src/store";
 import type { Env } from "../src/types";
@@ -151,6 +154,108 @@ describe("entitlement", () => {
     const env = fakeEnv();
     await writeEntitlement(env, "tenant_42", cloudSnap({ status: "canceled", entitled: false }));
     expect((await entitled(env, "tenant_42")).entitled).toBe(false);
+  });
+});
+
+// ── /api/tenant/config (dashboard → tenant-config sync) ──────────────────────
+describe("tenant config routes", () => {
+  const SECRET = "shh";
+  const req = (init: RequestInit & { path: string }) =>
+    new Request(`https://edge.test${init.path}`, init);
+  const authed = (extra: Record<string, string> = {}) => ({
+    "x-tenant-sync-secret": SECRET,
+    ...extra,
+  });
+
+  test("GET without secret → 401, no config leaked", async () => {
+    const env = fakeEnv({ TENANT_SYNC_SECRET: SECRET });
+    await mergeTenantConfig(env, "t1", { botToken: "b", chatId: "-100" });
+    const res = await worker.fetch(req({ path: "/api/tenant/config?t=t1", method: "GET" }), env);
+    expect(res.status).toBe(401);
+  });
+
+  test("GET with secret, absent tenant → 404", async () => {
+    const env = fakeEnv({ TENANT_SYNC_SECRET: SECRET });
+    const res = await worker.fetch(
+      req({ path: "/api/tenant/config?t=nope", method: "GET", headers: authed() }),
+      env,
+    );
+    expect(res.status).toBe(404);
+  });
+
+  test("GET with secret returns the stored config shape getTenant() reads", async () => {
+    const env = fakeEnv({ TENANT_SYNC_SECRET: SECRET });
+    await mergeTenantConfig(env, "t1", {
+      botToken: "b",
+      chatId: "-100",
+      systemPrompt: "hi",
+      model: "m",
+    });
+    const res = await worker.fetch(
+      req({ path: "/api/tenant/config?t=t1", method: "GET", headers: authed() }),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      botToken: "b",
+      chatId: "-100",
+      systemPrompt: "hi",
+      model: "m",
+    });
+  });
+
+  test("POST without secret → 401, nothing written", async () => {
+    const env = fakeEnv({ TENANT_SYNC_SECRET: SECRET });
+    const res = await worker.fetch(
+      req({
+        path: "/api/tenant/config",
+        method: "POST",
+        body: JSON.stringify({ tenantId: "t1", config: { botToken: "b" } }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(401);
+    expect(await readTenantConfig(env, "t1")).toBeNull();
+  });
+
+  test("POST merges: existing fields preserved, new fields written", async () => {
+    const env = fakeEnv({ TENANT_SYNC_SECRET: SECRET });
+    await mergeTenantConfig(env, "t1", { botToken: "b", chatId: "-100" });
+    const res = await worker.fetch(
+      req({
+        path: "/api/tenant/config",
+        method: "POST",
+        headers: authed({ "content-type": "application/json" }),
+        body: JSON.stringify({ tenantId: "t1", config: { systemPrompt: "new" } }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    // botToken/chatId preserved, systemPrompt added → getTenant() sees the full config
+    expect(await getTenant(env, "t1")).toEqual({
+      botToken: "b",
+      chatId: "-100",
+      systemPrompt: "new",
+    });
+  });
+
+  test("round-trip: POST then GET returns the merged config", async () => {
+    const env = fakeEnv({ TENANT_SYNC_SECRET: SECRET });
+    await worker.fetch(
+      req({
+        path: "/api/tenant/config",
+        method: "POST",
+        headers: authed(),
+        body: JSON.stringify({ tenantId: "t2", config: { botToken: "b", chatId: "-200" } }),
+      }),
+      env,
+    );
+    const res = await worker.fetch(
+      req({ path: "/api/tenant/config?t=t2", method: "GET", headers: authed() }),
+      env,
+    );
+    expect(await res.json()).toEqual({ botToken: "b", chatId: "-200" });
   });
 });
 

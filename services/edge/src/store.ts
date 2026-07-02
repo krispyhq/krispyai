@@ -37,6 +37,33 @@ export async function getTenant(env: Env, tenantId: string): Promise<TenantConfi
   return cfg.botToken && cfg.chatId ? (cfg as TenantConfig) : null;
 }
 
+// ── tenant config sync (Krispy Cloud dashboard → gate) ───────────────────────
+// The dashboard (apps/web) writes a tenant's Telegram creds + prompt/model here so
+// getTenant() picks them up. Same KV key + shape getTenant() reads (kTenant → a
+// Partial<TenantConfig> JSON blob). Read raw so a partial config (e.g. prompt saved
+// before creds) still round-trips — getTenant() itself gates on both botToken+chatId.
+export async function readTenantConfig(
+  env: Env,
+  tenantId: string,
+): Promise<Partial<TenantConfig> | null> {
+  const raw = await env.KRISPY_KV.get(kTenant(tenantId));
+  return raw ? (JSON.parse(raw) as Partial<TenantConfig>) : null;
+}
+
+/** Merge `patch` into the stored config (defined fields only — never clobber unset). */
+export async function mergeTenantConfig(
+  env: Env,
+  tenantId: string,
+  patch: Partial<TenantConfig>,
+): Promise<Partial<TenantConfig>> {
+  const next: Partial<TenantConfig> = { ...(await readTenantConfig(env, tenantId)) };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v !== undefined) (next as Record<string, unknown>)[k] = v;
+  }
+  await env.KRISPY_KV.put(kTenant(tenantId), JSON.stringify(next));
+  return next;
+}
+
 // ── topic <-> session map ────────────────────────────────────────────────────
 export async function getThreadForSession(
   env: Env,

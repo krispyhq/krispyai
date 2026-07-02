@@ -16,7 +16,7 @@ import { chatFlow } from "./chat";
 import { SessionDO } from "./session-do";
 import { buildSystemPrompt } from "./system-prompt";
 import { parseOwnerReply, createForumTopic, sendToTopic } from "./telegram";
-import type { Env } from "./types";
+import type { Env, TenantConfig } from "./types";
 import {
   getTenant,
   getThreadForSession,
@@ -27,6 +27,8 @@ import {
   entitled,
   withinPlan,
   writeEntitlement,
+  readTenantConfig,
+  mergeTenantConfig,
   type EntitlementSnapshot,
 } from "./store";
 
@@ -64,6 +66,10 @@ export default {
       return handleWebhook(request, env);
     if (request.method === "POST" && path === "/api/billing/entitlement")
       return handleEntitlementSync(request, env);
+    if (request.method === "GET" && path === "/api/tenant/config")
+      return handleTenantConfigGet(request, env);
+    if (request.method === "POST" && path === "/api/tenant/config")
+      return handleTenantConfigSet(request, env);
     if (request.method === "GET" && path === "/api/usage") return handleUsage(request, env);
 
     // GET /api/session/:sessionId/ws  → forward the upgrade to the session's DO.
@@ -206,6 +212,44 @@ async function handleEntitlementSync(request: Request, env: Env): Promise<Respon
     return json(env, { error: "tenantId and snapshot required" }, 400);
   }
   await writeEntitlement(env, body.tenantId, body.snapshot);
+  return json(env, { ok: true });
+}
+
+// ── /api/tenant/config ─────────────────────────────────────────────────────
+// The Krispy Cloud dashboard (apps/web) reads/writes a tenant's Telegram creds +
+// prompt/model here so getTenant() drives the bot. Guarded by a shared secret (same
+// billing→gate push pattern) — the config holds a bot token, so NEVER expose it
+// without the secret. 401 (not 403): the browser must send auth, none was accepted.
+function tenantSyncAuthed(request: Request, env: Env): boolean {
+  return (
+    !!env.TENANT_SYNC_SECRET &&
+    request.headers.get("x-tenant-sync-secret") === env.TENANT_SYNC_SECRET
+  );
+}
+
+// GET /api/tenant/config?t=<tenantId> → { botToken, chatId, systemPrompt?, model? } | 404
+async function handleTenantConfigGet(request: Request, env: Env): Promise<Response> {
+  if (!tenantSyncAuthed(request, env))
+    return new Response("unauthorized", { status: 401, headers: cors(env) });
+  const tenantId = new URL(request.url).searchParams.get("t");
+  if (!tenantId) return json(env, { error: "t required" }, 400);
+  const cfg = await readTenantConfig(env, tenantId);
+  if (!cfg) return json(env, { error: "not found" }, 404);
+  return json(env, cfg);
+}
+
+// POST /api/tenant/config { tenantId, config } → merge into KV, { ok: true }
+async function handleTenantConfigSet(request: Request, env: Env): Promise<Response> {
+  if (!tenantSyncAuthed(request, env))
+    return new Response("unauthorized", { status: 401, headers: cors(env) });
+  const body = (await request.json().catch(() => null)) as {
+    tenantId?: string;
+    config?: Partial<TenantConfig>;
+  } | null;
+  if (!body?.tenantId || !body.config) {
+    return json(env, { error: "tenantId and config required" }, 400);
+  }
+  await mergeTenantConfig(env, body.tenantId, body.config);
   return json(env, { ok: true });
 }
 
