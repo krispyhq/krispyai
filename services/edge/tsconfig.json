@@ -1,0 +1,9 @@
+{
+  "$comment": "Edge Worker. CF runtime globals (KV, DO, Ai, WebSocketPair) are hand-declared in src/cf.d.ts so this service typechecks WITHOUT depending on @cloudflare/workers-types — self-contained. `bun` types are for the colocated bun:test files.",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["bun"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": ["src", "test"]
+}

@@ -1,0 +1,36 @@
+# @krispy/edge — the live-chat + human-handoff Worker (HTTP routes + SessionDO).
+# One Worker hosts everything: the /api/* routes AND the hibernatable WebSocket
+# Durable Object. Deploy: `bunx wrangler deploy`. Local: `bunx wrangler dev`.
+
+name = "krispy-edge"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Workers AI — the default (free) LLM provider. Answers /api/chat.
+[ai]
+binding = "AI"
+
+# Per-(tenant,session) WebSocket fan-out + the strongly-consistent handedOff flag.
+[[durable_objects.bindings]]
+name = "SESSION"
+class_name = "SessionDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SessionDO"]
+
+# topic<->session map, tenant config, usage counters.
+[[kv_namespaces]]
+binding = "KRISPY_KV"
+id = "REPLACE_WITH_KV_ID"          # `bunx wrangler kv namespace create KRISPY_KV`
+
+# ── secrets (NOT here — set with `bunx wrangler secret put <NAME>`) ───────────
+#   TELEGRAM_BOT_TOKEN        BotFather token
+#   TELEGRAM_CHAT_ID          supergroup id with Topics enabled (e.g. -1001234567890)
+#   TELEGRAM_WEBHOOK_SECRET   random string; also passed to setWebhook (secret_token)
+# ── optional vars ─────────────────────────────────────────────────────────────
+[vars]
+ALLOWED_ORIGIN = "*"               # lock to your site origin in production
+# AI_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+# SYSTEM_PROMPT = "You are ..."

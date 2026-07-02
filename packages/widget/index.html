@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Krispy AI — widget demo</title>
+    <style>
+      body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 640px; margin: 60px auto; padding: 0 20px; color: #222; }
+      code { background: #f2f2f3; padding: 2px 6px; border-radius: 4px; }
+      pre { background: #111; color: #eee; padding: 16px; border-radius: 10px; overflow: auto; }
+    </style>
+  </head>
+  <body>
+    <h1>Krispy AI</h1>
+    <p>Live chat with instant AI answers and one-tap human handoff. The bubble is
+      bottom-right — open it and say hi. When the owner replies from Telegram, the
+      AI goes silent and their message appears here live.</p>
+
+    <h3>Embed on any site (one line)</h3>
+    <pre>&lt;script src="https://YOUR-HOST/widget.js"
+        data-api="https://krispy-edge.YOU.workers.dev"
+        data-tenant="self" async&gt;&lt;/script&gt;</pre>
+
+    <p>Attributes: <code>data-api</code> (required, the edge Worker URL),
+      <code>data-tenant</code> (default <code>self</code>),
+      <code>data-title</code>, <code>data-accent</code>.</p>
+
+    <!-- Local demo: point at wrangler dev. Change data-api to your Worker. -->
+    <script
+      src="./widget.js"
+      data-api="http://localhost:8787"
+      data-tenant="self"
+      data-title="Chat with us"
+      async
+    ></script>
+  </body>
+</html>
