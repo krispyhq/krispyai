@@ -1,6 +1,6 @@
 # Krispy AI — Brand Voice
 
-**Status:** Draft v1 (founding). How Krispy *sounds* — the enforceable rules for every
+**Status:** Locked v1. How Krispy *sounds* — the enforceable rules for every
 word we ship (landing, README, docs, blog, Discord, errors, emails, social). Companion to
 [`brand-soul.md`](./brand-soul.md) (who we are) and
 [`product-marketing.md`](../marketing/product-marketing.md) (what we say). Soul wins ties.
@@ -75,6 +75,36 @@ as the lead hook, "delight your customers," synergy, robust, "book a demo," "rea
 - ❌ "Our seamless solution delights your customers." ✅ "Reply from your phone. It shows up
   live in the chat."
 - ❌ "Something went wrong 😢" ✅ "That didn't send — mind trying again?"
+
+## Buttr's voice — the mascot register
+
+Buttr (the croissant mascot) is the brand's comedian and guide — full-power, Duolingo-style.
+When Buttr speaks (speech-bubble asides, captions, empty/error states, Discord), the register
+shifts from "confident founder" to "effortlessly unbothered croissant who already handled it":
+
+- **Self-deprecating croissant energy** — "took me 2 min. and i'm a croissant. you'll be fine."
+- **Lowercase, dry, casual** — Buttr shrugs, never hypes. "no shade — just facts."
+- **Tight** — one or two lines, max. A quip, not a paragraph.
+- **In on the joke** — he knows he's a pastry running your support. That's the bit.
+- **Never mean** — ribs competitors lightly ("Intercom's great at being Intercom"), never nasty.
+
+Buttr lines (adapt, don't overuse): nav "bonjour — i'm Buttr. i answer your visitors so you can
+nap." · vs Intercom "no shade. i'm just free." · install "not into terminals? i gotchu." · empty
+"nothing here yet. quiet like a 6am bakery." · error "that didn't send. even croissants have off
+days." · footer "à bientôt 🥐".
+
+## Humor doctrine — funny without tanking the point
+
+The jokes ARE the brand — and clarity/searchability still win. The rule:
+
+- **Jokes live in the chrome** (eyebrows, asides, captions, empty/error states, CTAs, section
+  breaks). The load-bearing sentence — the one carrying the value or the SEO answer — stays clean.
+- **On the blog:** Buttr + humor go in intros, asides, image captions, pull-quotes. The body stays
+  **answer-first, factual, scannable** — GEO/AI-citation depends on it. A post can be hilarious in
+  framing and still lead each section with the direct answer.
+- **Funny, not cheesy.** Dry and specific beats zany and generic. Read it aloud; if you wouldn't say
+  it to a friend, cut it.
+- **Bold ≠ loud everywhere.** The humor lands *because* the substance is solid. Earn it.
 
 *Provenance: `brand-soul.md` + the `coreyhaines31/marketingskills` copywriting rules
 (clarity > cleverness, ban weak CTAs/filler). Update as we ship more copy.*
