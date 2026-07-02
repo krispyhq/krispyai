@@ -18,7 +18,16 @@ export {
   CardAction,
   CardContent,
   CardFooter,
+  cardVariants,
 } from "./components/ui/card";
+export {
+  AwningStripe,
+  Stamp,
+  ButtrSays,
+  Receipt,
+  Section,
+  sectionVariants,
+} from "./components/ui/krispy";
 export { ConsentBanner } from "./components/ui/consent-banner";
 export type { ConsentBannerProps } from "./components/ui/consent-banner";
 export {
@@ -34,5 +43,5 @@ export {
   DialogDescription,
 } from "./components/ui/dialog";
 
-export { tokens, colors, brand, spacing, radii, typography } from "./tokens/index";
+export { tokens, colors, brand, spacing, radii, typography, easing } from "./tokens/index";
 export type { Tokens, ColorTheme, ColorRole } from "./tokens/index";

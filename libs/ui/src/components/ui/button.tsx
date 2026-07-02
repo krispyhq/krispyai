@@ -16,6 +16,10 @@ const buttonVariants = cva(
         outline: "border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground",
         ghost: "hover:bg-accent hover:text-accent-foreground",
         link: "text-primary underline-offset-4 hover:underline",
+        // Neo-brutalist "boulangerie moderne" CTA: hard-offset solid shadow, thick
+        // espresso border, press-in on hover (translate toward the shadow, shrink it).
+        // Codifies the landing's `BOLD` gold button. Pair with size="lg" for the hero.
+        bold: "border-2 border-espresso bg-gold text-espresso font-mono font-semibold shadow-[6px_6px_0_0_var(--espresso)] hover:bg-gold hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[3px_3px_0_0_var(--espresso)] active:translate-x-1 active:translate-y-1 active:shadow-[1px_1px_0_0_var(--espresso)]",
       },
       size: {
         default: "h-9 px-4 py-2 has-[>svg]:px-3",

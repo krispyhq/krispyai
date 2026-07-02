@@ -44,6 +44,31 @@ export const Default: Story = {
   ),
 };
 
+/** The bold "boulangerie" surface — thick espresso border + hard-offset shadow, press-in on hover. */
+export const Sticker: Story = {
+  render: () => (
+    <Card variant="sticker" className="w-80">
+      <CardHeader>
+        <CardTitle className="font-display text-2xl font-black tracking-tight">
+          let the bot cook
+        </CardTitle>
+        <CardDescription>Sticker-bold card, no ghost-card AI tell.</CardDescription>
+        <CardAction>
+          <Badge variant="secondary">🥐</Badge>
+        </CardAction>
+      </CardHeader>
+      <CardContent className="text-sm text-muted-foreground">
+        Krispy answers your visitors instantly — in your voice, then tags you in.
+      </CardContent>
+      <CardFooter className="justify-end gap-2">
+        <Button variant="bold" size="sm">
+          Self-host free →
+        </Button>
+      </CardFooter>
+    </Card>
+  ),
+};
+
 export const LoginForm: Story = {
   render: () => (
     <Card className="w-80">

@@ -1,18 +1,27 @@
 import * as React from "react";
+import { cva, type VariantProps } from "class-variance-authority";
 
 import { cn } from "../../lib/cn";
 
-function Card({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="card"
-      className={cn(
-        "flex flex-col gap-6 rounded-xl border bg-card py-6 text-card-foreground shadow-sm",
-        className,
-      )}
-      {...props}
-    />
-  );
+const cardVariants = cva("flex flex-col gap-6 rounded-xl bg-card py-6 text-card-foreground", {
+  variants: {
+    variant: {
+      default: "border shadow-sm",
+      // Sticker: thick espresso border + hard-offset solid shadow + press-in lift.
+      // The bold "boulangerie" surface — codifies the landing's `BOLD` card.
+      sticker:
+        "border-2 border-espresso shadow-[6px_6px_0_0_var(--espresso)] transition-transform duration-300 ease-[var(--ease-quart)] hover:-translate-x-0.5 hover:-translate-y-0.5",
+    },
+  },
+  defaultVariants: { variant: "default" },
+});
+
+function Card({
+  className,
+  variant,
+  ...props
+}: React.ComponentProps<"div"> & VariantProps<typeof cardVariants>) {
+  return <div data-slot="card" className={cn(cardVariants({ variant }), className)} {...props} />;
 }
 
 function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
@@ -72,4 +81,13 @@ function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-export { Card, CardHeader, CardTitle, CardDescription, CardAction, CardContent, CardFooter };
+export {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardAction,
+  CardContent,
+  CardFooter,
+  cardVariants,
+};

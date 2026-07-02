@@ -10,7 +10,7 @@ const meta = {
   argTypes: {
     variant: {
       control: "select",
-      options: ["default", "secondary", "destructive", "outline", "ghost", "link"],
+      options: ["default", "secondary", "destructive", "outline", "ghost", "link", "bold"],
     },
     size: { control: "select", options: ["default", "sm", "lg", "icon"] },
   },
@@ -25,6 +25,9 @@ export const Destructive: Story = { args: { variant: "destructive" } };
 export const Outline: Story = { args: { variant: "outline" } };
 export const Ghost: Story = { args: { variant: "ghost" } };
 export const Link: Story = { args: { variant: "link" } };
+
+/** Neo-brutalist "boulangerie" CTA — hard-offset shadow, press-in on hover. */
+export const Bold: Story = { args: { variant: "bold", size: "lg", children: "Self-host free →" } };
 
 export const Sizes: Story = {
   render: (args) => (
@@ -51,6 +54,7 @@ export const AllVariants: Story = {
       <Button variant="outline">Outline</Button>
       <Button variant="ghost">Ghost</Button>
       <Button variant="link">Link</Button>
+      <Button variant="bold">Bold</Button>
     </div>
   ),
 };
