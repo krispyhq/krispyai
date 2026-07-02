@@ -10,6 +10,12 @@ const nextConfig: NextConfig = {
   // a stray lockfile exists higher up ($HOME), resolve a second React copy from there, and
   // crash prerendering with "Objects are not valid as a React child" (dual React).
   outputFileTracingRoot: path.join(import.meta.dirname, "..", ".."),
+
+  // Linting is owned by oxlint + Nx boundaries (lefthook + CI), not `next lint`.
+  // Skip Next's redundant build-time ESLint pass (it lacks the @next/next/* rule defs
+  // this monorepo doesn't install, so it errors on our eslint-disable directives).
+  // Mirrors apps/landing.
+  eslint: { ignoreDuringBuilds: true },
 };
 
 export default nextConfig;

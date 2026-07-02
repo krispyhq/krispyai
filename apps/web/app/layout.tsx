@@ -1,44 +1,43 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { Bricolage_Grotesque, Fraunces, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Analytics } from "@krispy/analytics";
 import { pageMetadata } from "@krispy/seo";
 
-const DESCRIPTION =
-  "The flagship app in Builder's Stack — one shared design system (@krispy/ui), a Hono API, and Better Auth login, all wired end to end.";
+// Fresh Baked type (mirrors apps/landing): Fraunces (warm display) · Bricolage
+// Grotesque (characterful UI/body) · Geist Mono (receipts/labels/code). Exposed as
+// the CSS vars the @krispy/ui theme reads (--font-fraunces / --font-bricolage /
+// --font-geist-mono).
+const fraunces = Fraunces({
+  subsets: ["latin"],
+  variable: "--font-fraunces",
+  display: "swap",
+  weight: ["400", "500", "600", "700", "900"],
+});
+const bricolage = Bricolage_Grotesque({
+  subsets: ["latin"],
+  variable: "--font-bricolage",
+  display: "swap",
+});
+const geistMono = Geist_Mono({
+  subsets: ["latin"],
+  variable: "--font-geist-mono",
+  display: "swap",
+});
 
-// One door — pageMetadata() fills metadataBase, canonical, OG, twitter, and the
-// `%s — Builder's Stack` title template from @krispy/config. No hand-rolled OG.
 export const metadata: Metadata = pageMetadata({
-  description: DESCRIPTION,
-  tagline: "Web",
+  title: "Dashboard",
+  description:
+    "Your Krispy Cloud dashboard — connect Telegram, edit what your bot knows, grab your widget, and manage billing. The ai answers, you tag in.",
+  tagline: "your krispy",
+  ...({ icons: { icon: "/brand/favicon-mark.png" } } as object),
 });
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className="min-h-screen antialiased">
-        <Analytics>
-          <header className="border-b border-border">
-            <nav className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-              <Link href="/" className="font-semibold">
-                @krispy/web
-              </Link>
-              <div className="flex gap-4 text-sm text-muted-foreground">
-                <Link href="/" className="hover:text-foreground">
-                  Design system
-                </Link>
-                <Link href="/health" className="hover:text-foreground">
-                  API health
-                </Link>
-                <Link href="/auth" className="hover:text-foreground">
-                  Sign in
-                </Link>
-              </div>
-            </nav>
-          </header>
-          <main className="mx-auto max-w-5xl px-6 py-10">{children}</main>
-        </Analytics>
+    <html lang="en" className={`${fraunces.variable} ${bricolage.variable} ${geistMono.variable}`}>
+      <body className="min-h-screen bg-cream font-sans text-foreground antialiased">
+        <Analytics>{children}</Analytics>
       </body>
     </html>
   );
