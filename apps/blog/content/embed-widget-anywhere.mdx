@@ -1,0 +1,177 @@
+---
+title: "Embed the Krispy widget in Next.js, React, or plain HTML"
+description: "Three copy-paste patterns to drop the Krispy chat widget into any site — plain script tag, React useEffect, or Next.js Script component. No npm install required."
+date: "2026-07-02"
+updatedAt: "2026-07-02"
+author: "The Krispy team"
+tags: ["embed", "next.js", "react", "chat-widget", "howto"]
+---
+
+The widget is a single JavaScript file. No npm package to install, no build step to add, no SDK to configure. You point a `<script>` tag at your Krispy Worker and it shows up. The rest of this post is the three ways to do that pointing — plus the one Next.js gotcha that trips people up every time.
+
+## Before you start
+
+You need a running Krispy instance. If you haven't deployed one yet, the [self-hosting guide on Cloudflare](/self-host-live-chat-cloudflare) gets you live in about five minutes with zero recurring cost — no credit card, no server to keep awake. Or if you want the full walkthrough from zero, [the quick-start](/add-live-chat-in-5-minutes) covers every step end to end.
+
+Come back here once you have a Worker URL that looks like `https://krispy.<your-subdomain>.workers.dev`.
+
+(Don't want to run your own infrastructure? [Krispy Cloud](https://krispy.ai) has a free hosted tier — you still pick the embed pattern below, just swap in your Cloud URL instead.)
+
+## Option 1: Plain HTML
+
+If you're on a static site, a CMS-generated page, or literally any HTML file, drop this in your `<head>` or just before `</body>`:
+
+```html
+<script
+  src="https://krispy.<your-subdomain>.workers.dev/widget.js"
+  async
+></script>
+```
+
+That's it. The widget initializes itself when the page loads, reads the site context from the script origin, and renders the chat bubble. No configuration object required for basic use.
+
+If you want to customize the opening greeting or tweak the position, you can pass `data-*` attributes:
+
+```html
+<script
+  src="https://krispy.<your-subdomain>.workers.dev/widget.js"
+  data-greeting="Hey — got questions? Ask away."
+  data-position="bottom-left"
+  data-theme="dark"
+  async
+></script>
+```
+
+Everything else — AI persona, escalation triggers, Telegram handoff — lives in `krispy.config.ts` on your Worker, so the embed stays thin.
+
+## Option 2: React (Vite, CRA, or any SPA)
+
+React doesn't have a built-in primitive for loading third-party scripts, so you use a `useEffect` to append it once and clean up on unmount:
+
+```tsx
+// components/KrispyWidget.tsx
+import { useEffect } from "react";
+
+export function KrispyWidget() {
+  useEffect(() => {
+    const script = document.createElement("script");
+    script.src = "https://krispy.<your-subdomain>.workers.dev/widget.js";
+    script.async = true;
+    document.body.appendChild(script);
+    return () => {
+      document.body.removeChild(script);
+    };
+  }, []);
+
+  return null;
+}
+```
+
+Then place it once at the root of your app:
+
+```tsx
+// App.tsx
+import { KrispyWidget } from "./components/KrispyWidget";
+
+export default function App() {
+  return (
+    <>
+      <Router>{/* your routes */}</Router>
+      <KrispyWidget />
+    </>
+  );
+}
+```
+
+The empty dependency array `[]` means the script loads exactly once, regardless of client-side navigation. The cleanup handles the unusual case where the whole app unmounts. The widget persists across route changes without re-initializing — that's the behavior you want for a chat session that should survive navigation.
+
+## Option 3: Next.js App Router
+
+Next.js ships its own `<Script>` component that handles load strategy and deduplication. Use `strategy="afterInteractive"` — it waits for hydration to finish before loading the widget, which sidesteps a class of hydration mismatch warnings you'd otherwise chase down.
+
+```tsx
+// app/layout.tsx
+import Script from "next/script";
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="en">
+      <body>
+        {children}
+        <Script
+          src="https://krispy.<your-subdomain>.workers.dev/widget.js"
+          strategy="afterInteractive"
+        />
+      </body>
+    </html>
+  );
+}
+```
+
+**The gotcha everyone hits:** putting a raw `<script>` tag in the JSX of a Server Component. Next.js renders it to HTML, but the browser may not execute it reliably, and you'll get console warnings about unrecognized DOM elements. The `<Script>` component from `next/script` handles this correctly — that's the whole fix.
+
+### Pages Router
+
+Same idea in `_app.tsx`:
+
+```tsx
+// pages/_app.tsx
+import type { AppProps } from "next/app";
+import Script from "next/script";
+
+export default function App({ Component, pageProps }: AppProps) {
+  return (
+    <>
+      <Component {...pageProps} />
+      <Script
+        src="https://krispy.<your-subdomain>.workers.dev/widget.js"
+        strategy="afterInteractive"
+      />
+    </>
+  );
+}
+```
+
+## Widget configuration from the embed
+
+Almost all configuration lives server-side in `krispy.config.ts` — the AI system prompt, escalation behavior, and Telegram handoff settings are all there. From the embed itself you can set:
+
+- `data-greeting` — the opening message the widget shows on first open
+- `data-position` — `"bottom-right"` (default) or `"bottom-left"`
+- `data-theme` — `"light"` (default) or `"dark"`
+
+These work identically across all three embed patterns. In the React and Next.js versions, pass them as regular props on the `<script>` element you create, or directly on the `<Script>` component.
+
+---
+
+Choosing between the three: plain script tag for anything that isn't a JS framework, the `useEffect` pattern for SPAs, and Next.js's `<Script>` for App or Pages Router. They all produce the same widget — the difference is just how the browser picks up the script without fighting your framework.
+
+🥐 Let the bot cook. Star the [Krispy GitHub repo](https://github.com/krispyai/krispy) to follow updates and keep the project going — or head straight to [Krispy Cloud](https://krispy.ai) for a free hosted setup with no Wrangler required.
+
+---
+
+## FAQ
+
+### How do I embed the Krispy widget in a Next.js App Router project?
+
+Import `Script` from `next/script` and add it to your root `app/layout.tsx` with `strategy="afterInteractive"`. Don't use a raw HTML `<script>` tag inside a Server Component — Next.js won't execute it reliably and you'll see hydration warnings. The `next/script` wrapper handles deduplication and load timing correctly.
+
+### Can I embed the Krispy chat widget without installing anything from npm?
+
+Yes. The widget is a standalone JS file served directly from your Krispy Worker (or Krispy Cloud). There's no npm package, no bundler change needed. A single `<script src="...">` tag in your HTML is the entire integration. The script self-initializes on load.
+
+### Does the widget work in a React app with client-side routing?
+
+Yes. Load the script once in a `useEffect` at your app root with an empty dependency array `[]`. The widget is independent of React's router — it persists across client-side navigation without re-mounting or losing the active conversation.
+
+### Why does my Next.js app show hydration warnings when I add the script?
+
+Raw `<script>` tags in Server Component JSX can cause hydration mismatches because Next.js renders them during SSR but the browser's script execution timing doesn't align. Switch to `import Script from "next/script"` with `strategy="afterInteractive"` — it defers the script until after hydration and the warnings go away.
+
+### Where do I configure the AI persona and Telegram handoff — in the embed or on the server?
+
+On the server. `krispy.config.ts` on your Worker is where you set the AI system prompt, define escalation triggers, and wire up Telegram. The embed's `data-*` attributes only control cosmetic things: greeting text, widget position, and light/dark theme. This keeps your AI behavior out of your frontend code.

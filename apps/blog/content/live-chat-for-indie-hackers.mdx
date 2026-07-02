@@ -1,0 +1,92 @@
+---
+title: "Live chat for indie hackers and side projects"
+description: "Mainstream live chat costs $100–400/mo and prices out solo builders. Krispy is open-source, self-hosts free on Cloudflare, and hands off to Telegram when you need in."
+date: "2026-07-02"
+updatedAt: "2026-07-02"
+author: "The Krispy team"
+tags: ["live chat", "indie hackers", "side projects", "self-host", "open-source"]
+---
+
+Someone lands on your side project, reads two paragraphs, and types: "Does this work with Shopify?" You are at your day job. The tab closes. They move on.
+
+Live chat would have caught that. But every tool built to catch it is priced for a team with a support budget — not for a project making $0 to a few hundred dollars a month.
+
+The standard options: Intercom starts around $74/month before you even look at the AI tier. Crisp is friendlier — roughly $25–95/month — but still a recurring line item for something you built on weekends. Both charge per seat, which means [solo founders are paying for a pricing model that was never designed for them](/why-per-seat-pricing-hurts-solo-founders).
+
+There is a different path, and it costs nothing to try.
+
+## What indie projects actually need from live chat
+
+Strip away the enterprise features — CRM integrations, CSAT surveys, ticket routing, analytics dashboards — and what remains is three things:
+
+1. **Something that answers common questions at 2 am** when you are asleep and a curious visitor is not.
+2. **A way to know when a real conversation is happening** so you can jump in before the person gives up.
+3. **Zero monthly overhead** until the project earns enough to justify it.
+
+That is the whole spec. Most live chat products fail point three immediately and punt on point one until you pay for the "AI add-on."
+
+## How Krispy fits the side-project shape
+
+Krispy is open-source AI live chat that self-hosts on Cloudflare Workers. The bot handles incoming questions using Workers AI — no OpenAI key, no external inference bill. When a visitor asks something outside the bot's brief, or when you see a promising lead and want to step in, Krispy sends you a Telegram message with the full thread. You reply in Telegram; the visitor sees it in the widget. The bot steps aside while you are active and resumes when you are done.
+
+The deploy is one command:
+
+```bash
+wrangler deploy
+```
+
+[The five-minute walkthrough](/add-live-chat-in-5-minutes) covers everything from `git clone` to a working widget on your site — including the Telegram handoff. Most people finish it during a coffee break.
+
+## The cost math, plainly
+
+Cloudflare's free tier includes 100,000 Worker requests per day and Workers AI inference at no charge up to the free limits. For a side project, you will almost certainly stay inside those limits indefinitely.
+
+Self-hosted Krispy: **$0/month**.
+
+If you somehow outgrow the free tier — you are probably past "side project" at that point — the Workers paid plan is $5/month. Still not $74.
+
+The broader point: running live chat is just one piece of [a support stack that costs nothing if you choose the right tools](/the-zero-dollar-support-stack). Krispy pairs with free-tier email, a public-repo issue tracker, and Telegram (free) to cover the full loop without a subscription anywhere.
+
+## The part where Telegram earns its place
+
+This is the bit that surprised people when we first shipped it: using Telegram as the human-handoff layer is not a compromise. It is genuinely the right tool for solo builders.
+
+You are already on your phone. You already have Telegram. When a lead is typing on your site at 7 pm and you want to take over, you tap one button in the Telegram message Krispy already sent you, type your reply, and it appears in the widget within seconds. No browser tab, no support dashboard, no login.
+
+The alternative — a web-based inbox you have to remember to check — is exactly how conversations fall through. Push beats pull, every time.
+
+## One bot, multiple projects
+
+Nothing in Krispy's architecture limits you to a single site. You deploy once per project (or share a deployment across projects with different `data-krispy-project` attributes on the script tag), each with its own system prompt and Telegram notification channel. Running three side projects means three `wrangler deploy` calls, not three subscriptions.
+
+That flexibility is what open source actually buys you. You are not renting seats or negotiating with a sales team — you are running code you can read, fork, and adapt.
+
+## When to consider Krispy Cloud instead
+
+Self-hosting is a few commands if you are comfortable with a terminal. If you are not — or if you just want to get the widget on your site without touching Wrangler — Krispy Cloud has a free tier. Same open codebase, managed for you. No credit card for the free tier.
+
+If you want to run it yourself, the repo is at [github.com/krispyai/krispy](https://github.com/krispyai/krispy). A ⭐ helps other indie builders find it.
+
+---
+
+## FAQ
+
+### What does live chat actually cost for a side project?
+
+Self-hosted Krispy: $0. Cloudflare's free tier covers 100,000 Worker requests per day, which is more than enough for most indie projects. If you grow past that, the Workers paid plan is $5/month. Mainstream alternatives like Intercom or Crisp run $25–400/month depending on seats and features.
+
+### Do I need to be a developer to set this up?
+
+Comfortable with a terminal and a GitHub clone? Yes, you can set it up — [the quickstart](/add-live-chat-in-5-minutes) is written for builders who have deployed a project before. Not your thing? Use Krispy Cloud's free tier instead: paste one script tag and you are done.
+
+### Can I manage chats from my phone while commuting?
+
+Yes, and this is the main reason Telegram is the handoff channel. When Krispy escalates a conversation, you get a Telegram message with the full thread and a take-over button. You reply from your phone; the visitor sees it in the widget. No app to install, no support inbox to monitor.
+
+### What if I run several side projects — do I need multiple accounts?
+
+No. Each project gets its own `wrangler deploy` (or its own script tag pointing at the same Worker with a different project identifier). Each can have its own system prompt and its own Telegram channel for notifications. One Cloudflare account covers everything.
+
+### Is my visitors' conversation data stored somewhere I don't control?
+
+When you self-host, conversations live in Cloudflare KV under your own Cloudflare account. Nothing is sent to Krispy's servers. You own the data. If you use Krispy Cloud, the privacy policy covers what is stored — but self-hosting is the zero-trust option.

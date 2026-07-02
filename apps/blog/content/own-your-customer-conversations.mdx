@@ -1,0 +1,108 @@
+---
+title: "Own your customer conversations: the case for self-hosted chat"
+description: "When you let a SaaS vendor host your chat, you rent access to your own customers. Here's why self-hosted chat breaks that lock-in — and what it actually costs."
+date: "2026-07-02"
+updatedAt: "2026-07-02"
+author: "The Krispy team"
+tags: ["self-hosting", "data-ownership", "open-source", "live-chat", "vendor-lock-in"]
+---
+
+Here's a thing that doesn't get said enough: when you put Intercom or Crisp on your site, your customer conversations live in their database, not yours. You can export them — probably, in some format, if you know where to look — but the moment you stop paying, you lose the interface, the history, the AI context, sometimes the contacts themselves. You didn't build a relationship with your customers. You rented a channel to talk to them.
+
+That's not a knock on those products. They're good at what they do. But "we host everything and you pay monthly forever" is a business model, not a service feature, and it's worth being clear-eyed about what you're signing up for.
+
+## What vendor lock-in actually looks like
+
+It starts small. You pick a chat tool, paste a snippet, answer some tickets. Six months later you've got:
+
+- Hundreds of conversations that trained your AI assistant (inside their platform)
+- Saved replies and macros your team actually uses (inside their platform)
+- Customer tags, segments, conversation metadata (inside their platform)
+- A helpdesk email that routes through their servers
+
+Now you want to leave. You get a CSV export with stripped-down conversation history and no way to port the AI context. Your saved replies are copy-paste jobs. Your integration with their inbox is gone. And you're looking at $100–400/month to stay.
+
+That's the lock-in — not a contract clause, just gravity.
+
+## The alternative: your infra, your data
+
+Self-hosted chat means the conversations sit in your database. The AI context belongs to you. The message history is queryable with your own tools. Nobody can raise the price or shut off your access on 30 days' notice.
+
+[Krispy is built around this idea](/why-open-source). It's open-source AI live chat with a Telegram-based human-in-the-loop handoff — meaning when the bot can't handle something, a real person gets a Telegram message and can reply directly from their phone. No proprietary inbox to log into, no seat licenses per agent.
+
+The whole thing runs on Cloudflare Workers and Workers AI. [You can deploy it for $0/month](/self-host-live-chat-cloudflare), including the AI layer, because Workers AI doesn't require an external API key.
+
+## The honest cost comparison
+
+Paid live chat stacks typically run:
+
+| Tool | Entry plan | With AI + teammates |
+|---|---|---|
+| Intercom | ~$74/mo | $200–400+/mo |
+| Crisp | $25/mo (2 seats) | $95/mo (team) |
+| Zendesk | $55/agent/mo | add AI suite separately |
+
+Self-hosted Krispy on Cloudflare's free tier: **$0/month**. If you scale past the free Workers limits, you're looking at a few dollars at most — the Workers paid plan is $5/month and the AI costs are fractions of a cent per conversation.
+
+The math isn't close.
+
+## What you give up
+
+This is the part most "just self-host it" posts skip. Let's be honest:
+
+**You run the deployment.** It's a `wrangler deploy` away, but that's still something you have to do. If the worker crashes, you debug it.
+
+**No polished web inbox.** Krispy's human handoff routes through Telegram. If you need a fully-featured web inbox with team routing, assignments, and SLA timers, Crisp or Intercom is genuinely better for that right now.
+
+**You wire the integrations.** CRM sync, Slack notifications, custom webhooks — Krispy is open-source, so you can build them, but they don't come pre-assembled.
+
+For a solo founder or a small dev-friendly team, the tradeoffs land in Krispy's favor. For a 50-person support team that needs enterprise workflows, a paid tool probably makes more sense.
+
+## The deployment looks like this
+
+```bash
+git clone https://github.com/krispyai/krispy
+cd krispy
+npm install
+npx wrangler deploy
+```
+
+That's the short version. The [5-minute setup guide](/self-host-live-chat-cloudflare) walks through the Cloudflare bindings, the Telegram bot token, and embedding the widget. Once it's running, your conversations log to Durable Objects in your own CF account — not our servers, not anyone else's.
+
+## Why this matters beyond the bill
+
+Data ownership isn't just about cost. It's about what you can do with the data.
+
+When conversations live in your infrastructure, you can run your own analytics, feed summaries into your product tooling, or just grep through them when a customer says "we talked about this six months ago." None of that requires a data export request or an API that breaks when the vendor changes their schema.
+
+Your customer conversations are genuinely valuable — they're where feature requests hide and where trust gets built or lost. Owning that data, not renting access to it, changes what you can do with it.
+
+[We wrote about why we made Krispy open-source](/why-open-source), and this is the core of it: the default for developer tools should be "you own the data," not "we host it for you."
+
+---
+
+If you want to host it yourself, [star the repo on GitHub](https://github.com/krispyai/krispy) — it's free and the deployment takes about five minutes. If you'd rather skip the infra entirely, Krispy Cloud has a free tier that gets you running without touching a terminal.
+
+---
+
+## FAQ
+
+**Does self-hosted chat mean I lose my conversation history if I switch platforms?**
+
+No — that's actually the point. When you self-host, the history lives in your own Cloudflare account (Durable Objects or whatever storage you configure). It's yours to export, migrate, or query however you want. You're not dependent on a vendor's export feature or API.
+
+**Can I actually own my data with a SaaS chat tool?**
+
+Some offer data export, but owning it in a meaningful sense — in your own database, queryable on your terms, not subject to their retention policies — requires self-hosting. A CSV export after the fact isn't the same as owning the data in real time.
+
+**What does Krispy use for AI without requiring my own API key?**
+
+Krispy uses Cloudflare Workers AI, which runs inference on Cloudflare's hardware. There's no OpenAI or Anthropic key to wire up. The free tier covers thousands of conversations per day. If you want to use your own model or API key, that's supported too.
+
+**Is there a risk Krispy changes its license or goes paid later?**
+
+Krispy is MIT-licensed. You can fork it, run it, modify it — the license can't be revoked retroactively. If the vendor behind a proprietary tool changes pricing or shuts down, you have no recourse. With MIT, the worst case is you're running a fork.
+
+**What about [per-seat pricing](/why-per-seat-pricing-hurts-solo-founders) — does self-hosting fix that too?**
+
+Yes. There are no seats in Krispy. You add team members to your Telegram group. The cost doesn't go up when your team grows. Per-seat pricing punishes you for success; self-hosting with open-source software means your infra costs scale with actual usage, not headcount.

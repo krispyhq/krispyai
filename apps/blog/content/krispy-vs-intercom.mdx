@@ -1,0 +1,134 @@
+---
+title: "Krispy vs Intercom: the open-source, self-hosted alternative"
+description: "Intercom is excellent. It's also $100–400/mo before you add seats. Krispy is open-source, self-hosted on Cloudflare, and ships AI live chat for $0."
+date: "2026-07-02"
+updatedAt: "2026-07-02"
+author: "The Krispy team"
+tags: ["intercom", "open-source", "self-hosted", "live-chat", "comparison"]
+---
+
+The first time I added a third person to our Intercom workspace, the invoice jumped $74.
+Not $74 total — $74 *more*, per month, for one extra seat. Nobody warned me. It's just
+how per-seat pricing works: invisible while the team is small, then it grows with you,
+in the wrong direction.
+
+That math is the reason Krispy exists.
+
+## What Intercom actually costs
+
+To be fair: Intercom is a genuinely good product. The shared inbox is polished, the AI
+Copilot is useful, and Fin (their AI agent) works well for common questions. But the
+pricing has a shape that hurts small teams trying to grow.
+
+Their Essentials plan starts at $29/seat/month. Add the AI features worth having — Fin,
+Copilot — and you're on a higher tier. A two-person support team on the current
+AI-first stack lands around $150–250/month. Add a third seat and a couple of add-ons
+and you're at $300–400 before you've integrated anything.
+
+That's not an indictment of their value. It's just the math. For a funded startup with
+a 10-person support team, $400/mo is a rounding error. For a solo founder doing their
+own support, or a small agency adding AI chat to a client site, it's the wrong shape
+entirely. We wrote more about why this structure has such a specific sting in
+[Why per-seat pricing punishes solo founders](/why-per-seat-pricing-hurts-solo-founders).
+
+## What you trade away with a SaaS chat tool
+
+The per-seat bill is the obvious cost. The less obvious one is ownership.
+
+When your chat runs on Intercom's infrastructure, your conversation history lives there.
+Your customer data lives there. The widget on your site is a call to their CDN. None of
+this is a problem until it is — until the pricing changes, until you need to export
+three years of support threads, or until GDPR becomes a meaningful concern for your
+region.
+
+Self-hosting solves this cleanly. You own the data, the schema, the uptime decisions.
+And with Krispy running on Cloudflare Workers, "self-hosting" doesn't mean a VPS you
+SSH into at 2am. It means `wrangler deploy`.
+
+## How Krispy works
+
+Krispy is open-source AI live chat with a human-in-the-loop handoff. The AI runs on
+Cloudflare Workers AI — no separate API key, no per-token bill for the model. When a
+visitor's question needs a real person, the message routes to Telegram: it lands on
+your phone, you reply, and the visitor sees the response in the widget in real time.
+Your support inbox is wherever you already are.
+
+Getting started looks like this:
+
+```bash
+git clone https://github.com/krispyai/krispy
+cd krispy
+cp .env.example .env   # add your Telegram bot token + Cloudflare account ID
+wrangler deploy
+```
+
+🥐 Let the bot cook from there. No seats, no monthly vendor bill, no renegotiation
+when you hire person number two.
+
+## Krispy vs Intercom, side by side
+
+| | **Krispy** | **Intercom** |
+|---|---|---|
+| **Open source** | Yes — MIT license | No |
+| **Self-hostable** | Yes — Cloudflare Workers | No |
+| **AI built-in** | Yes — Workers AI, no key needed | Yes — Fin/Copilot (add-on cost) |
+| **Human handoff** | Telegram (your phone) | Intercom Inbox (browser) |
+| **Per-seat cost** | $0 | $29–74+/seat/mo |
+| **Data ownership** | You own it | Intercom's infrastructure |
+
+Intercom has more surface area — ticket workflows, a light CRM layer, reporting.
+If you're routing a team of ten agents through complex queues, Krispy isn't there yet.
+But if you want AI-first live chat you actually own, with handoff to a real human on
+their phone, Krispy handles it well — and the bill stays at zero.
+
+For a broader look at where Krispy sits in the market, [The best open-source live chat
+alternatives in 2026](/best-open-source-live-chat) compares it alongside Chatwoot,
+Papercups, and others. If Crisp specifically is on your shortlist, [Krispy vs Crisp](/krispy-vs-crisp)
+goes deeper on that matchup.
+
+---
+
+Self-host it today — the repo is at [github.com/krispyai/krispy](https://github.com/krispyai/krispy),
+and a star helps other builders find it. If you'd rather skip the `wrangler deploy` step
+entirely, **Krispy Cloud** has a free tier that handles the infrastructure while you
+handle the conversations.
+
+---
+
+## FAQ
+
+**Is there a free version of Intercom?**
+
+Intercom offers a 14-day trial but no permanent free tier. Their cheapest paid plan
+starts at $29/seat/month billed annually. For persistent free live chat, you need an
+open-source alternative. Krispy is self-hosted on Cloudflare and costs $0 in platform
+fees — you pay only for your Cloudflare account, which covers most small projects on
+the free tier.
+
+**Can I self-host Intercom?**
+
+No. Intercom is closed-source SaaS with no self-hosting option. Your data and
+conversation history live on their infrastructure and can't be moved without an export.
+Krispy is the self-hosted alternative — it runs entirely on your Cloudflare account,
+so you own the data from day one.
+
+**Does Krispy have AI like Intercom's Fin?**
+
+Yes. AI chat is built in via Cloudflare Workers AI, which requires no external API key.
+It answers common questions automatically and hands off to a human (via Telegram) when
+it can't help. It doesn't yet match Fin's depth on complex support flows, but for most
+indie and small-team use cases it handles the first-response layer well.
+
+**What's the catch with self-hosting?**
+
+You own the maintenance. When Krispy ships an update you pull it and redeploy — no
+automatic upgrades, no support tier. Cloudflare Workers removes the infrastructure ops,
+but you're still the operator. If you'd rather not manage that, Krispy Cloud's free
+tier handles the hosting.
+
+**How does the Telegram handoff actually work?**
+
+When a visitor's question needs a human, Krispy sends the conversation to a Telegram
+bot linked to your account. You reply in Telegram and the visitor sees the message
+appear in the chat widget instantly. No second screen to monitor, no separate inbox to
+open — just your phone, which you already carry.

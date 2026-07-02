@@ -1,0 +1,176 @@
+---
+title: "Add AI live chat to your site in 5 minutes"
+description: "Deploy Krispy — open-source AI live chat with Telegram handoff — to Cloudflare Workers in minutes. Free to self-host, no API key needed."
+date: "2026-07-02"
+updatedAt: "2026-07-02"
+author: "The Krispy team"
+tags: ["live chat", "quickstart", "cloudflare", "open-source", "self-host"]
+---
+
+Most live chat tools make you sign up, pick a plan, hand over a credit card, and wait
+for a confirmation email before you can paste a single line of code. Krispy skips all of
+that. Clone one repo, run two commands, and your site has an AI chat widget backed by
+Cloudflare Workers — no API key, no third-party bill, no sales call.
+
+Here is what the setup actually looks like.
+
+## What you are building
+
+Krispy is an open-source AI live chat widget. It runs the full conversation inside
+Cloudflare Workers using their built-in AI — nothing leaves your deployment unless you
+configure it to. When a visitor asks something the bot cannot handle (or when you see a
+promising lead and want to jump in personally), Krispy pings you on Telegram and you take
+over from your phone. That is the whole loop: bot handles the queue, human closes the
+conversation.
+
+[The widget drops into any page as a single script tag](/embed-widget-anywhere) — Next.js,
+plain HTML, React, Webflow, whatever. No npm package required on the frontend.
+
+## Before you start
+
+You need four things:
+
+- A [Cloudflare account](https://cloudflare.com) — the free tier is enough
+- Node.js 18+ and `npm`
+- Wrangler CLI: `npm install -g wrangler`
+- A Telegram account for human handoff (optional, but worth the two minutes it takes)
+
+No OpenAI key. No Pinecone. No AWS credentials. Cloudflare is the only dependency.
+
+## Step 1 — Clone and install
+
+```bash
+git clone https://github.com/krispyai/krispy
+cd krispy
+npm install
+```
+
+## Step 2 — Configure
+
+```bash
+cp wrangler.example.toml wrangler.toml
+```
+
+Open `wrangler.toml`. The only required change for a first deploy is your Cloudflare
+account ID. Wrangler can look it up for you:
+
+```bash
+wrangler whoami
+```
+
+Paste the ID into the `account_id` field. Everything else — the AI model, the system
+prompt, the widget accent color — ships with a working default you can change after the
+first deploy.
+
+## Step 3 — Deploy
+
+```bash
+wrangler deploy
+```
+
+Wrangler bundles your Worker, uploads it, and returns a `*.workers.dev` URL. That URL
+is your Krispy backend. The whole step takes about 20 seconds on a normal connection.
+
+If you want to understand what is actually running — the KV namespace, the AI binding,
+the routing — [the self-hosting walkthrough goes deeper](/self-host-live-chat-cloudflare).
+
+## Step 4 — Add the widget
+
+Drop this before `</body>` on any page you want the chat to appear:
+
+```html
+<script
+  src="https://your-worker.workers.dev/widget.js"
+  data-krispy-url="https://your-worker.workers.dev"
+  defer
+></script>
+```
+
+Replace `your-worker` with your actual subdomain. That is the entire frontend install.
+The widget script initializes itself, connects to your Worker, and starts answering
+questions using `@cf/meta/llama-3-8b-instruct` by default. You can swap the model in
+`wrangler.toml` to anything in the Workers AI catalog.
+
+Reload your page. The 🥐 button appears in the corner. Say hi.
+
+## Step 5 — Wire up Telegram
+
+This is the part that makes Krispy useful beyond a static FAQ bot. When a visitor
+escalates — or when you notice a hot lead mid-conversation — Krispy sends you a Telegram
+message with the full thread and a "Take over" button. Tap it, type your reply in
+Telegram, and the visitor sees it in the widget on your site. The bot steps aside while
+you are active and resumes when you are done.
+
+Setup takes one bot token and one chat ID. [The Telegram handoff guide walks through the
+exact steps](/connect-telegram-handoff).
+
+## Customize the bot's persona
+
+The system prompt is in `src/prompt.ts`. It is a plain string — edit it directly. No
+GUI, no drag-and-drop blocks, just text. Common things people set in the first five
+minutes:
+
+- What the product does and who it is for
+- Topics to deflect to humans ("anything about billing, hand off immediately")
+- Tone (formal, casual, terse)
+
+Deploy again with `wrangler deploy`. Done.
+
+## The cost math
+
+This is the part most live chat quickstarts skip. Here it is straight:
+
+Krispy self-hosted costs **$0**. Cloudflare's free tier includes 100,000 Worker requests
+per day and Workers AI inference at no charge up to the free limits. For most small to
+mid-size sites, you will stay inside the free tier indefinitely.
+
+Paid alternatives for comparison: Intercom starts around $74/month and climbs fast once
+you add seats and the AI layer. Crisp is cheaper — roughly $25–95/month — but still a
+monthly line item and your data lives on their servers. The typical range for teams using
+these tools: $100–400/month.
+
+If you grow past Cloudflare's free limits, the Workers paid plan is $5/month. Still
+nowhere near the alternative.
+
+---
+
+## FAQ
+
+### How long does the initial deploy actually take?
+
+If Node and Wrangler are already installed, the deploy is usually under two minutes. The
+slowest step is `npm install`. The `wrangler deploy` itself runs in 15–30 seconds. "Five
+minutes" in the title accounts for reading the config, swapping in your account ID, and
+a first reload to confirm the widget appears.
+
+### Do I need an OpenAI key to run Krispy?
+
+No. Krispy uses Cloudflare Workers AI, which is built into the Cloudflare runtime. The
+model runs on Cloudflare's infrastructure as part of your Worker — there is no external
+API to configure or pay for separately.
+
+### Can I add Krispy to a site I don't control, like Webflow or Shopify?
+
+Yes, as long as you can inject a custom script tag. Webflow lets you add scripts under
+Site Settings → Custom Code. Shopify has a custom code section in the theme editor.
+Anywhere you can paste a `<script>` tag, the widget works.
+
+### What happens when the Cloudflare free tier limit runs out?
+
+The Worker returns 429s until the daily limit resets at midnight UTC — it does not charge
+you without warning. If you need sustained higher volume, the Workers paid plan ($5/month)
+raises the limit dramatically. Cloudflare stops requests before it bills you past a cap
+unless you explicitly opt into the paid plan.
+
+### Is conversation history stored on Krispy's servers?
+
+No. When you self-host, conversations live in Cloudflare KV under your own account.
+Nothing is sent to Krispy. If you use Krispy Cloud instead of self-hosting, the terms of
+service cover data handling — but self-hosting means your data never leaves your own
+Cloudflare account.
+
+---
+
+The repo is at [github.com/krispyai/krispy](https://github.com/krispyai/krispy) — a ⭐
+helps other builders find it. If you would rather skip the deploy entirely, Krispy Cloud
+has a free tier for small teams: same open codebase, no terminal required.

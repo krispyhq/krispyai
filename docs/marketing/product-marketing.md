@@ -98,13 +98,19 @@ tired of paying Intercom, built the open version") for the launch spike, and the
 **`vs Intercom` / `vs Crisp` / `vs Chatwoot` comparison pages** for compounding AI-search
 citations. Ship `/llms.txt` + FAQ/SoftwareApplication schema; never gate docs.
 
-## 10. Launch spine (ORB, owned-first)
+## 10. Launch plan (own the audience, borrow the reach)
 
-- **Owned** (funnel everything here): the docs site, a newsletter, a **Discord**, the repo.
-- **Rented** (spikes → drive to owned): Show HN, Product Hunt, X threads, LinkedIn, r/selfhosted.
-- **Borrowed:** co-market with an adjacent OSS tool; dev creators who'll star/share.
-- Recruit founding members by hand; be present all launch day; convert every visitor to
-  Discord/newsletter (rented traffic evaporates). Launches are recurring, not one-shot.
+Plain version, no framework acronyms:
+
+- **The stuff we own and keep** — the docs site, the GitHub repo, a Discord, a newsletter.
+  Everything funnels here, because it's the only audience that doesn't evaporate.
+- **The big-reach places we don't control** — Show HN, Product Hunt, X, LinkedIn,
+  r/selfhosted. These are spikes. Use them to point people back to what we own.
+- **Other people's audiences** — co-launch with an adjacent open-source tool; devs who'll
+  star and share because they actually like it.
+- Recruit the first users by hand. Be present all launch day answering every comment.
+  Turn launch-day traffic into Discord members or subscribers before it's gone. Launches
+  are recurring — plan the next one (a marquee feature) while the first is still warm.
 
 ---
 

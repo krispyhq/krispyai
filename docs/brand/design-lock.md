@@ -205,6 +205,9 @@ Loud + confident, never ugly-for-ugly's-sake or unreadable. Contrast stays AA. A
 
 ## 8. The "we don't do this" list
 
+- **The breathing "AI orb" / glowing gradient blob.** The single biggest tell of a generic
+  AI app in 2026 — a floating pulsing sphere/gradient in the hero. BANNED. Buttr (a character
+  with a face) is our anti-orb. No breathing circles, no aurora-gradient blobs, no "AI energy" mist.
 - Cold white / blue-grey enterprise palette.
 - ALL-CAPS headlines; Inter as the display face.
 - Neon or glowing anything.

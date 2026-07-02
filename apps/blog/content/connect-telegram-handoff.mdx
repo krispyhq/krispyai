@@ -1,0 +1,140 @@
+---
+title: "Human handoff over Telegram: how it works"
+description: "How Krispy routes a live chat conversation from an AI bot to a human over Telegram — so you can reply from your phone without touching a dashboard."
+date: "2026-07-02"
+updatedAt: "2026-07-02"
+author: "The Krispy team"
+tags: ["telegram", "handoff", "live-chat", "human-in-the-loop", "self-hosting"]
+---
+
+You're at a coffee shop. Someone opens a chat on your site, the bot handles the first
+few messages fine, then they type "can I talk to a real person?" Your phone buzzes.
+You reply in Telegram. The visitor sees your message instantly. You never opened a
+dashboard, never switched apps, never logged into anything.
+
+That's the handoff. Here's how it actually works.
+
+## The short version
+
+Krispy runs a Cloudflare Durable Object that owns each live conversation — state, history,
+the works. When a handoff is triggered (visitor request, keyword match, or a confidence
+threshold the bot doesn't clear), the DO fires a message to a Telegram bot you control.
+Your reply goes back through the same bot, the DO routes it into the open WebSocket, and
+the visitor sees it in the chat widget. One conversation object, two participants, one
+channel that lives in your pocket.
+
+If you want the deeper architecture behind why a Durable Object is the right primitive
+here, the [Durable Objects post](/how-we-built-live-takeover-durable-objects) covers it
+— the short answer is that a single serialized object gives you exactly-once delivery
+and zero message drops when the handoff happens mid-conversation.
+
+## Setting it up
+
+You need two things: a Telegram bot token and a chat ID to deliver notifications to.
+Both take about three minutes to get.
+
+1. Open [@BotFather](https://t.me/botfather) in Telegram, run `/newbot`, grab the token.
+2. Start a conversation with your new bot (or add it to a team group), then call
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` to find the `chat.id`.
+3. Add both to your Krispy Worker secrets:
+
+```sh
+wrangler secret put TELEGRAM_BOT_TOKEN
+wrangler secret put TELEGRAM_CHAT_ID
+```
+
+That's it. Redeploy and Krispy will route handoff notifications to that chat. If you're
+team-based, `TELEGRAM_CHAT_ID` can be a group chat — everyone in the group gets the
+ping and the first person to reply wins the conversation. No extra config, just group chat
+semantics doing the work.
+
+If you haven't deployed Krispy yet, the [5-minute setup guide](/add-live-chat-in-5-minutes)
+walks through the full `wrangler deploy` flow from zero.
+
+## What the notification looks like
+
+When a handoff fires, your Telegram gets something like:
+
+```
+🥐 Krispy — handoff requested
+Site: yoursite.com
+Visitor: Session #a4f2 (3 messages)
+
+"Hi, I'd like to talk to someone about enterprise pricing"
+
+— Reply to this message to respond
+```
+
+Replying to that Telegram thread sends your message back to the visitor. The widget shows
+it with your name (or "Support" — configurable). The bot's turn indicator disappears, and
+the visitor knows they're talking to a human. If you close the Telegram thread without
+replying, the DO keeps the conversation open on your end; nothing drops.
+
+## The conversation the visitor already had stays intact
+
+This is the part that usually surprises people: when you take over, the visitor's screen
+doesn't flicker, there's no "a human will be with you shortly" dead air, and they don't
+have to repeat themselves. The Durable Object has the full transcript. Your first reply
+arrives in the same thread, in sequence.
+
+On your Telegram side, the notification message includes the prior context — not a
+summary, the actual messages — so you can read up before you respond. The flow from
+the visitor's perspective and from your perspective is covered in detail in
+[Bot to human without dropping the conversation](/bot-to-human-without-dropping-the-ball).
+
+## Cost comparison — honest numbers
+
+Crisp (the product this most closely replaces) runs $95/month for a small team on their
+Unlimited plan. Intercom is $74/seat/month before add-ons. Chatwoot's self-hosted path is
+free but needs a server and a database.
+
+Krispy is free to self-host on Cloudflare Workers. The Telegram bot API is free. The DO
+storage for a busy chat site (say, 10k conversation-days/month) costs a few cents. If you
+don't want to run infra at all, [Krispy Cloud](https://krispy.ai) has a free tier that
+covers most small sites — no credit card.
+
+## FAQ
+
+### Can I really reply from just the Telegram app, no other login needed?
+
+Yes. Once the handoff notification arrives in Telegram, you reply to that specific message
+thread and Krispy routes it back. You never need the Krispy dashboard open. The dashboard
+exists for history, analytics, and configuration — not for active conversations if you're
+on the go.
+
+### What triggers the handoff — does the visitor have to ask, or does it happen automatically?
+
+Both. A visitor typing "talk to a human", "agent", "real person" (or your own keyword list)
+triggers it explicitly. You can also set a confidence threshold: if the bot produces a
+low-confidence answer two turns in a row, it hands off automatically before the visitor
+has to ask. Both triggers are configured in your `krispy.config.ts`.
+
+### What happens to the chat history when I take over?
+
+Nothing is wiped. The Durable Object accumulates every message regardless of who sends it.
+When you take over, the transcript is continuous — bot messages, visitor messages, your
+replies — all in order. The visitor's widget shows the same thread throughout.
+
+### Can multiple people on my team receive the Telegram notification?
+
+Yes. Point `TELEGRAM_CHAT_ID` at a group chat that includes your whole support team.
+Everyone sees the handoff notification. The first person to reply claims the conversation —
+subsequent replies from others in the group are ignored until the conversation closes. No
+race conditions; the DO handles exactly-once delivery.
+
+### What if I'm unavailable and don't reply? Does the visitor get stuck?
+
+No. You can configure a fallback: a timeout message the bot sends ("We're a little busy
+right now — expect a reply within a few hours"), or a re-engagement to the bot for
+simple queries while you're away. The conversation stays open in the DO. When you do
+reply in Telegram — even hours later — it delivers to the visitor if they're still in the
+tab, or waits for their next visit.
+
+---
+
+The Telegram channel isn't fancy. It's a bot token, a chat ID, and a DO that knows which
+message to route where. That's usually enough — no native mobile app to build, no push
+notification infrastructure to manage, no $400/month dashboard tax.
+
+If you want to try it: the repo is on GitHub (a ⭐ helps us keep building in the open),
+and [Krispy Cloud](https://krispy.ai) has a free tier if you'd rather skip the deploy step.

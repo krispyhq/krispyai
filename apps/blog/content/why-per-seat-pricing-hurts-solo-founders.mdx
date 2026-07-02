@@ -1,0 +1,153 @@
+---
+title: "Why per-seat pricing punishes solo founders"
+description: "Per-seat pricing was designed for enterprise teams, not solo founders. Here's why it hurts when you're doing everything yourself — and what to use instead."
+date: "2026-07-02"
+updatedAt: "2026-07-02"
+author: "The Krispy team"
+tags: ["solo founder", "per-seat pricing", "support tools", "self-hosted", "live-chat"]
+---
+
+You sign up for a support chat tool. The solo-founder plan is $29 a month — fine.
+Six months later you bring in a VA to help answer questions while you're heads-down.
+You add them to the workspace. The invoice becomes $58.
+
+The VA works 10 hours a week. They handle maybe 15 tickets. You're paying $29 a month
+for those 15 tickets because "seat" is how the vendor counts value, and one extra human
+equals one extra seat.
+
+That's the per-seat trap in its purest form.
+
+## Why the model exists (and who it was built for)
+
+Per-seat pricing makes sense when you're selling to a procurement team. A company with
+50 support agents can be charged for 50 seats, the unit economics work, and the
+customer's budget scales with headcount. Everyone's aligned.
+
+Solo founders and tiny teams break this model. You might be:
+
+- The only person talking to customers (1 seat, but you're doing the work of 5)
+- Occasionally looping in a co-founder or contractor (now 2 seats, for a person who logs
+  in twice a week)
+- Running a product that does $2,000 MRR and paying $150/month for a support tool that
+  has features you'll never use
+
+The seat is a proxy for value. It just happens to be a terrible proxy for solo
+builders.
+
+## The real cost math
+
+Let's say you run a small SaaS. You get 30–50 support conversations a month. You're on
+Intercom's Essentials plan at $29/seat, plus you added their AI features — now you're
+in the $74/seat tier.
+
+- Month 1: just you. $74.
+- Month 4: you add a part-time contractor. $148.
+- Month 8: you hire a junior support person. $222.
+
+Nothing changed about your *support volume* — still 40 conversations a month. But the
+bill tripled because three humans have login credentials. You can read more about how
+this plays out at scale in the [Krispy vs Intercom breakdown](/krispy-vs-intercom),
+which goes through the numbers tier by tier.
+
+At $222/month, you're spending $2,664 a year to handle 480 conversations. That's $5.55
+per conversation. For a solo founder, that's a number worth sitting with.
+
+## What you actually need
+
+Here's what most solo founders actually need from a live chat tool:
+
+1. A widget visitors can use
+2. An AI layer that handles common questions automatically
+3. A real human in the loop for when the AI can't help
+4. A notification when someone needs you
+
+No ticket queues. No CRM sync. No CSAT reports with 14 custom dimensions.
+
+Enterprise support tools are priced for enterprise support teams. You're buying a
+737 because it has seats, when what you need is a good bicycle.
+
+The [zero-dollar support stack](/the-zero-dollar-support-stack) lays out exactly what
+tools cover each of those four needs without a per-seat meter running in the background.
+
+## The lock-in you don't notice until you need to leave
+
+There's a second cost baked into most per-seat tools: data ownership.
+
+Your conversation history lives on their servers. Your customer context is in their
+schema. The widget on your site pings their CDN. None of this feels like a problem
+until you want to export three years of threads, their pricing changes, or a
+privacy-conscious customer asks where their data goes.
+
+Self-hosting solves this cleanly — the data is yours from day one.
+[Owning your customer conversations](/own-your-customer-conversations) gets into why
+this matters more than most solo founders expect when they first sign up.
+
+## What Krispy does differently
+
+Krispy is open-source AI live chat. You self-host it on Cloudflare Workers — no server
+to manage, no SSH. The AI runs on Workers AI, which means no separate API key and no
+per-token bill for the model. When a visitor needs a real human, the conversation
+routes to Telegram. You reply from your phone. The visitor sees the message in the
+widget.
+
+There are no seats because there's no per-seat model. Deploy it, add as many team
+members to the Telegram bot as you want, and the infra cost stays the same.
+
+Setup looks like this:
+
+```bash
+git clone https://github.com/krispyai/krispy
+cd krispy
+cp .env.example .env   # add your Telegram bot token + Cloudflare account ID
+wrangler deploy
+```
+
+🥐 Let the bot cook. First conversation usually works within five minutes.
+
+The tradeoff: you own the maintenance. Pull updates and redeploy when they ship.
+If that sounds like one more thing to manage, **Krispy Cloud** has a free tier — same
+AI chat, same Telegram handoff, no infra to run.
+
+If you want to give it a spin, [star the repo on GitHub](https://github.com/krispyai/krispy) —
+it helps other solo builders find it.
+
+---
+
+## FAQ
+
+**Why does per-seat pricing hurt solo founders specifically?**
+
+Per-seat pricing scales with headcount, not with the value a tool delivers. Solo
+founders do the work of many roles, so the bill grows the moment they bring in any
+help — a contractor, a VA, a co-founder with occasional access. A 40-conversation
+month costs the same whether one person or four people handled it; only the seat count
+changes. That mismatch is specific to small teams.
+
+**What's a fair alternative to per-seat pricing for support tools?**
+
+Usage-based pricing (per conversation or per resolution) aligns cost with actual
+support volume. Self-hosted open-source tools are another option: you pay for
+infrastructure, not per human who has a login. Krispy is free to self-host on
+Cloudflare Workers — your only cost is your Cloudflare account, which covers most
+small projects on the free tier.
+
+**Can I still have multiple team members without paying per-seat?**
+
+With Krispy, yes. The Telegram handoff means multiple people can receive and respond to
+conversations without each needing a billed seat. Add as many people to the Telegram
+bot or group as you want — the infra cost is flat. For SaaS tools, look for plans that
+charge per workspace or per volume rather than per user.
+
+**How much does per-seat pricing actually cost a solo founder over a year?**
+
+At $29–74/seat/month for common tools, a two-person setup runs $696–$1,776 annually.
+A three-person team (you, a VA, a co-founder) hits $1,044–$2,664 a year. If your
+product does a few thousand dollars MRR, that support bill is a meaningful slice of
+margin — before you've integrated anything or added AI features.
+
+**Is self-hosting actually simpler than paying for SaaS?**
+
+For Cloudflare-based tools like Krispy: one `wrangler deploy` and it's running. You
+manage updates, but there's no server to provision, no database to babysit. The ops
+burden is low. If you don't want to think about it at all, Krispy Cloud's free tier
+is the no-ops path.

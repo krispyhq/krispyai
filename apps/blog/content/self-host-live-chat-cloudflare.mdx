@@ -1,0 +1,100 @@
+---
+title: "Self-host live chat on Cloudflare for free"
+description: "Run a full AI live chat widget with human handoff on Cloudflare Pages + Workers for $0/mo. Here's the honest cost math and how to deploy it."
+date: "2026-07-02"
+updatedAt: "2026-07-02"
+author: "The Krispy team"
+tags: ["self-hosting", "cloudflare", "live-chat", "workers", "open-source"]
+---
+
+Crisp's team plan is $95/month. Intercom starts around $74 and climbs fast once you add AI and teammates. You don't have to pay that to put a chat widget on your site. If you're already on Cloudflare — or willing to be — you can run a full AI chat with human-in-the-loop handoff for exactly $0 a month, on infrastructure you control.
+
+That's what Krispy is built for.
+
+## What "free on Cloudflare" actually means
+
+Krispy runs entirely on three Cloudflare primitives:
+
+- **Workers** — the chat API, session logic, and widget delivery. The free plan covers 100,000 requests per day, which is more than enough for most indie projects and early-stage products.
+- **Workers AI** — the LLM that answers visitor questions before a human takes over. No API key required, no external bill. The free tier includes 10,000 neurons per day (tokens, roughly). For a low-traffic support widget that's fine. For a high-volume product you can [bring your own model instead](/bring-your-own-ai-model).
+- **Durable Objects** — each chat session lives in its own DO so message state is consistent without a separate database. The free plan gives you 1,000 object-hours and 1 million requests per month.
+
+None of these require a credit card to start.
+
+## Setting up Krispy on Cloudflare Pages
+
+Clone the repo and deploy with Wrangler in about five minutes. The [quick-start guide](/add-live-chat-in-5-minutes) walks through embedding the widget, but the Cloudflare-specific part is just:
+
+```bash
+# clone and install
+git clone https://github.com/krispyai/krispy
+cd krispy
+bun install
+
+# deploy the worker + pages functions
+bunx wrangler deploy
+```
+
+That command pushes the Worker (chat API + DO bindings) and the static Pages assets to Cloudflare's edge in one shot. No Docker. No server to keep awake. Deploys take about 20 seconds on a warm connection.
+
+After that, drop the embed snippet in your site's `<head>`:
+
+```html
+<script src="https://<your-worker>.workers.dev/widget.js" async></script>
+```
+
+The widget connects back to your own Worker. Visitor conversations never hit any Krispy-owned server.
+
+## The AI layer: Workers AI, no key needed
+
+By default Krispy uses `@cf/meta/llama-3.1-8b-instruct` via the `AI` binding — the same model available in every Workers account, billed directly to Cloudflare at the standard AI Gateway rate. On the free tier, those first 10,000 neurons per day cost nothing. You configure the system prompt, the fallback behavior, and when the bot should escalate to a human — all in `krispy.config.ts`.
+
+If you'd rather use GPT-4o, Claude, or Gemini instead, the config takes a `model` override and your own key. That's covered in [/bring-your-own-ai-model](/bring-your-own-ai-model). Workers AI is simply the zero-config default for people who want to deploy first and decide later.
+
+## Human handoff: Telegram, not another dashboard
+
+When the AI hits its limits — a billing question, a complaint, a user who just says "I want to talk to a person" — Krispy routes the conversation to Telegram. Your phone buzzes, you reply in the thread, the visitor sees your message in the chat widget in real time. No new app to learn.
+
+The [Telegram handoff setup](/connect-telegram-handoff) takes about two minutes: create a bot with BotFather, paste the token into your config, add a chat ID. Done. From that point on the AI handles routine questions and you handle the ones that actually need you.
+
+This is the thing that saves the most time in practice. The widget isn't just a support inbox — it's a triage layer. Most visitor questions repeat. The AI answers them. The ones that don't repeat are the ones worth your attention.
+
+## Honest limits
+
+The free tier isn't infinite:
+
+- **Workers AI:** 10,000 neurons/day free, then metered at Cloudflare's standard rate (~$0.011 per 1,000 neurons). For a high-traffic site, model costs add up. At that point switching to an external model with the `model` override is probably cheaper.
+- **Durable Objects:** 1M requests/month free. Each message read/write is a request. A busy site can hit this. Cloudflare's paid plan is $5/month, which still undercuts any live-chat SaaS by a wide margin.
+- **Cloudflare Pages:** 500 deployments/month, 100k requests/day on free. For most projects, not a constraint.
+
+So "free" is accurate for typical indie and early-stage traffic. The ceiling is real but much higher than the $100/month SaaS minimum.
+
+## Try it yourself
+
+Krispy is open source. Star or fork the repo on GitHub — that's how the project stays active and how you stay in the loop on updates. If you'd rather skip running infrastructure entirely, [Krispy Cloud](https://krispy.ai) has a free hosted tier that gets you the same widget and Telegram handoff without touching Wrangler.
+
+Both paths give you the same chat experience. One gives you full control over the data and zero recurring cost; the other saves the setup time. Pick the one that fits.
+
+---
+
+## FAQ
+
+### Does self-hosting Krispy on Cloudflare actually cost $0?
+
+For a typical low-to-mid traffic site, yes. The Cloudflare free plan covers 100,000 Worker requests per day, 10,000 Workers AI neurons per day, and 1 million Durable Object requests per month — all without a credit card. If your volume exceeds those limits, the paid plan starts at $5/month for Workers, which is still a fraction of any live-chat SaaS.
+
+### Do I need a Cloudflare account to use Krispy?
+
+You need one to self-host — Krispy deploys as a Cloudflare Worker + Pages project. If you don't want to create an account, Krispy Cloud is the hosted alternative. There's a free tier there too.
+
+### Can I use Krispy on Cloudflare Pages without a separate database?
+
+Yes. Session state lives in Durable Objects, which are included in your Cloudflare account. No external Postgres, Redis, or Supabase required. Your conversation history is stored at the edge, close to your users.
+
+### What happens to chat data when I self-host?
+
+It stays in your Cloudflare account. Durable Object storage is isolated to your zone. No conversation data touches Krispy's servers. That's actually the main reason some teams prefer self-hosting over any SaaS — full data residency under their own account.
+
+### Does the free Workers AI model work well enough for support chat?
+
+Llama 3.1 8B handles FAQ-style questions, product information, and basic troubleshooting solidly. It struggles with nuanced reasoning or multi-step problems — which is exactly why the human handoff to Telegram exists. The AI covers the 80% that repeats; you handle the 20% that matters.

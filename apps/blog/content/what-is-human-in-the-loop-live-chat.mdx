@@ -1,0 +1,94 @@
+---
+title: "What is human-in-the-loop live chat?"
+description: "Human-in-the-loop live chat means a bot handles first contact, then hands off to a real person when it's stuck — without losing the thread."
+date: "2026-07-02"
+updatedAt: "2026-07-02"
+author: "The Krispy team"
+tags: ["live-chat", "human-in-the-loop", "ai-chatbot", "customer-support", "open-source"]
+---
+
+You've probably been on the wrong end of a bot that just keeps looping. You type "billing issue," it says "I can help with billing!" — and then it asks you the same three questions twice. By the third loop you're hunting for a "talk to a human" button that doesn't exist.
+
+That failure mode is what "human-in-the-loop live chat" is designed to prevent. The phrase sounds like a buzzword, but the underlying idea is genuinely practical: let the bot handle what bots are good at (instant first response, FAQs, triage), and bring a human in the moment the bot is out of its depth — without dropping the conversation.
+
+## What the loop actually means
+
+"Human in the loop" comes from machine-learning literature, where it described a human providing labels or corrections inside an otherwise automated training pipeline. In live chat it means something simpler: a real person is reachable at every step, not only as a last resort buried five clicks deep.
+
+The loop looks like this:
+
+1. Visitor sends a message.
+2. Bot replies — answers common questions, collects context, decides whether it can resolve the issue.
+3. If it can't (or the visitor asks for a human), the bot *hands off*: the conversation routes to a real agent with the full transcript intact.
+4. The agent replies from wherever they work — Telegram, Slack, a dashboard — inside the same thread the visitor already started.
+5. If the agent is offline, the bot holds the queue and notifies the agent. No black hole.
+
+Step 4 is where most DIY setups fall apart. The bot flags a conversation for human review, but the agent gets a notification with no context, has to open a separate tool, and is staring at a blank slate. The visitor, meanwhile, gets a "an agent will be with you shortly" message and waits. That's not a loop — it's a hand-wave.
+
+A real human-in-the-loop system keeps context alive across the handoff. That's the hard part and the valuable part.
+
+## Why not just use a human from the start?
+
+A 24/7 human support team is expensive. Even a single dedicated support hire costs $40–60k/year. Paid live chat platforms like Intercom charge $74–139/seat/month on top of that. For a two-person startup, that math doesn't work.
+
+The bot-first model lets you cover the 80% of questions that are genuinely automatable — shipping status, refund policy, how to reset a password — and reserve the human for the 20% that actually needs judgment. But a bot-only setup fails anyone with a non-standard problem, and there are always non-standard problems. [Choosing the right balance depends on your traffic and query type](/ai-chatbot-vs-live-chat-vs-human) — there's no universal answer.
+
+## What makes a handoff good vs bad
+
+The worst handoffs are invisible. The bot can't help, sends "we'll get back to you," and the conversation lands in a queue no one is watching.
+
+A clean handoff has three things:
+
+**Context transfer.** The agent sees everything the visitor already said — transcript, any collected details like order numbers — no "can you repeat your issue?"
+
+**Low agent friction.** The agent should reply from wherever they already are. Krispy routes to Telegram, so agents get a notification and reply in the same app they use all day.
+
+**Graceful async.** If no agent is online, the visitor should know, and the message should be waiting when someone is. [The mechanics of a no-drop handoff are worth reading](/bot-to-human-without-dropping-the-ball) if you're mixing timezones or a part-time team.
+
+## How Krispy implements this
+
+Krispy is an [open-source live chat widget](https://github.com/krispyai/krispy) on Cloudflare Workers and Pages. The bot uses Workers AI (Llama 3 by default) — no third-party API key, no per-query billing. When the bot escalates, your team gets a Telegram notification with the full conversation; replies in Telegram flow straight back to the site visitor.
+
+Self-hosting costs nothing for moderate traffic on Cloudflare's free tier. Compare that to Intercom or Crisp at $100–400/month. [We've benchmarked Krispy against the main alternatives](/best-open-source-live-chat) if you want the full breakdown.
+
+A minimal deploy:
+
+```bash
+npx wrangler deploy
+```
+
+The widget is a `<script>` tag. Telegram handoff needs two env vars — your bot token and the chat ID. No Kubernetes, no Redis, no 2am migration.
+
+## When you need it and when you don't
+
+Not every site needs human-in-the-loop. A docs widget answering questions from a static knowledge base can run fully automated and cover 95% of queries. A sales conversation, a billing dispute, or anything involving account data — those benefit from a human fallback.
+
+Rule of thumb: if the cost of a wrong bot answer is a refund request, you want a human in the loop. If you're unsure, ship the bot first and watch what it can't answer. The pattern becomes obvious fast.
+
+---
+
+If you want to run a human-in-the-loop setup without paying SaaS prices, [star Krispy on GitHub](https://github.com/krispyai/krispy) and self-host it — the README gets you running in under 30 minutes. If you'd rather skip the infrastructure, Krispy Cloud has a free tier that covers small sites with no credit card.
+
+---
+
+## FAQ
+
+### What does "human in the loop" mean in live chat?
+
+It means an AI bot handles first contact but a real person can join or take over the conversation at any point — especially when the bot gets stuck. The key requirement is that the human sees full context when they step in, not a blank slate. Without that context transfer, the "loop" is just a delayed email.
+
+### Is human-in-the-loop live chat the same as a hybrid chatbot?
+
+Mostly yes. "Hybrid chatbot" is the marketing version of the same idea: bot + human, with some handoff mechanism between them. The distinction worth making is whether the handoff is automatic (bot detects it's stuck and escalates) or manual (the visitor has to ask for a human). Good systems support both.
+
+### When should the bot hand off to a human?
+
+Common triggers: the visitor explicitly asks for a human, the bot's confidence drops below a threshold, the query matches a sensitive category (billing, complaints, legal), or the conversation has gone three rounds without resolving anything. You don't need all four — even just the explicit-request trigger is enough to start with.
+
+### Can a small team or solo founder realistically run this?
+
+Yes. The original use case for Krispy is a one- or two-person team who wants instant bot responses during off-hours but doesn't want to miss real sales or support conversations. Telegram handoffs mean you get a ping on your phone, reply in the same app, and the visitor sees your answer in the widget. It's asynchronous support that doesn't require anyone to be at a desk.
+
+### Does the visitor know when they're talking to a bot vs a human?
+
+They can if you tell them — and generally you should. Most visitors don't object to a bot for simple questions; they object to a bot that pretends to be a human while failing to help them. Labeling bot vs agent responses (even just a name change) keeps trust intact and makes escalations feel like a feature, not an admission of failure.
