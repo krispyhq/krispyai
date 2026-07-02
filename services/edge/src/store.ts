@@ -101,3 +101,73 @@ export function planFor(tenantId: string): Plan {
 export function withinPlan(usage: { ai: number; handoff: number }, plan: Plan): boolean {
   return usage.ai < plan.aiPerMonth && usage.handoff < plan.handoffPerMonth;
 }
+
+// ── entitlement (Krispy Cloud billing) ───────────────────────────────────────
+// The gate reads a pre-computed snapshot pushed here by @krispy/billing (the DB
+// source of truth lives in the payment service / Postgres, which workerd can't
+// reach — so we mirror the decision into KV over one guarded HTTP call, no polling).
+// A `null` limit means "unmetered" (Infinity can't survive JSON).
+export const kEntitlement = (t: string) => `entitlement:${t}`;
+
+export interface SnapshotLimits {
+  aiPerMonth: number | null;
+  handoffPerMonth: number | null;
+}
+export interface EntitlementSnapshot {
+  plan: string;
+  status: string;
+  entitled: boolean;
+  limits: SnapshotLimits;
+  trialEndsAt: string | null;
+  currentPeriodEnd: string | null;
+  updatedAt: string;
+}
+
+export interface Entitlement {
+  entitled: boolean;
+  plan: string;
+  status: string;
+  /** Usage caps as a `Plan` (null snapshot limits → Infinity), ready for withinPlan. */
+  plan_limits: Plan;
+}
+
+const UNMETERED: Plan = { aiPerMonth: Infinity, handoffPerMonth: Infinity };
+const cap = (n: number | null): number => (n == null ? Infinity : n);
+
+export async function writeEntitlement(
+  env: Env,
+  tenantId: string,
+  snap: EntitlementSnapshot,
+): Promise<void> {
+  await env.KRISPY_KV.put(kEntitlement(tenantId), JSON.stringify(snap));
+}
+
+export async function readEntitlement(
+  env: Env,
+  tenantId: string,
+): Promise<EntitlementSnapshot | null> {
+  const raw = await env.KRISPY_KV.get(kEntitlement(tenantId));
+  return raw ? (JSON.parse(raw) as EntitlementSnapshot) : null;
+}
+
+/**
+ * THE gate the Worker calls before serving Cloud features. Self-host ("self") is
+ * always entitled and unmetered. A Cloud tenant is entitled per its last synced
+ * snapshot; a tenant with no snapshot fails closed (no billing state = no access).
+ */
+export async function entitled(env: Env, tenantId: string): Promise<Entitlement> {
+  if (tenantId === "self") {
+    return { entitled: true, plan: "free", status: "active", plan_limits: UNMETERED };
+  }
+  const snap = await readEntitlement(env, tenantId);
+  if (!snap) return { entitled: false, plan: "cloud", status: "none", plan_limits: UNMETERED };
+  return {
+    entitled: snap.entitled,
+    plan: snap.plan,
+    status: snap.status,
+    plan_limits: {
+      aiPerMonth: cap(snap.limits.aiPerMonth),
+      handoffPerMonth: cap(snap.limits.handoffPerMonth),
+    },
+  };
+}

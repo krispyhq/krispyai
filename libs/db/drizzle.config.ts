@@ -4,7 +4,7 @@ import { defineConfig } from "drizzle-kit";
 // .env automatically; the `!` asserts it's present — the CLI errors clearly if not.
 export default defineConfig({
   dialect: "postgresql",
-  schema: ["./src/schema.ts", "./src/auth-schema.ts"],
+  schema: ["./src/schema.ts", "./src/auth-schema.ts", "./src/billing-schema.ts"],
   out: "./migrations",
   dbCredentials: {
     url: process.env.DATABASE_URL!,

@@ -5,10 +5,15 @@
 // Boots without CREEM_API_KEY (falls back to Mock); goes live when the key is set.
 import { Hono } from "hono";
 import { z } from "zod";
+import { billingRepo, pushEntitlement } from "@krispy/billing";
 import { resolveProvider, type WebhookEvent } from "./provider.js";
+import { createBillingApp } from "./billing.js";
 
 const provider = resolveProvider();
 const app = new Hono();
+
+// Krispy Cloud billing (subscriptions, trials, entitlement) under /api/billing.
+app.route("/api/billing", createBillingApp({ provider, repo: billingRepo, sync: pushEntitlement }));
 
 app.get("/health", (c) =>
   c.json({

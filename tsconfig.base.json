@@ -18,6 +18,7 @@
       "@krispy/analytics/events": ["./libs/analytics/src/events.ts"],
       "@krispy/api-types": ["./libs/api-types/src/index.ts"],
       "@krispy/auth": ["./libs/auth/src/index.ts"],
+      "@krispy/billing": ["./libs/billing/src/index.ts"],
       "@krispy/config": ["./libs/config/src/index.ts"],
       "@krispy/db": ["./libs/db/src/index.ts"],
       "@krispy/email": ["./libs/email/src/index.ts"],

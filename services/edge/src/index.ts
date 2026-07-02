@@ -24,7 +24,10 @@ import {
   linkThreadSession,
   meter,
   getUsage,
-  planFor,
+  entitled,
+  withinPlan,
+  writeEntitlement,
+  type EntitlementSnapshot,
 } from "./store";
 
 export { SessionDO };
@@ -59,6 +62,8 @@ export default {
     if (request.method === "POST" && path === "/api/contact") return handleContact(request, env);
     if (request.method === "POST" && path === "/api/telegram/webhook")
       return handleWebhook(request, env);
+    if (request.method === "POST" && path === "/api/billing/entitlement")
+      return handleEntitlementSync(request, env);
     if (request.method === "GET" && path === "/api/usage") return handleUsage(request, env);
 
     // GET /api/session/:sessionId/ws  → forward the upgrade to the session's DO.
@@ -87,6 +92,18 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
     return json(env, { error: "sessionId and message required" }, 400);
   }
   const tenantId = body.tenantId || DEFAULT_TENANT;
+
+  // Entitlement gate — before serving any Cloud feature. Self-host is always
+  // entitled + unmetered; a Cloud tenant must have a valid (trial/active) sub and
+  // be under its monthly cap. Push-driven: the snapshot was synced by billing.
+  const ent = await entitled(env, tenantId);
+  if (!ent.entitled) {
+    return json(env, { error: "subscription_required", plan: ent.plan, status: ent.status }, 402);
+  }
+  if (!withinPlan(await getUsage(env, tenantId), ent.plan_limits)) {
+    return json(env, { error: "usage_limit_reached", plan: ent.plan }, 429);
+  }
+
   const tenant = await getTenant(env, tenantId);
   const stub = sessionStub(env, tenantId, body.sessionId);
 
@@ -170,9 +187,41 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
   return new Response("ok");
 }
 
+// ── POST /api/billing/entitlement ──────────────────────────────────────────
+// Internal push endpoint: @krispy/billing (payment webhook / trial start) mirrors
+// a tenant's entitlement snapshot into KV so the gate can read it. Guarded by a
+// shared secret — never exposed to the widget/browser.
+async function handleEntitlementSync(request: Request, env: Env): Promise<Response> {
+  if (
+    !env.BILLING_SYNC_SECRET ||
+    request.headers.get("x-billing-sync-secret") !== env.BILLING_SYNC_SECRET
+  ) {
+    return new Response("forbidden", { status: 403 });
+  }
+  const body = (await request.json().catch(() => null)) as {
+    tenantId?: string;
+    snapshot?: EntitlementSnapshot;
+  } | null;
+  if (!body?.tenantId || !body.snapshot) {
+    return json(env, { error: "tenantId and snapshot required" }, 400);
+  }
+  await writeEntitlement(env, body.tenantId, body.snapshot);
+  return json(env, { ok: true });
+}
+
 // ── GET /api/usage ─────────────────────────────────────────────────────────
+// Metering readout wired to the plan: usage counters vs the entitlement's caps.
 async function handleUsage(request: Request, env: Env): Promise<Response> {
   const tenantId = new URL(request.url).searchParams.get("t") || DEFAULT_TENANT;
   const usage = await getUsage(env, tenantId);
-  return json(env, { tenantId, usage, plan: planFor(tenantId) });
+  const ent = await entitled(env, tenantId);
+  return json(env, {
+    tenantId,
+    usage,
+    plan: ent.plan,
+    entitled: ent.entitled,
+    status: ent.status,
+    limits: ent.plan_limits,
+    withinLimits: withinPlan(usage, ent.plan_limits),
+  });
 }

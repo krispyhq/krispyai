@@ -2,10 +2,11 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as appSchema from "./schema";
 import * as authSchema from "./auth-schema";
+import * as billingSchema from "./billing-schema";
 
-// App tables + Better Auth tables in one schema so both the relational query
-// API (db.query.*) and the Better Auth Drizzle adapter see every table.
-const schema = { ...appSchema, ...authSchema };
+// App tables + Better Auth tables + billing in one schema so both the relational
+// query API (db.query.*) and the Better Auth Drizzle adapter see every table.
+const schema = { ...appSchema, ...authSchema, ...billingSchema };
 
 // Defaults to the docker-compose Postgres so `./tilt_up.sh` boots with zero extra setup.
 // postgres.js connects lazily — the API serves /health + OpenAPI even before Postgres is up,

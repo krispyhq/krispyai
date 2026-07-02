@@ -17,6 +17,10 @@ import {
   getTenant,
   withinPlan,
   planFor,
+  entitled,
+  writeEntitlement,
+  readEntitlement,
+  type EntitlementSnapshot,
 } from "../src/store";
 import type { Env } from "../src/types";
 
@@ -103,6 +107,50 @@ describe("store", () => {
   test("plan gate", () => {
     expect(withinPlan({ ai: 0, handoff: 0 }, planFor("self"))).toBe(true);
     expect(withinPlan({ ai: 5, handoff: 0 }, { aiPerMonth: 5, handoffPerMonth: 10 })).toBe(false);
+  });
+});
+
+// ── entitlement gate (Krispy Cloud billing) ──────────────────────────────────
+describe("entitlement", () => {
+  const cloudSnap = (over: Partial<EntitlementSnapshot> = {}): EntitlementSnapshot => ({
+    plan: "cloud",
+    status: "trialing",
+    entitled: true,
+    limits: { aiPerMonth: 5000, handoffPerMonth: null },
+    trialEndsAt: "2026-07-17T00:00:00Z",
+    currentPeriodEnd: null,
+    updatedAt: "2026-07-03T00:00:00Z",
+    ...over,
+  });
+
+  test("self-host is always entitled + unmetered", async () => {
+    const ent = await entitled(fakeEnv(), "self");
+    expect(ent.entitled).toBe(true);
+    expect(ent.plan_limits).toEqual({ aiPerMonth: Infinity, handoffPerMonth: Infinity });
+  });
+
+  test("cloud tenant with no snapshot fails closed", async () => {
+    const ent = await entitled(fakeEnv(), "tenant_x");
+    expect(ent.entitled).toBe(false);
+  });
+
+  test("synced snapshot round-trips and drives the gate; null cap → Infinity", async () => {
+    const env = fakeEnv();
+    await writeEntitlement(env, "tenant_42", cloudSnap());
+    expect((await readEntitlement(env, "tenant_42"))?.plan).toBe("cloud");
+    const ent = await entitled(env, "tenant_42");
+    expect(ent.entitled).toBe(true);
+    expect(ent.plan_limits.aiPerMonth).toBe(5000);
+    expect(ent.plan_limits.handoffPerMonth).toBe(Infinity); // null → unmetered
+    // metering vs plan: at the cap, gated
+    expect(withinPlan({ ai: 5000, handoff: 0 }, ent.plan_limits)).toBe(false);
+    expect(withinPlan({ ai: 4999, handoff: 1e9 }, ent.plan_limits)).toBe(true);
+  });
+
+  test("a gated (canceled/expired) snapshot revokes access", async () => {
+    const env = fakeEnv();
+    await writeEntitlement(env, "tenant_42", cloudSnap({ status: "canceled", entitled: false }));
+    expect((await entitled(env, "tenant_42")).entitled).toBe(false);
   });
 });
 

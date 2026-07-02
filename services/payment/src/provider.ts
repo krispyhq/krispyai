@@ -29,6 +29,8 @@ export interface PaymentProvider {
   createCheckout(input: CheckoutInput): Promise<CheckoutResult>;
   /** Returns the event if the signature is valid, else null. */
   verifyWebhook(rawBody: string, signature: string | null): WebhookEvent | null;
+  /** Self-service billing portal (manage card, cancel, invoices) for a customer. */
+  createPortal(customerId: string): Promise<{ url: string }>;
 }
 
 function parseEvent(rawBody: string): WebhookEvent {
@@ -86,6 +88,27 @@ export class CreemProvider implements PaymentProvider {
     const b = Buffer.from(expected);
     if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
     return parseEvent(rawBody);
+  }
+
+  // Billing portal (verified against docs.creem.io):
+  //   POST {base}/v1/customers/billing  header `x-api-key`  body { customer_id }
+  //   → { customer_portal_link }  (older docs call it `billing_portal_url`).
+  async createPortal(customerId: string): Promise<{ url: string }> {
+    const res = await fetch(`${this.baseUrl}/v1/customers/billing`, {
+      method: "POST",
+      headers: { "x-api-key": this.apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ customer_id: customerId }),
+    });
+    if (!res.ok) {
+      throw new Error(`Creem portal failed (${res.status}): ${await res.text()}`);
+    }
+    const data = (await res.json()) as {
+      customer_portal_link?: string;
+      billing_portal_url?: string;
+    };
+    const url = data.customer_portal_link ?? data.billing_portal_url;
+    if (!url) throw new Error("Creem portal: no portal url in response");
+    return { url };
   }
 }
 
@@ -152,6 +175,20 @@ export class DodoProvider implements PaymentProvider {
     if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
     return parseEvent(rawBody);
   }
+
+  async createPortal(customerId: string): Promise<{ url: string }> {
+    // TODO(dodo): call Dodo's real customer-portal endpoint. Placeholder mirrors
+    // the Creem shape so the interface is satisfied and the wiring is obvious.
+    const res = await fetch(`${this.baseUrl}/v1/customers/${customerId}/portal`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" },
+    });
+    if (!res.ok) throw new Error(`Dodo portal failed (${res.status}): ${await res.text()}`);
+    const data = (await res.json()) as { url?: string; link?: string };
+    const url = data.url ?? data.link;
+    if (!url) throw new Error("Dodo portal: no portal url in response");
+    return { url };
+  }
 }
 
 // ---- Mock (local dev / tests) ---------------------------------------------
@@ -175,6 +212,10 @@ export class MockProvider implements PaymentProvider {
     } catch {
       return null;
     }
+  }
+
+  async createPortal(customerId: string): Promise<{ url: string }> {
+    return { url: `https://mock.checkout.local/portal?customer=${customerId}` };
   }
 }
 

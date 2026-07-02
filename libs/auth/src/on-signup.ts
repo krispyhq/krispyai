@@ -1,5 +1,6 @@
 import { PostHog } from "posthog-node";
 import { sendEmail } from "@krispy/email";
+import { billingRepo, snapshotForRow, pushEntitlement } from "@krispy/billing";
 // Server-safe event catalog — same names/types the client's `track` uses. Import from
 // the /events subpath (no browser SDK) so this server module stays import-safe.
 import { serverEvent, securityEvent } from "@krispy/analytics/events";
@@ -42,6 +43,18 @@ export async function onUserSignedUp(user: {
     await sendEmail({ to: user.email, template: "welcome", props: { name } });
   } catch (err) {
     console.error("[auth] welcome email failed", err);
+  }
+
+  // (c) start the 14-day no-card Krispy Cloud trial. Every Better Auth signup is a
+  // Cloud signup (self-host has no accounts), so the tenant seam is the user id.
+  // Best-effort: a billing hiccup must never break sign-up. Idempotent in the repo.
+  try {
+    const sub = await billingRepo.startTrial(user.id, user.id);
+    // Push the trial snapshot to the edge gate so the trial is entitled immediately
+    // (env-gated no-op if the Worker sync isn't configured).
+    await pushEntitlement(sub.tenantId, snapshotForRow(sub));
+  } catch (err) {
+    console.error("[auth] trial start failed", err);
   }
 }
 

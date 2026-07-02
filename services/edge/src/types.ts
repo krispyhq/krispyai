@@ -31,6 +31,8 @@ export interface Env {
   ALLOWED_ORIGIN?: string;
   /** BYO AI provider key (future adapter). */
   AI_API_KEY?: string;
+  /** Shared secret guarding POST /api/billing/entitlement (billing → gate push). */
+  BILLING_SYNC_SECRET?: string;
 }
 
 /** Message pushed over the DO WebSocket to the visitor's browser. */

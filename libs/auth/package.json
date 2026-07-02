@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@krispy/analytics": "workspace:*",
+    "@krispy/billing": "workspace:*",
     "@krispy/db": "workspace:*",
     "@krispy/email": "workspace:*",
     "better-auth": "^1.6.23",
