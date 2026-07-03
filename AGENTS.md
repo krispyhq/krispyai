@@ -19,6 +19,8 @@ This is a **bun-workspace monorepo** wrapped by **Nx** (task graph + enforced bo
 
 If you're about to create a file, first decide which of these three it belongs to. If it doesn't obviously fit one, ask — don't invent a fourth top-level folder.
 
+> **`packages/` is the deliberate home for publishable/embeddable artifacts distributed to third parties** (the widget today; later an npm SDK) — a 4th exposure bucket alongside `apps`/`services`/`libs`, distinguished by _who consumes the built output: an external party, not our own deploy._
+
 ## 2. The map — all 14 packages
 
 ```
