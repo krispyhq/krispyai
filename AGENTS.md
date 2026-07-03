@@ -13,7 +13,7 @@ This is a **bun-workspace monorepo** wrapped by **Nx** (task graph + enforced bo
 
 | Folder      | Role                                | Served?                          | Examples                                                                                                                      |
 | ----------- | ----------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `apps/`     | what **humans** see                 | public UI                        | `@krispy/web` (Next.js), `@krispy/landing` (marketing), `@krispy/mobile` (Expo/React Native)                                     |
+| `apps/`     | what **humans** see                 | public UI                        | `@krispy/web` (Next.js dashboard), `@krispy/mobile` (Expo/React Native). Marketing landing + blog live in the `krispy-site` repo. |
 | `services/` | what has a **URL** / its own deploy | served to other code             | `@krispy/api` (Hono + OpenAPI), `@krispy/payment` (Creem adapter), `@krispy/ai-worker` (background, no URL)                      |
 | `libs/`     | **shared** code                     | **never served** — consumed only | `@krispy/ui`, `@krispy/auth`, `@krispy/db`, `@krispy/ai`, `@krispy/analytics`, `@krispy/email`, `@krispy/config`, `@krispy/api-types` |
 
@@ -21,14 +21,14 @@ If you're about to create a file, first decide which of these three it belongs t
 
 > **`packages/` is the deliberate home for publishable/embeddable artifacts distributed to third parties** (the widget today; later an npm SDK) — a 4th exposure bucket alongside `apps`/`services`/`libs`, distinguished by _who consumes the built output: an external party, not our own deploy._
 
-## 2. The map — all 14 packages
+## 2. The map — all 12 packages (marketing landing + blog moved to `krispy-site`)
 
 ```
 krispyai/
 ├── apps/
 │   ├── web/          @krispy/web       Next.js App Router — renders @krispy/ui, live Better Auth login
-│   ├── landing/      @krispy/landing   public marketing site (@krispy/ui hero + shared <Analytics/>)
 │   └── mobile/       @krispy/mobile    real Expo / React Native starter rendering shared @krispy/ui tokens
+│   (marketing landing + blog moved to the krispy-site repo: github.com/lonormaly/krispy-site)
 ├── services/
 │   ├── api/          @krispy/api       Hono + OpenAPI (/health, /docs) — validates @krispy/api-types, mounts Better Auth
 │   ├── payment/      @krispy/payment   Creem adapter + Mock provider + webhooks (/checkout)

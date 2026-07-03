@@ -1,0 +1,15 @@
+{
+  "_immortermManaged": true,
+  "hooks": {
+    "after_tool_use": [
+      {
+        "command": "/Users/shaisnir/Development/krispyai/.immorterm/hooks/lib/windsurf-adapter.sh"
+      }
+    ],
+    "session_end": [
+      {
+        "command": "/Users/shaisnir/Development/krispyai/.immorterm/hooks/lib/windsurf-adapter.sh"
+      }
+    ]
+  }
+}

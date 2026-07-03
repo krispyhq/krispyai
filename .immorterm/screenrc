@@ -1,0 +1,82 @@
+# ImmorTerm - Project Screen Configuration
+# Per-project: <workspace>/.immorterm/screenrc  (themed, project-specific)
+# Global fallback: $HOME/.immorterm/scripts/screenrc  (default theme)
+
+# Disable alternate screen buffer for native VS Code scrolling
+# XT enables xterm title passthrough to VS Code
+termcapinfo xterm* ti@:te@:XT
+
+# Enable dynamic titles so applications (like Claude Code) can set window titles via OSC sequences
+# OSC 0/2 sequences trigger ChangeAKA() which updates %t in the status bar
+# and writes the title to a file for VS Code extension IPC
+defdynamictitle on
+
+# Backtick command to extract project name from path (runs once)
+backtick 2 0 0 basename $SCREEN_PROJECT_DIR
+
+# ImmorTerm branded status bar using hardstatus
+# Left: project name / window title | Right: AI stats + last activity time + ImmorTerm branding
+# %2` = project name (backtick 2), %t = window title
+# %Z = AI stats pushed via OSC 777 from VS Code extension (event-driven, zero polling!)
+# %I = last I/O activity time (ImmorTerm C code feature - zero polling!)
+# Color gradient: dark purple -> indigo -> purple -> violet -> magenta
+# IMPORTANT: Space before %= is required! pad_expand() has a bug where if a rendition
+# position is at the exact same buffer position as CHRPAD, it never gets adjusted
+# during padding expansion, causing padding spaces to inherit wrong colors.
+hardstatus alwayslastline '%{G#001F3F#003366#00447A#004C8C#0066B3#0080D9#00A0E0}%{= #FFFFFF}  %2`%{= #FFFFFF} /%{= #FFFFFF} %t %?%K%?%=%{= #FFA500}%?%Z%? %=%{= #FFFFFF} Last:%{= #FFFFFF} %I%{= #87CEEB} %J%{S#87CEEB} ImmorTerm  %{-}'
+
+# Use xterm-256color for better compatibility with tools like Claude Code
+# (screen-256color can trigger different execution strategies in some applications)
+term xterm-256color
+truecolor on
+
+# Prevent output from getting stuck on flow control
+# This helps with tools that run background processes (like Claude Code)
+defflow off
+
+# Use non-blocking I/O to prevent screen from blocking on slow terminal writes
+defnonblock on
+
+# Increase output buffer limit from default 256 bytes to 64KB.
+# Claude Code produces large output bursts that easily exceed 256 bytes,
+# triggering defnonblock's 1-second pause. 64KB prevents this under normal use.
+defobuflimit 65536
+
+# UTF-8 encoding for proper Unicode character support in titles
+defutf8 on
+utf8 on on
+defencoding UTF-8
+encoding UTF-8 UTF-8
+
+# Large scrollback buffer
+defscrollback 50000
+
+# Disable startup message
+startup_message off
+
+# Disable visual bell
+vbell off
+
+# Auto-detach on hangup (keeps session alive if VS Code closes)
+autodetach on
+
+# ImmorTerm: Scrollback dump on reattach
+# DISABLED: The log file approach in screen-auto already handles scrollback
+# restoration properly. DumpScrollbackToTerminal captures visual terminal state
+# with cursor positioning, which causes garbled output. The log file captures
+# the raw byte stream which works correctly.
+# Set to "on" to enable screen's internal scrollback dump (not recommended).
+scrollback_dump off
+
+# Set ZDOTDIR so zsh reads our custom .zshrc (which sources shell-init.zsh)
+# Note: Using setenv instead of a wrapper script to avoid PTY issues with Claude Code
+setenv ZDOTDIR $HOME/.immorterm/scripts
+
+# Use direct login shell (no wrapper - wrapper scripts cause Claude Code commands to hang)
+shell -/bin/zsh
+
+# F5 toggles between AI stats modes (process stats vs Claude API stats)
+bindkey -k k5 aistatstoggle
+
+# Don't set shelltitle - let screen-auto and extension control the title
+# (shelltitle "$WINDOW" would conflict with defdynamictitle)

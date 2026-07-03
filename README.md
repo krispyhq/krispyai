@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="apps/landing/public/brand/hero.png" alt="Buttr, the Krispy croissant, handing a chat conversation off to a human" width="640" />
+<img src="apps/web/public/brand/hero.png" alt="Buttr, the Krispy croissant, handing a chat conversation off to a human" width="640" />
 
 # Krispy AI 🥐
 
@@ -126,12 +126,12 @@ Don't want to touch a terminal? **[Krispy Cloud](https://krispyai.com)** is the 
 
 ## Repo structure
 
-The self-hostable core is **`packages/widget` + `services/edge`** — those two deploy independently of everything else. The rest is the surrounding site and design system.
+This is the **lean, self-hostable product** repo: the dashboard, the edge Worker, the payment service, the embeddable widget, and the shared libs. The self-hostable core is **`packages/widget` + `services/edge`** — those two deploy independently of everything else.
+
+> **Marketing site (landing + blog):** [github.com/lonormaly/krispy-site](https://github.com/lonormaly/krispy-site) — the public marketing site and blog live in their own repo and deploy on their own.
 
 ```
 apps/
-  landing/    the marketing site
-  blog/       the blog (also the GEO/AI-search showcase)
   web/        the app dashboard
   mobile/     Expo starter
 services/
@@ -168,7 +168,7 @@ PRs welcome — this repo is a template people clone, so clarity and convention 
 
 <div align="center">
 
-<img src="apps/landing/public/brand/buttr-chill.png" alt="Buttr the croissant, relaxed" width="120" />
+<img src="apps/web/public/brand/buttr-chill.png" alt="Buttr the croissant, relaxed" width="120" />
 
 **à bientôt 🥐**
 

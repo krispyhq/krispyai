@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "immorterm": {
+      "type": "stdio",
+      "command": "/Users/shaisnir/.immorterm/bin/immorterm-ai",
+      "args": [
+        "mcp",
+        "serve"
+      ]
+    },
+    "immorterm-memory": {
+      "type": "http",
+      "url": "http://127.0.0.1:8765/mcp/claude-code/lonormaly-krispyai"
+    }
+  }
+}

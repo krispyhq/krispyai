@@ -1,0 +1,47 @@
+{
+  "enabled": true,
+  "fileBrowserMode": "collapsed",
+  "fileBrowserWidth": 220,
+  "projectId": "lonormaly-krispyai",
+  "services": {
+    "mcpGateway": {
+      "enabled": true
+    },
+    "memory": {
+      "enabled": true,
+      "graph": false
+    },
+    "vendors": {
+      "aider": {
+        "enabled": true
+      },
+      "claudeCode": {
+        "enabled": true
+      },
+      "cline": {
+        "enabled": true
+      },
+      "codex": {
+        "enabled": true
+      },
+      "copilot": {
+        "enabled": true
+      },
+      "cursor": {
+        "enabled": true
+      },
+      "gemini": {
+        "enabled": true
+      },
+      "opencode": {
+        "enabled": true
+      },
+      "windsurf": {
+        "enabled": true
+      }
+    }
+  },
+  "terminalMode": "ai",
+  "theme": "Ocean Depths",
+  "version": 3
+}

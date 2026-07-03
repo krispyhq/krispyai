@@ -1,0 +1,27 @@
+{
+  "_immortermManaged": true,
+  "version": 1,
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "bash": "export IMMORTERM_AI_TOOL=copilot; exec /Users/shaisnir/Development/krispyai/.immorterm/hooks/immorterm-memory-guide.sh",
+        "timeoutSec": 30
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "bash": "export IMMORTERM_AI_TOOL=copilot; exec /Users/shaisnir/Development/krispyai/.immorterm/hooks/immorterm-session-end.sh",
+        "timeoutSec": 30
+      }
+    ],
+    "PostToolUse": [
+      {
+        "type": "command",
+        "bash": "export IMMORTERM_AI_TOOL=copilot; exec /Users/shaisnir/Development/krispyai/.immorterm/hooks/immorterm-code-change-capture.sh",
+        "timeoutSec": 30
+      }
+    ]
+  }
+}

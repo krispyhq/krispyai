@@ -130,7 +130,7 @@ export const ButtrExpressions: Story = {
     <div className="bg-background p-10 text-foreground">
       <h1 className="font-display text-4xl font-black tracking-tight">Buttr · the mascot 🥐</h1>
       <p className="mt-1 font-mono text-xs text-muted-foreground">
-        Served from /brand (apps/landing/public/brand via staticDirs).
+        Served from /brand (libs/ui/public/brand via staticDirs).
       </p>
       <div className="mt-6 grid grid-cols-2 gap-6 sm:grid-cols-4">
         {BUTTR.map((name) => (

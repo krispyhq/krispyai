@@ -7,7 +7,8 @@ import { PostHogProvider } from "posthog-js/react";
 import Clarity from "@microsoft/clarity";
 import { hasConsent, CONSENT_EVENT } from "./consent";
 
-// Shared client analytics for EVERY app in the monorepo (apps/web, apps/landing, …).
+// Shared client analytics for EVERY app that captures it (apps/web here; the
+// marketing site in the krispy-site repo reuses this same provider).
 // Drop <Analytics> into the root layout once; behaviour is identical everywhere.
 //
 // NEXT_PUBLIC_* are inlined at build time. All three keys are optional: with none

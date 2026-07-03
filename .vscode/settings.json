@@ -1,0 +1,11 @@
+{
+    "immorterm.enabled": true,
+    "immorterm.statusBarTheme": "Ocean Depths",
+    "immorterm.terminalMode": "ai",
+    "terminal.integrated.defaultProfile.osx": "ImmorTerm",
+    "terminal.integrated.defaultProfile.linux": "ImmorTerm",
+    "terminal.integrated.minimumContrastRatio": 1,
+    "terminal.integrated.gpuAcceleration": "off",
+    "immorterm.services.memory.enabled": true,
+    "immorterm.services.mcpGateway.enabled": true
+}

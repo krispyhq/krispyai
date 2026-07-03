@@ -5,7 +5,7 @@ import { AwningStripe, ButtrSays, Receipt, Section, Stamp } from "./ui/krispy";
 /**
  * The Krispy "boulangerie moderne" bold layer — mascot, awning, stamp, receipt,
  * and color-block sections. Buttr PNGs are served from /brand (see .storybook/main.ts
- * staticDirs → apps/landing/public/brand).
+ * staticDirs → libs/ui/public/brand).
  */
 const meta = {
   title: "Krispy/Bold Layer",

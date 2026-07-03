@@ -25,7 +25,6 @@ All served roles use project-scoped names: `<service>.stack`
 | Role                             | URL                                     | Type                   |
 | -------------------------------- | --------------------------------------- | ---------------------- |
 | Web (`apps/web`)                 | `http://web.krispy.localhost:1355`       | Bun / Next.js process  |
-| Blog (`apps/blog`)               | `http://blog.krispy.localhost:1355`      | Next.js (static / SSG) |
 | API (`services/api`)             | `http://api.krispy.localhost:1355`       | Bun process            |
 | Payment (`services/payment`)     | `http://payment.krispy.localhost:1355`   | Bun process            |
 | Storybook (`libs/ui`)            | `http://storybook.krispy.localhost:1355` | Storybook dev server   |
@@ -38,11 +37,10 @@ The Tilt dashboard stays on `http://localhost:10380` (not proxied through portle
 Portless routes are subdomains-with-a-port (`web.krispy.localhost:1355`). Two things dislike that shape — both fixed by running the app directly on a pinned plain-localhost port:
 
 - **HMR / WebSockets:** portless doesn't proxy WebSocket connections, so Next.js hot-reload won't connect through the portless URL (it retries in the console — expected). Edit-refresh works; for live HMR, run `PORT=3000 bun --filter @krispy/web dev`.
-- **Google (and strict) OAuth:** Google's loopback exception only accepts `localhost` / `127.0.0.1` — **not** `*.localhost` subdomains — so `web.krispy.localhost:1355` is rejected as an authorized redirect URI. To test Google/social sign-in locally, run web (and landing) on a pinned port instead:
+- **Google (and strict) OAuth:** Google's loopback exception only accepts `localhost` / `127.0.0.1` — **not** `*.localhost` subdomains — so `web.krispy.localhost:1355` is rejected as an authorized redirect URI. To test Google/social sign-in locally, run web on a pinned port instead:
 
   ```bash
   PORT=3000 bun --filter @krispy/web dev       # → http://localhost:3000 (bypasses portless)
-  PORT=3002 bun --filter @krispy/landing dev   # → http://localhost:3002
   ```
 
   Then point `BETTER_AUTH_URL` + `BETTER_AUTH_TRUSTED_ORIGINS` / `WEB_ORIGIN` at `http://localhost:3000`, and register `http://localhost:3000/api/auth/callback/<provider>` as an authorized redirect URI in the provider's console. (GitHub OAuth is lenient and works through the portless URL; Google is the strict one.)

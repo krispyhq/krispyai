@@ -18,7 +18,6 @@ fi
 # Packages that run standalone and read env (apps, services, + libs/db for drizzle).
 PKGS=(
   apps/web
-  apps/landing
   services/api
   services/payment
   services/ai-worker

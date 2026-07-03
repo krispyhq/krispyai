@@ -1,0 +1,3 @@
+#!/bin/bash
+# immorterm-managed: cline-PostToolUse
+exec "/Users/shaisnir/Development/krispyai/.immorterm/hooks/lib/cline-adapter.sh" "PostToolUse" "$@"

@@ -54,8 +54,9 @@ No other package imports `@krispy/payment` (it's a standalone service), so nothi
 
 A lib — **no Tilt resource of its own** — but it has **consumers**, so this is the one deletion with a downstream. `@krispy/ai` is imported by:
 
-- `services/ai-worker` (the whole point of the worker), and
-- `apps/landing/app/llms.ts`.
+- `services/ai-worker` (the whole point of the worker).
+
+  (The marketing site's `apps/landing/app/llms.ts` also imported it, but landing moved to the [`krispy-site`](https://github.com/lonormaly/krispy-site) repo — handle that consumer there.)
 
 So "delete `libs/ai`" really means "delete `libs/ai` **and** the code that consumes it." Decide first: are you dropping AI entirely, or swapping the provider? If swapping, keep `libs/ai` and edit `libs/ai/src/providers.ts` instead — don't delete.
 
@@ -67,7 +68,7 @@ To drop AI entirely:
 4. **`.env.example`** — remove `AI_API_KEY` (and its comment block).
 5. **`infra/docker-compose.yml`** — remove the `ai-worker:` service (and the `redis:` service if nothing else uses the queue).
 6. **`scripts/deploy.sh`** — drop `ai-worker` from the `SERVICES` array.
-7. **`apps/landing/app/llms.ts`** — remove the `@krispy/ai` import / usage (or delete the file if it's AI-only).
+7. *(marketing site, in the `krispy-site` repo)* **`apps/landing/app/llms.ts`** — remove the `@krispy/ai` import / usage there.
 8. **`.mcp.json`** — no AI-specific server ships (context7/postgres/filesystem/mobbin are unrelated); nothing to remove.
 9. **`tsconfig.base.json`** — remove the `"@krispy/ai"` **and** `"@krispy/ai-worker"` lines.
 10. `bun install` → `bunx nx run-many -t typecheck`.

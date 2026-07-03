@@ -4,7 +4,7 @@
 
 The target you're migrating **toward** is the three folders and the three laws:
 
-- **`apps/`** — served to humans (a UI). `apps/web`, `apps/landing`, `apps/mobile`.
+- **`apps/`** — served to humans (a UI). `apps/web`, `apps/mobile`. (The marketing landing + blog live in the `krispy-site` repo.)
 - **`services/`** — served to machines (a URL, a queue, its own deploy). `services/api`, `services/ai-worker`, `services/payment`.
 - **`libs/`** — served to no one, only imported. `libs/db`, `libs/auth`, `libs/ui`, `libs/config`, `libs/api-types`, …
 

@@ -4,7 +4,7 @@ This is a bun-workspace monorepo. Read this before writing code; it tells you wh
 
 ## Where things live
 
-- `apps/` — public UI. `apps/web` (Next.js app), `apps/landing` (public marketing), `apps/mobile` (React Native / Expo — real starter).
+- `apps/` — public UI. `apps/web` (Next.js dashboard), `apps/mobile` (React Native / Expo — real starter). (The public marketing landing + blog live in the `krispy-site` repo — github.com/lonormaly/krispy-site.)
 - `services/` — anything with a URL. `services/api` (Hono + OpenAPI), `services/ai-worker` (background load), `services/payment` (Creem adapter).
 - `libs/` — shared, **never served**. `libs/ui` (shadcn + tokens + Storybook), `libs/auth` (Better Auth), `libs/db` (Drizzle), `libs/ai` (Vercel AI SDK), `libs/analytics` (PostHog + Clarity + typed events), `libs/email` (Resend + React Email), `libs/config` (typed env), `libs/api-types` (shared API contract). Import by package name: `@krispy/ui`, `@krispy/db`, …
 
@@ -32,7 +32,7 @@ This is a bun-workspace monorepo. Read this before writing code; it tells you wh
 ## How to work here (hard-won)
 
 - **Portless + HMR:** portless doesn't proxy WebSockets, so Next.js hot-reload won't connect through `web.krispy.localhost:1355` (it'll retry in the console — expected). A manual refresh works; for live HMR run `bun --filter @krispy/web dev` directly.
-- **Portless + OAuth:** Google (and strict OAuth providers) reject `*.localhost:port` redirect URIs — only `localhost`/`127.0.0.1` count as loopback. To test Google/social sign-in locally, run the app on a **pinned port** instead: `PORT=3000 bun --filter @krispy/web dev` (same for `@krispy/landing`), point `BETTER_AUTH_URL`/`trustedOrigins` at `http://localhost:3000`, and register that callback in the provider console. See `docs/portless.md`.
+- **Portless + OAuth:** Google (and strict OAuth providers) reject `*.localhost:port` redirect URIs — only `localhost`/`127.0.0.1` count as loopback. To test Google/social sign-in locally, run the app on a **pinned port** instead: `PORT=3000 bun --filter @krispy/web dev`, point `BETTER_AUTH_URL`/`trustedOrigins` at `http://localhost:3000`, and register that callback in the provider console. See `docs/portless.md`.
 - **Design-system discipline:** every reusable UI element is a `@krispy/ui` component (even "custom" ones). Apps _compose_ `@krispy/ui` — they never inline reusable UI or duplicate styles. Icons: `lucide-react`. For net-new UI, pull real-world references from **Mobbin** (via its MCP) _before_ building, so screens are intentional, not generic AI slop — then implement as `@krispy/ui` components. See `docs/design.md`.
 - **Secrets:** local dev = `.env.local` (git-ignored; never commit); `.env.example` documents every key (`auth` needs `BETTER_AUTH_SECRET` at runtime). Team/prod = **Infisical** as the source of truth (`infisical run -- ./tilt_up.sh`; native k8s + Cloudflare integrations at deploy). See `docs/secrets.md`.
 - **Parallel agents:** isolate every file-touching agent in its own git worktree/branch — never two agents on the same checkout, or they overwrite each other.

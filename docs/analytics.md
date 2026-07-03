@@ -8,7 +8,7 @@ nothing initializes and the apps render/boot exactly as before.
 
 | Concern                                       | Where                                | Package                                     | Env                                                   |
 | --------------------------------------------- | ------------------------------------ | ------------------------------------------- | ----------------------------------------------------- |
-| Client analytics (autocapture, pageviews)     | `apps/web` (+ future `apps/landing`) | `posthog-js` via `@krispy/analytics`         | `NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_POSTHOG_HOST` |
+| Client analytics (autocapture, pageviews)     | `apps/web` (marketing site reuses it from `krispy-site`) | `posthog-js` via `@krispy/analytics`         | `NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_POSTHOG_HOST` |
 | Client **session replay**                     | same                                 | `posthog-js` (`session_recording`)          | same                                                  |
 | Client **error tracking**                     | same                                 | `posthog-js` (`capture_exceptions`)         | same                                                  |
 | Client session recording (Clarity)            | same                                 | `@microsoft/clarity` via `@krispy/analytics` | `NEXT_PUBLIC_CLARITY_ID`                              |
@@ -18,7 +18,8 @@ nothing initializes and the apps render/boot exactly as before.
 ## Client — `@krispy/analytics`
 
 One shared provider, `<Analytics>`, that **every** app drops into its root layout —
-`apps/web` uses it today, `apps/landing` reuses the exact same one. Wired in
+`apps/web` uses it here; the marketing site (in the `krispy-site` repo) reuses the
+exact same one from `@krispy/analytics`. Wired in
 `apps/web/app/layout.tsx`; `next.config.ts` lists `@krispy/analytics` in
 `transpilePackages` (it ships `"use client"` TS source, no build step).
 

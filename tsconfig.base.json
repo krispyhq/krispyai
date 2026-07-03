@@ -29,8 +29,6 @@
       "@krispy/ai-worker": ["./services/ai-worker/src/index.ts"],
       "@krispy/payment": ["./services/payment/src/index.ts"],
       "@krispy/web": ["./apps/web/index.ts"],
-      "@krispy/landing": ["./apps/landing/index.ts"],
-      "@krispy/blog": ["./apps/blog/index.ts"],
       "@krispy/mobile": ["./apps/mobile/index.ts"]
     }
   }

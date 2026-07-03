@@ -1,0 +1,10 @@
+{
+  "_immortermManaged": true,
+  "hooks": {
+    "afterFileEdit": [
+      {
+        "command": "/Users/shaisnir/Development/krispyai/.immorterm/hooks/lib/cursor-adapter.sh"
+      }
+    ]
+  }
+}

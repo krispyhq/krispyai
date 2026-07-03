@@ -1,5 +1,7 @@
 # Writing for AI search (GEO), honestly
 
+> **Note:** the blog (`apps/blog`) moved to the [`krispy-site`](https://github.com/lonormaly/krispy-site) repo along with the rest of the marketing site. This guide is retained for reference; the posts and the tooling it describes now live there.
+
 How to write posts in `apps/blog` that get surfaced and cited by Google's AI features
 **and** by ChatGPT, Gemini, Claude, and Perplexity. This is the applied version of
 Google's own guidance — read the source, it's short and blunt:

@@ -21,7 +21,11 @@ reading your live pages; `robots.txt` is the doorman.** They do not overlap.
 Source of truth for the origin + crawler roster is **`app/seo.ts`** in each app.
 Everything else imports from it.
 
-### `apps/landing` (public marketing site — the priority surface)
+### `apps/landing` — moved to the `krispy-site` repo
+
+> The public marketing site (`apps/landing`) and blog (`apps/blog`) moved to the [`krispy-site`](https://github.com/lonormaly/krispy-site) repo. The SEO/GEO surface described below (robots, sitemap, `llms.txt`, the AI-crawler roster) now lives there. `apps/web` (the dashboard, still in this repo) ships its own `robots.ts` / `sitemap.ts` and is what the `check:seo` gate covers here.
+
+*(Reference — the landing surface, now in `krispy-site`):*
 
 - **`app/robots.ts`** → `/robots.txt`. Allows all search + AI crawlers and points to the
   sitemap. The full 2026 AI-crawler roster is enumerated in `app/seo.ts` (`AI_CRAWLERS`)

@@ -18,7 +18,7 @@ cookie banner" and "we actually don't track without consent."
   `Clarity.init` after consent is granted; it subscribes to the consent event so accepting the
   banner starts trackers live, no refresh.
 - `<ConsentBanner/>` — the wired banner (`@krispy/analytics`), rendering the dumb
-  `@krispy/ui` `<ConsentBanner/>`. Drop it next to `<Analytics/>` (done in `apps/landing`).
+  `@krispy/ui` `<ConsentBanner/>`. Drop it next to `<Analytics/>` (the marketing site in the `krispy-site` repo does this; do the same in any app here that captures analytics).
   Accept → `grantConsent()`; Reject → `denyConsent()` (remembered, trackers stay off).
 
 To verify: load the landing page with `NEXT_PUBLIC_POSTHOG_KEY` set, open devtools → no
@@ -26,9 +26,9 @@ PostHog requests until you click **Accept**.
 
 ### 2. Privacy policy
 
-`apps/landing/app/privacy/page.tsx` — a **template** privacy policy, server-rendered with
-`@krispy/seo` metadata (so it passes `check:seo`). It is clearly marked as a starting point,
-not legal advice. Replace every `[bracketed]` value.
+The template privacy policy (`apps/landing/app/privacy/page.tsx`) — server-rendered with
+`@krispy/seo` metadata — moved with the marketing site to the [`krispy-site`](https://github.com/lonormaly/krispy-site) repo.
+It is a starting point, not legal advice; replace every `[bracketed]` value there.
 
 ### 3. Data-rights endpoints (access + erasure)
 

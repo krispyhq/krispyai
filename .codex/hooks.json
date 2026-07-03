@@ -1,0 +1,25 @@
+{
+  "_immortermManaged": true,
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'export IMMORTERM_AI_TOOL=codex; exec /Users/shaisnir/Development/krispyai/.immorterm/hooks/immorterm-memory-guide.sh'"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'export IMMORTERM_AI_TOOL=codex; exec /Users/shaisnir/Development/krispyai/.immorterm/hooks/immorterm-session-end.sh'"
+          }
+        ]
+      }
+    ]
+  }
+}

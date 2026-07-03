@@ -14,7 +14,7 @@ Below is one entry per tool, in the layer order the stack uses — hosting → d
 - **Why we chose it:** Frontend hosting at the edge with a genuinely generous request budget, plus **R2 object storage with zero egress fees** — you're never billed for bandwidth out, which is where S3-style storage quietly gets expensive. Universal SSL, unmetered DDoS, and a global CDN come along for free.
 - **What you get free:** ~100,000 Worker requests/day; unlimited Pages bandwidth + 500 builds/mo; 10 GB R2 with egress always free; free CDN + DDoS.
 - **Watch:** the 100k/day Workers cap is hard, and each call gets 10 ms CPU. Heavy traffic or compute → Workers Paid ($5/mo minimum, 10M requests included).
-- **In this repo:** `apps/web` and `apps/landing` deploy to Cloudflare Workers via the OpenNext adapter. Credentials (`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`) live in CI/deploy, not `.env.local`. See [`docs/deploy.md`](./deploy.md).
+- **In this repo:** `apps/web` (the dashboard) deploys to Cloudflare Workers via the OpenNext adapter. Credentials (`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`) live in CI/deploy, not `.env.local`. See [`docs/deploy.md`](./deploy.md). (The marketing landing + blog moved to the `krispy-site` repo and deploy from there.)
 
 ## Neon — serverless Postgres with branching
 
