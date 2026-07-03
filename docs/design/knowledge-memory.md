@@ -5,6 +5,12 @@
 
 > Confidence tags on every non-obvious claim: `high` (verified in a repo file, cited) · `moderate` (design inference from verified pieces) · `low` (guess, needs confirmation) · `unknown`.
 
+## Locked decisions (founder, 2026-07)
+1. **Model:** open-core, **opt-in, OFF by default** (`KNOWLEDGE_PROVIDER=none`). Open source = the adapter interface + ImmorTerm adapter + null fallback + all wiring. Cloud-managed = we host the sidecar/Factory + own the tenant-auth boundary. Never hard-couple to ImmorTerm (no-lock-in).
+2. **Cold-path home:** a **new `services/memory`** (its own Node service) — *not* `services/payment`. Separation of concerns; knowledge lifecycle ≠ billing.
+3. **Managed tenancy:** **one shared sidecar**, tenant isolation enforced by the Worker-derived pack handle (client never names a pack). Per-tenant sidecars = a future Enterprise tier only.
+4. **Pack handles:** deterministic **non-reversible slug** `tenant-<hash(tenantId)>` (fits `^[a-z0-9-]{1,64}$`); store the `tenantId → packName` mapping in tenant KV for support/debug lookup.
+
 ---
 
 ## 1. Overview & goals
@@ -166,12 +172,9 @@ per turn, before deps.ai():
 
 ### 3.4 The COLD path (Node service — pack build/import/update)
 
-Pack builds are heavy, async, LLM-driven (`public-api.md:38`, `high`) — **cannot** run in the edge Worker (CPU/time limits, and it's a multi-minute poll loop, `knowledge.ts:68 POLL_TIMEOUT_MS=30min`, `high`). This lives in a **Node service**. Two placement options:
+Pack builds are heavy, async, LLM-driven (`public-api.md:38`, `high`) — **cannot** run in the edge Worker (CPU/time limits, and it's a multi-minute poll loop, `knowledge.ts:68 POLL_TIMEOUT_MS=30min`, `high`). This lives in a **Node service**.
 
-| Option | Where | Verdict |
-|---|---|---|
-| **A (recommended)** | Extend `services/payment` (already Node, already the Cloud control-plane that writes entitlements to the edge over one guarded HTTP call — `store.ts:140-159`, `high`) with a `knowledge/` feature folder. | Reuses the existing Node service + the dashboard→edge push pattern. No new deploy. `moderate` |
-| B | `services/ai-worker` (exists, "background load, NO URL", `AGENTS.md:§2`, `high`) | Semantically the *right* home ("ai-worker" = background AI jobs), but it currently has no URL/trigger; the dashboard KB editor needs an endpoint to call. Would need a queue/trigger. `moderate` |
+**DECIDED (founder, 2026-07): a new `services/memory`** — its own dedicated Node service. *Separation of concerns:* the knowledge/kbase lifecycle is a distinct domain from billing (`services/payment`) with its own scaling profile (Factory builds + sidecar imports + R2), so it gets its own service rather than bloating payment with unrelated routes. It exposes the dashboard-facing endpoints (`ensurePack`/`upsertKnowledge`/`export`) and talks to the ImmorTerm Factory + sidecar + R2. *(Rejected: folding into `services/payment` — domain mismatch; `services/ai-worker` — has no URL/trigger for the dashboard to call.)*
 
 Cold flow (port of `knowledge.ts:89-174`, `high`):
 ```
@@ -202,7 +205,7 @@ getRam: KV.get → hit? return : miss? fetch sidecar, KV.put(ttl: 300s), return
 
 ```
                          ┌───────────────── Krispy Cloud control-plane (Node) ──────────────┐
- Dashboard KB editor ───▶│ services/payment · knowledge/   ensurePack/upsertKnowledge/export │
+ Dashboard KB editor ───▶│ services/memory (Node, own deploy)   ensurePack/upsertKnowledge/export │
  (apps/web)              │   → Factory packs.immorterm.com (build→poll→download)             │
                          │   → R2 durable .impack copy                                       │
                          │   → sidecar /api/v1/packs/import/upload                            │
@@ -358,7 +361,7 @@ Effort in ideal-dev-days, `moderate` confidence unless noted. Krispy's "≤3 fil
 | 2 | **Edge hot helpers** | `getRam`/`search` in `ImmortermKnowledge` (port `chat.ts:476-527`), `buildSystemPrompt` 2nd arg, timeout+graceful-empty, unit tests. | 1–2 d | `high` |
 | 3 | **KV RAM cache** | versioned key, TTL, invalidate hook. | 0.5–1 d | `high` |
 | 4 | **Auth / tenant-isolation boundary** | CF Tunnel+Access in front of sidecar; service-token injection; `deriveTenantPack`; the "no client pack name" test. **The real work.** | 2–4 d | `moderate` (infra + security) |
-| 5 | **Node cold lifecycle** | `ensurePack/upsertKnowledge/export` in `services/payment/knowledge/` (port `knowledge.ts`), R2 durable copy, Factory poll loop, dashboard endpoint. | 3–5 d | `moderate` |
+| 5 | **Node cold lifecycle** | `ensurePack/upsertKnowledge/export` in a new `services/memory` (port `knowledge.ts`), R2 durable copy, Factory poll loop, dashboard endpoint. | 3–5 d | `moderate` |
 | 6 | **Dashboard KB editor** | `apps/web` "Knowledge" tab → cold endpoints; size-gate + status UI. | 2–3 d | `moderate` |
 | 7 | **Visitor memory** | `remember/recallVisitor`, session snapshot summarizer, recall injection. | 2–3 d | `moderate` |
 | 8 | **Cloud sidecar hosting + ops** | Deploy managed ImmorTerm sidecar+Factory, backups, per-tenant provisioning, entitlement wiring. | 3–6 d | `low` (ops-heavy, ImmorTerm-side unknowns) |
