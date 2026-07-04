@@ -30,6 +30,7 @@ import {
   writeEntitlement,
   readTenantConfig,
   mergeTenantConfig,
+  publicWidgetConfig,
   type EntitlementSnapshot,
 } from "./store";
 
@@ -77,6 +78,8 @@ export default {
       return handleTenantConfigGet(request, env);
     if (request.method === "POST" && path === "/api/tenant/config")
       return handleTenantConfigSet(request, env);
+    if (request.method === "GET" && path === "/api/widget/config")
+      return handleWidgetConfig(request, env);
     if (request.method === "GET" && path === "/api/usage") return handleUsage(request, env);
 
     // GET /api/session/:sessionId/ws  → forward the upgrade to the session's DO.
@@ -263,6 +266,16 @@ async function handleTenantConfigSet(request: Request, env: Env): Promise<Respon
   }
   await mergeTenantConfig(env, body.tenantId, body.config);
   return json(env, { ok: true });
+}
+
+// ── GET /api/widget/config ───────────────────────────────────────────────────
+// PUBLIC (CORS-*, no secret): the widget's boot-time read of its appearance/forms.
+// Returns ONLY the whitelist projection (publicWidgetConfig) — NEVER botToken/chatId/
+// systemPrompt. The widget must never reach the secret-guarded GET /api/tenant/config.
+async function handleWidgetConfig(request: Request, env: Env): Promise<Response> {
+  const t = new URL(request.url).searchParams.get("t") || DEFAULT_TENANT;
+  const cfg = await readTenantConfig(env, t);
+  return json(env, publicWidgetConfig(cfg));
 }
 
 // ── GET /api/usage ─────────────────────────────────────────────────────────

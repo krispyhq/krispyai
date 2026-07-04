@@ -3,6 +3,27 @@
 // code never hand-rolls a key string.
 import type { Env, TenantConfig } from "./types";
 
+// ── public widget config (secret-free whitelist) ─────────────────────────────
+// The ONLY fields the unauthenticated public widget may read. Secret-free by
+// construction: botToken/chatId/systemPrompt/model are structurally excluded (we
+// project explicit theme keys, never spread cfg). The leak-guard test enforces this.
+export function publicWidgetConfig(cfg: Partial<TenantConfig> | null) {
+  const th = cfg?.theme ?? {};
+  return {
+    theme: {
+      primaryColor: th.primaryColor,
+      launcherColor: th.launcherColor,
+      position: th.position,
+      avatar: th.avatar,
+      greeting: th.greeting,
+      headerTitle: th.headerTitle,
+      radius: th.radius,
+      font: th.font,
+    },
+    // Feature A appends PUBLIC-safe form + connector-CTA projections here.
+  };
+}
+
 // ── key builders (pure) ──────────────────────────────────────────────────────
 export const kThreadToSession = (t: string, threadId: number) => `thread:${t}:${threadId}`;
 export const kSessionToThread = (t: string, sessionId: string) => `session:${t}:${sessionId}`;
