@@ -14,7 +14,7 @@ Open-source live chat with a human handoff to Telegram — the free, self-hostab
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-e39a2b.svg)](./CONTRIBUTING.md)
 [![Docs](https://img.shields.io/badge/docs-Fumadocs-2fbf9e.svg)](./apps/docs)
 [![Built with Cloudflare Workers](https://img.shields.io/badge/built%20with-Cloudflare%20Workers-f38020.svg)](https://developers.cloudflare.com/workers/)
-[![GitHub stars](https://img.shields.io/github/stars/lonormaly/krispyai?style=social)](https://github.com/lonormaly/krispyai)
+[![GitHub stars](https://img.shields.io/github/stars/krispyhq/krispyai?style=social)](https://github.com/krispyhq/krispyai)
 
 </div>
 
@@ -58,7 +58,7 @@ Under the hood it's **one Cloudflare Worker** plus a **hibernatable Durable Obje
 You'll need [Bun](https://bun.com), a Cloudflare account (free), and a Telegram account.
 
 ```sh
-git clone https://github.com/lonormaly/krispyai
+git clone https://github.com/krispyhq/krispyai
 cd krispyai
 bun install
 bun test                 # unit tests, no external services needed
