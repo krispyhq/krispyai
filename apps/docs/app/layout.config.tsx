@@ -13,6 +13,6 @@ export const baseOptions: BaseLayoutProps = {
   links: [
     { text: "docs", url: "/docs", active: "nested-url" },
     // TODO: real GitHub org/repo once public.
-    { text: "github", url: "https://github.com/lonormaly/krispyai" },
+    { text: "github", url: "https://github.com/krispyhq/krispyai" },
   ],
 };
