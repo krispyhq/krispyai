@@ -6,7 +6,8 @@
 //   mirror the AI reply to the topic → answer the visitor. If the AI throws, we
 //   degrade to a human handoff rather than dropping the visitor.
 import type { ChatMessage } from "./ai";
-import { parseHandoff } from "./system-prompt";
+import { parseHandoff, parseForm } from "./system-prompt";
+import type { FormSpec } from "./types";
 
 export const FALLBACK_REPLY = "Thanks — a teammate will jump in here shortly.";
 
@@ -62,6 +63,10 @@ export interface ChatResult {
   handedOff: boolean;
   /** AI was unavailable and we fell back to a human. */
   degraded?: boolean;
+  /** The model asked to raise this lead form (id parsed from [!FORM:<id>]). */
+  formId?: string | null;
+  /** The resolved FormSpec (+ CTA connectors) index.ts attaches for the widget. */
+  form?: FormSpec | null;
 }
 
 export async function chatFlow(deps: ChatDeps, input: ChatInput): Promise<ChatResult> {
@@ -106,10 +111,12 @@ export async function chatFlow(deps: ChatDeps, input: ChatInput): Promise<ChatRe
   }
 
   const { text, handoff } = parseHandoff(raw);
+  // Orthogonal form marker — parsed off the already-handoff-stripped text.
+  const { text: clean, formId } = parseForm(text);
   if (handoff) {
     await deps.meter("handoff");
     await deps.toTopic(threadId, "🙋 AI asked for a human here.");
   }
-  await deps.toTopic(threadId, `🤖 ${text}`);
-  return { reply: text, handoff, handedOff: false };
+  await deps.toTopic(threadId, `🤖 ${clean}`);
+  return { reply: clean, handoff, handedOff: false, formId };
 }

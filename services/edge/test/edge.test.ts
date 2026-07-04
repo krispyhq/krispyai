@@ -5,9 +5,12 @@ import worker from "../src/index";
 import {
   buildSystemPrompt,
   parseHandoff,
+  parseForm,
   HANDOFF_MARKER,
   BREVITY_INSTRUCTION,
 } from "../src/system-prompt";
+import { renderLeadEmail } from "../src/email";
+import { deliverLead } from "../src/index";
 import { parseOwnerReply } from "../src/telegram";
 import { broadcast } from "../src/session-do";
 import { workersAiRunner, MAX_OUTPUT_TOKENS, type ChatMessage } from "../src/ai";
@@ -308,7 +311,8 @@ describe("chatFlow", () => {
   test("normal: AI answers, mirrored to topic, ai metered", async () => {
     const { base, topic, metered } = deps();
     const r = await chatFlow(base, { sessionId: "s", message: "hours?" });
-    expect(r).toEqual({ reply: "Sure, 9am.", handoff: false, handedOff: false });
+    // formId rides along (null — no [!FORM:] in this reply); U3 added it to ChatResult.
+    expect(r).toEqual({ reply: "Sure, 9am.", handoff: false, handedOff: false, formId: null });
     expect(topic).toContain("👤 hours?");
     expect(topic).toContain("🤖 Sure, 9am.");
     expect(metered).toEqual(["ai"]);
@@ -481,5 +485,141 @@ describe("token usage counter", () => {
     expect(await getTokens(env, "self")).toBe(150);
     // getUsage shape stays {ai, handoff} — backward compatible
     expect(await getUsage(env, "self")).toEqual({ ai: 0, handoff: 0 });
+  });
+});
+
+// ── [!FORM:<id>] marker (mirrors parseHandoff, orthogonal) ───────────────────
+describe("parseForm", () => {
+  test("extracts + lowercases the form id, strips the marker", () => {
+    expect(parseForm("Let me grab your details. [!FORM:Book-Call]")).toEqual({
+      text: "Let me grab your details.",
+      formId: "book-call",
+    });
+  });
+  test("no marker → null id, text untouched", () => {
+    expect(parseForm("Just a normal reply.")).toEqual({
+      text: "Just a normal reply.",
+      formId: null,
+    });
+  });
+  test("independent of [!HANDOFF] — a reply can carry both, parsed separately", () => {
+    const raw = "One sec. [!HANDOFF] [!FORM:quote]";
+    const { text } = parseHandoff(raw); // strips handoff only
+    const form = parseForm(text); // then strips form
+    expect(form.formId).toBe("quote");
+    expect(form.text).toBe("One sec.");
+  });
+  test("buildSystemPrompt lists configured forms; omits the block when none", () => {
+    const withForms = buildSystemPrompt(undefined, [{ id: "book", title: "Book a call" }]);
+    expect(withForms).toContain("[!FORM:<id>]");
+    expect(withForms).toContain("book (Book a call)");
+    expect(buildSystemPrompt()).not.toContain("[!FORM:<id>]");
+  });
+});
+
+// ── renderLeadEmail (pure) ───────────────────────────────────────────────────
+describe("renderLeadEmail", () => {
+  const form = {
+    id: "book",
+    title: "Book a call",
+    fields: [
+      { name: "name", label: "Your name", type: "text" as const },
+      { name: "budget", label: "Budget", type: "text" as const },
+    ],
+  };
+  test("labels values via the FormSpec + includes transcript", () => {
+    const mail = renderLeadEmail(form, { name: "Dana", budget: "5k" }, [
+      { role: "user", content: "hi" },
+    ]);
+    expect(mail.subject).toBe("New lead · Book a call");
+    expect(mail.html).toContain("Your name");
+    expect(mail.html).toContain("Dana");
+    expect(mail.html).toContain("Budget");
+    expect(mail.html).toContain("Conversation");
+  });
+  test("wa.me reply button only when a whatsapp phone is passed", () => {
+    const without = renderLeadEmail(form, { name: "X" }, []);
+    expect(without.html).not.toContain("wa.me");
+    const withWa = renderLeadEmail(form, { name: "X" }, [], "972501234567");
+    expect(withWa.html).toContain("https://wa.me/972501234567");
+  });
+  test("escapes visitor-controlled values (no HTML injection)", () => {
+    const mail = renderLeadEmail(form, { name: "<script>x</script>" }, []);
+    expect(mail.html).not.toContain("<script>x</script>");
+    expect(mail.html).toContain("&lt;script&gt;");
+  });
+});
+
+// ── deliverLead fan-out (telegram + email; wa/ig are CTA-only) ───────────────
+describe("deliverLead fan-out", () => {
+  // Capture every outbound fetch so we can assert which channels fired.
+  function withCapturedFetch<T>(run: () => Promise<T>): Promise<{ urls: string[]; result: T }> {
+    const urls: string[] = [];
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify({ ok: true, result: {} }), {
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    return run()
+      .then((result) => ({ urls, result }))
+      .finally(() => {
+        globalThis.fetch = orig;
+      });
+  }
+
+  test("fans out to Telegram + email; whatsapp/instagram never delivered server-side", async () => {
+    const env = fakeEnv({ RESEND_API_KEY: "re_x", LEAD_EMAIL_FROM: "leads@x.co" });
+    await mergeTenantConfig(env, "acme", {
+      botToken: "tok",
+      chatId: "-100",
+      forms: [{ id: "book", title: "Book a call", fields: [] }],
+      connectors: [
+        { id: "e", type: "email", toAddress: "owner@x.co" },
+        { id: "w", type: "whatsapp", phone: "972500000000" },
+        { id: "i", type: "instagram", profileUrl: "https://instagram.com/x" },
+      ],
+    });
+    await linkThreadSession(env, "acme", 42, "sess-1"); // gives getThreadForSession a hit
+
+    const { urls } = await withCapturedFetch(() =>
+      deliverLead(env, {
+        tenantId: "acme",
+        sessionId: "sess-1",
+        formId: "book",
+        values: { name: "Dana" },
+        history: [{ role: "user", content: "hi" }],
+      }),
+    );
+    // Telegram sendMessage fired…
+    expect(urls.some((u) => u.includes("api.telegram.org") && u.includes("sendMessage"))).toBe(
+      true,
+    );
+    // …and exactly one Resend email…
+    expect(urls.filter((u) => u.includes("api.resend.com")).length).toBe(1);
+    // …and NO wa.me / instagram delivery leaked to the server side.
+    expect(urls.some((u) => u.includes("wa.me") || u.includes("instagram.com"))).toBe(false);
+  });
+
+  test("no RESEND_API_KEY → email silently skipped (Telegram still fires)", async () => {
+    const env = fakeEnv(); // non-"self" tenant → getTenant reads creds from KV
+    await mergeTenantConfig(env, "acme", {
+      botToken: "tok",
+      chatId: "-100",
+      connectors: [{ id: "e", type: "email", toAddress: "owner@x.co" }],
+    });
+    await linkThreadSession(env, "acme", 7, "sess-2");
+    const { urls } = await withCapturedFetch(() =>
+      deliverLead(env, {
+        tenantId: "acme",
+        sessionId: "sess-2",
+        formId: null,
+        values: { name: "A" },
+        history: [],
+      }),
+    );
+    expect(urls.some((u) => u.includes("api.resend.com"))).toBe(false);
+    expect(urls.some((u) => u.includes("api.telegram.org"))).toBe(true);
   });
 });

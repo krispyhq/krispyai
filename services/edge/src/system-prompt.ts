@@ -25,14 +25,30 @@ in a teammate, then append the exact token ${HANDOFF_MARKER} on its own at the v
 of your message. Never explain the token; just append it. Do not use it for normal
 questions you can answer.`;
 
+// The [!FORM:<id>] contract — orthogonal to [!HANDOFF] (a reply can raise a lead
+// form without escalating to a human). The model appends it to offer a concrete next
+// step (booking, quote, demo) it can't complete in chat; the server strips it and
+// surfaces the matching FormSpec to the widget.
+export interface FormRef {
+  id: string;
+  title: string;
+}
+
+/** The instruction block interpolated into the prompt, listing the tenant's forms. */
+function formsBlock(forms?: FormRef[]): string {
+  if (!forms?.length) return ""; // no forms configured → silent degrade (like Telegram-off)
+  const list = forms.map((f) => `${f.id} (${f.title})`).join(", ");
+  return `\n\nWhen a visitor is ready for a concrete next step you can't complete in chat — booking, quote, details, demo — briefly say you'll get their info to the team, then append [!FORM:<id>] at the very end. Never explain the token. Available forms: ${list}.`;
+}
+
 /** Build the system prompt, letting a tenant override the whole thing. */
-export function buildSystemPrompt(custom?: string): string {
+export function buildSystemPrompt(custom?: string, forms?: FormRef[]): string {
   const base = custom?.trim() ? custom.trim() : DEFAULT_PROMPT;
   // Even a custom prompt must know the handoff contract, so always restate it.
   const withHandoff = custom?.includes(HANDOFF_MARKER)
     ? base
     : `${base}\n\nWhen a human should take over, append ${HANDOFF_MARKER} at the very end of your reply.`;
-  return `${withHandoff}\n\n${BREVITY_INSTRUCTION}`;
+  return `${withHandoff}${formsBlock(forms)}\n\n${BREVITY_INSTRUCTION}`;
 }
 
 export interface ParsedReply {
@@ -47,4 +63,21 @@ export function parseHandoff(raw: string): ParsedReply {
   const handoff = raw.includes(HANDOFF_MARKER);
   const text = raw.split(HANDOFF_MARKER).join("").trim();
   return { text, handoff };
+}
+
+// Mirrors parseHandoff exactly, but for the orthogonal [!FORM:<id>] marker. Kept a
+// SEPARATE function (not folded into parseHandoff) — a reply can raise a form without
+// a human handoff, so the two signals must be parsed independently.
+const FORM_MARKER = /\[!FORM:([a-z0-9_-]{1,32})\]/i;
+export interface ParsedForm {
+  /** Visitor-facing text with the marker stripped. */
+  text: string;
+  /** The form id the model asked to raise, or null. */
+  formId: string | null;
+}
+
+/** Split a raw model reply into visitor text + the form-request id. */
+export function parseForm(raw: string): ParsedForm {
+  const m = raw.match(FORM_MARKER);
+  return { text: raw.replace(FORM_MARKER, "").trim(), formId: m ? m[1]!.toLowerCase() : null };
 }

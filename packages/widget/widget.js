@@ -253,7 +253,7 @@
     add("sys", "A team member has joined the chat.");
   }
 
-  // ── contact capture (on [!HANDOFF]) ─────────────────────────────────────
+  // ── contact capture (on [!HANDOFF] with no form) ────────────────────────
   function showCapture() {
     capForm.classList.add("show");
   }
@@ -275,6 +275,99 @@
     capForm.classList.remove("show");
     add("sys", "Thanks — we'll reach out.");
   });
+
+  // ── data-driven lead form (on [!FORM:<id>], carried by res.form) ─────────
+  // Built entirely with createElement/textContent — NEVER innerHTML for any value
+  // (form fields, options, CTA labels/urls are all tenant/visitor-controlled → XSS).
+  var formOpen = false;
+  function showForm(form) {
+    if (formOpen || !form || !form.fields) return;
+    formOpen = true;
+    var wrap = document.createElement("form");
+    wrap.className = "cap show";
+
+    if (form.title) {
+      var h = document.createElement("div");
+      h.style.cssText = "font-weight:600;font-size:14px;color:#241a12";
+      h.textContent = form.title;
+      wrap.appendChild(h);
+    }
+
+    var inputs = {}; // name → element
+    form.fields.forEach(function (f) {
+      if (!f || !f.name) return;
+      var el;
+      if (f.type === "textarea") {
+        el = document.createElement("textarea");
+        el.rows = 3;
+      } else if (f.type === "select") {
+        el = document.createElement("select");
+        (f.options || []).forEach(function (opt) {
+          var o = document.createElement("option");
+          o.value = opt;
+          o.textContent = opt; // textContent, never innerHTML
+          el.appendChild(o);
+        });
+      } else {
+        el = document.createElement("input");
+        el.type = f.type === "email" || f.type === "tel" ? f.type : "text";
+      }
+      el.style.fontSize = "16px"; // shared constraint w/ Feature C — <16px = iOS zoom
+      if (f.label && el.tagName !== "SELECT") el.placeholder = f.label;
+      if (f.required) el.required = true;
+      inputs[f.name] = el;
+      wrap.appendChild(el);
+    });
+
+    var submit = document.createElement("button");
+    submit.type = "submit";
+    submit.textContent = "Send";
+    wrap.appendChild(submit);
+
+    // CTA connectors (whatsapp/instagram) → <a> links, attached to res.form.
+    (form.ctas || []).forEach(function (c) {
+      var href =
+        c.type === "whatsapp" && c.phone
+          ? "https://wa.me/" + encodeURIComponent(c.phone)
+          : c.type === "instagram" && c.profileUrl
+            ? c.profileUrl
+            : null;
+      if (!href || !href.startsWith("https://")) return; // only https links render
+      var a = document.createElement("a");
+      a.href = href;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.textContent = c.type === "whatsapp" ? "WhatsApp" : "Instagram";
+      a.style.cssText =
+        "text-align:center;padding:8px;border:1px solid #ddd;border-radius:8px;color:#241a12;text-decoration:none;font-size:14px";
+      wrap.appendChild(a);
+    });
+
+    wrap.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var values = {};
+      Object.keys(inputs).forEach(function (name) {
+        values[name] = inputs[name].value.trim();
+      });
+      fetch(cfg.api + "/api/lead", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          tenantId: cfg.tenant,
+          sessionId: sessionId,
+          formId: form.id,
+          values: values,
+          history: history.slice(-10),
+        }),
+      }).catch(function () {});
+      wrap.remove();
+      formOpen = false;
+      add("sys", "Thanks — we'll be in touch.");
+    });
+
+    log.parentNode.insertBefore(wrap, sendForm); // above the composer, like .cap
+    log.scrollTop = log.scrollHeight;
+  }
 
   // ── send ─────────────────────────────────────────────────────────────────
   sendForm.addEventListener("submit", function (e) {
@@ -310,7 +403,8 @@
           add(res.degraded ? "op" : "bot", res.reply);
           history.push({ role: "assistant", content: res.reply });
         }
-        if (res.handoff) showCapture();
+        if (res.form) showForm(res.form);
+        else if (res.handoff) showCapture();
       })
       .catch(function () {
         if (typing) typing.remove();

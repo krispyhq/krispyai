@@ -16,7 +16,8 @@ import { chatFlow } from "./chat";
 import { SessionDO } from "./session-do";
 import { buildSystemPrompt } from "./system-prompt";
 import { parseOwnerReply, createForumTopic, sendToTopic } from "./telegram";
-import type { Env, TenantConfig } from "./types";
+import { renderLeadEmail, sendLeadEmail } from "./email";
+import type { Connector, Env, FormSpec, TenantConfig } from "./types";
 import {
   getTenant,
   getThreadForSession,
@@ -70,6 +71,7 @@ export default {
 
     if (request.method === "POST" && path === "/api/chat") return handleChat(request, env);
     if (request.method === "POST" && path === "/api/contact") return handleContact(request, env);
+    if (request.method === "POST" && path === "/api/lead") return handleLead(request, env);
     if (request.method === "POST" && path === "/api/telegram/webhook")
       return handleWebhook(request, env);
     if (request.method === "POST" && path === "/api/billing/entitlement")
@@ -126,7 +128,7 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
   // Telegram is optional: no config → topic ops no-op, chat still answers.
   const result = await chatFlow(
     {
-      systemPrompt: buildSystemPrompt(tenant?.systemPrompt),
+      systemPrompt: buildSystemPrompt(tenant?.systemPrompt, tenant?.forms),
       // Full history in; chatFlow applies the sliding window + counts turns (chokepoint).
       history: body.history,
       maxHistoryMsgs: numEnv(env.MAX_HISTORY_MSGS),
@@ -156,11 +158,30 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
 
   // If the AI escalated, nudge the visitor's browser to open contact capture.
   if (result.handoff) await stub.fetch("https://do/handoff", { method: "POST" });
+
+  // Resolve the FormSpec (+ its visitor-facing CTA connectors) so the widget — which
+  // holds no tenant config — can render the form and its wa.me/instagram links.
+  if (result.formId) {
+    const spec = tenant?.forms?.find((f) => f.id === result.formId) ?? null;
+    // `ctas` rides on the wire form only (visitor-facing links); not part of FormSpec.
+    result.form = spec
+      ? ({ ...spec, ctas: ctaConnectors(tenant, spec) } as FormSpec & { ctas: Connector[] })
+      : null;
+  }
   return json(env, result);
 }
 
+/** The visitor-facing CTA connectors (whatsapp/instagram) for a form — email/telegram
+ * are invisible delivery channels and never leave the server. */
+function ctaConnectors(tenant: TenantConfig | null, form: FormSpec): Connector[] {
+  const all = tenant?.connectors ?? [];
+  const scoped = form.connectorIds ? all.filter((c) => form.connectorIds!.includes(c.id)) : all;
+  return scoped.filter((c) => c.type === "whatsapp" || c.type === "instagram");
+}
+
 // ── POST /api/contact ──────────────────────────────────────────────────────
-// Contact-capture form submission → drop the details into the owner's topic.
+// Back-compat shim — embeds in the wild still POST the legacy {name, contact} shape.
+// Maps it onto the generalized lead fan-out (deliverLead), so both routes share one path.
 async function handleContact(request: Request, env: Env): Promise<Response> {
   const b = (await request.json().catch(() => null)) as {
     sessionId?: string;
@@ -171,14 +192,82 @@ async function handleContact(request: Request, env: Env): Promise<Response> {
   } | null;
   if (!b?.sessionId) return json(env, { error: "sessionId required" }, 400);
   const tenantId = b.tenantId || DEFAULT_TENANT;
-  const tenant = await getTenant(env, tenantId);
-  const threadId = tenant ? await getThreadForSession(env, tenantId, b.sessionId) : null;
-  if (tenant && threadId) {
-    const text =
-      `📇 Contact left:\n• ${b.name || "—"}\n• ${b.contact || "—"}\n• ${b.message || ""}`.trim();
-    await sendToTopic(tenant.botToken, tenant.chatId, threadId, text);
-  }
+  await deliverLead(env, {
+    tenantId,
+    sessionId: b.sessionId,
+    formId: null,
+    values: { name: b.name || "", contact: b.contact || "", message: b.message || "" },
+    history: [],
+  });
   return json(env, { ok: true });
+}
+
+// ── POST /api/lead ─────────────────────────────────────────────────────────
+// The generalized lead endpoint: a data-driven form's captured values fan out to the
+// tenant's DELIVERY connectors (Telegram + email). whatsapp/instagram are CTA-only —
+// the visitor taps those links; nothing is delivered server-side for them.
+interface LeadPayload {
+  tenantId: string;
+  sessionId: string;
+  formId: string | null;
+  values: Record<string, string>;
+  history: { role: string; content: string }[];
+}
+
+async function handleLead(request: Request, env: Env): Promise<Response> {
+  const b = (await request.json().catch(() => null)) as Partial<LeadPayload> | null;
+  if (!b?.sessionId) return json(env, { error: "sessionId required" }, 400);
+  await deliverLead(env, {
+    tenantId: b.tenantId || DEFAULT_TENANT,
+    sessionId: b.sessionId,
+    formId: b.formId ?? null,
+    values: b.values || {},
+    history: Array.isArray(b.history) ? b.history : [],
+  });
+  return json(env, { ok: true });
+}
+
+/**
+ * Resolve tenant + FormSpec + connectors, then fan a lead out to the delivery channels:
+ *   • Telegram — the existing sendToTopic into the visitor's topic (already has the full mirror)
+ *   • Email    — Resend, silent no-op without a key (email.ts)
+ * whatsapp/instagram connectors are never delivered here (CTA-only in the widget).
+ */
+export async function deliverLead(env: Env, lead: LeadPayload): Promise<void> {
+  const tenant = await getTenant(env, lead.tenantId);
+  const form = tenant?.forms?.find((f) => f.id === lead.formId) ?? null;
+  const connectors = tenant?.connectors ?? [];
+  // Which connectors get this lead: the form's scoped set, else all configured.
+  const targets = form?.connectorIds
+    ? connectors.filter((c) => form.connectorIds!.includes(c.id))
+    : connectors;
+
+  // Telegram delivery — drop the values into the visitor's topic.
+  if (tenant) {
+    const threadId = await getThreadForSession(env, lead.tenantId, lead.sessionId);
+    if (threadId) {
+      const lines = Object.entries(lead.values)
+        .filter(([, v]) => v && String(v).trim())
+        .map(([k, v]) => `• ${k}: ${v}`)
+        .join("\n");
+      await sendToTopic(
+        tenant.botToken,
+        tenant.chatId,
+        threadId,
+        `📇 ${form?.title || "Lead"} captured:\n${lines || "—"}`,
+      );
+    }
+  }
+
+  // Email delivery — every email connector in scope. wa.me reply button when a
+  // whatsapp connector exists. Silent no-op without RESEND_API_KEY (self-host may
+  // rely on Telegram only).
+  const waPhone = targets.find((c) => c.type === "whatsapp")?.phone;
+  const emailTargets = targets.filter((c) => c.type === "email" && c.toAddress);
+  for (const c of emailTargets) {
+    const mail = renderLeadEmail(form, lead.values, lead.history, waPhone);
+    await sendLeadEmail(env.RESEND_API_KEY, env.LEAD_EMAIL_FROM, c.toAddress, mail);
+  }
 }
 
 // ── POST /api/telegram/webhook ─────────────────────────────────────────────
