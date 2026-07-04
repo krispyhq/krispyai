@@ -46,9 +46,11 @@
     "*{box-sizing:border-box;font-family:-apple-system,Segoe UI,Roboto,sans-serif}" +
     ".btn{width:56px;height:56px;border-radius:50%;border:0;background:" +
     cfg.accent +
-    ";color:#fff;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.25);font-size:24px}" +
-    ".panel{display:none;flex-direction:column;width:340px;max-width:calc(100vw - 40px);height:480px;max-height:calc(100vh - 120px);background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.28)}" +
-    ".panel.open{display:flex}" +
+    ";color:#fff;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.25);font-size:24px;margin-bottom:env(safe-area-inset-bottom,0)}" +
+    ".panel{display:none;flex-direction:column;width:380px;max-width:calc(100vw - 5.5rem);height:480px;max-height:min(500px,70dvh,var(--kvvh,100dvh));background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.28)}" +
+    "@keyframes kslide{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}" +
+    ".panel.open{display:flex;animation:kslide .22s cubic-bezier(.16,1,.3,1)}" +
+    "@media (prefers-reduced-motion:reduce){.panel.open{animation:none}}" +
     ".hd{background:" +
     cfg.accent +
     ";color:#fff;padding:14px 16px;font-weight:600;display:flex;justify-content:space-between;align-items:center}" +
@@ -61,14 +63,14 @@
     ".bot{align-self:flex-start;background:#fff;color:#111;border:1px solid #e5e5e5;border-bottom-left-radius:3px}" +
     ".op{align-self:flex-start;background:#e7f6ec;color:#0a3d20;border:1px solid #b8e6c8;border-bottom-left-radius:3px}" +
     ".sys{align-self:center;font-size:12px;color:#888}" +
-    ".ft{display:flex;border-top:1px solid #eee;padding:8px;gap:6px}" +
-    ".ft input{flex:1;border:1px solid #ddd;border-radius:8px;padding:9px 11px;font-size:14px;outline:none}" +
+    ".ft{display:flex;border-top:1px solid #eee;padding:8px;padding-bottom:calc(8px + env(safe-area-inset-bottom,0));gap:6px}" +
+    ".ft input{flex:1;border:1px solid #ddd;border-radius:8px;padding:9px 11px;font-size:16px;outline:none}" +
     ".ft button{border:0;background:" +
     cfg.accent +
     ";color:#fff;border-radius:8px;padding:0 14px;cursor:pointer;font-size:14px}" +
     ".ft button:disabled{opacity:.5;cursor:default}" +
     ".cap{padding:10px 12px;background:#fff;border-top:1px solid #eee;display:none;flex-direction:column;gap:6px}" +
-    ".cap.show{display:flex}.cap input{border:1px solid #ddd;border-radius:8px;padding:8px 10px;font-size:13px}" +
+    ".cap.show{display:flex}.cap input{border:1px solid #ddd;border-radius:8px;padding:8px 10px;font-size:16px}" +
     ".cap button{border:0;background:#111;color:#fff;border-radius:8px;padding:8px;cursor:pointer;font-size:13px}" +
     "</style>" +
     '<div class="panel" part="panel">' +
@@ -99,6 +101,20 @@
     return d;
   }
 
+  // ── keyboard-aware floating card (visualViewport) ───────────────────────
+  var vv = window.visualViewport;
+  function syncViewport() {
+    if (!vv) return; // desktop / unsupported → static card
+    // gap the keyboard occupies at the bottom of the layout viewport
+    var kb = window.innerHeight - (vv.height + vv.offsetTop);
+    host.style.bottom = Math.max(20, kb) + "px";
+    host.style.setProperty("--kvvh", vv.height + "px");
+  }
+  if (vv) {
+    vv.addEventListener("resize", syncViewport);
+    vv.addEventListener("scroll", syncViewport);
+  }
+
   var opened = false;
   function open() {
     panel.classList.add("open");
@@ -107,15 +123,21 @@
       add("sys", "You're chatting with an AI assistant. A human can jump in anytime.");
       connectWs();
     }
-    input.focus();
+    syncViewport();
+    setTimeout(function () {
+      input.focus();
+    }, 60); // transitionend never fires on a display-toggle
+  }
+  function closePanel() {
+    panel.classList.remove("open");
+    input.blur();
+    host.style.bottom = "20px"; // reset the keyboard pin
   }
   $(".btn").addEventListener("click", function () {
-    if (panel.classList.contains("open")) panel.classList.remove("open");
+    if (panel.classList.contains("open")) closePanel();
     else open();
   });
-  $(".x").addEventListener("click", function () {
-    panel.classList.remove("open");
-  });
+  $(".x").addEventListener("click", closePanel);
 
   // ── live channel (operator replies) ─────────────────────────────────────
   function connectWs() {
