@@ -90,6 +90,8 @@
     ";color:#fff;border-bottom-right-radius:3px}" +
     ".bot{align-self:flex-start;background:#fff;color:#111;border:1px solid #e5e5e5;border-bottom-left-radius:3px}" +
     ".op{align-self:flex-start;background:#e7f6ec;color:#0a3d20;border:1px solid #b8e6c8;border-bottom-left-radius:3px}" +
+    ".msg code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9em;background:rgba(0,0,0,.06);padding:1px 5px;border-radius:4px}" +
+    ".msg a{color:inherit;text-decoration:underline;text-underline-offset:2px}" +
     ".sys{align-self:center;font-size:12px;color:#888}" +
     ".ft{display:flex;border-top:1px solid #eee;padding:8px;padding-bottom:calc(8px + env(safe-area-inset-bottom,0));gap:6px}" +
     ".ft input{flex:1;border:1px solid #ddd;border-radius:8px;padding:9px 11px;font-size:16px;outline:none}" +
@@ -224,10 +226,70 @@
   }
   host.addEventListener("pointerdown", markInteracted);
 
+  // Minimal, SAFE markdown → DOM. Appends nodes to `el` via createElement/
+  // textContent ONLY — NEVER innerHTML (the load-bearing XSS guard). Handles
+  // **bold** __bold__, *italic* _italic_, `code`, [label](url). Unmatched or
+  // unbalanced markers fall through as literal text; nothing is ever dropped.
+  function safeHref(url) {
+    var u = String(url).trim();
+    return /^(https?:\/\/|mailto:)/i.test(u) ? u : null; // reject javascript:, data:, etc.
+  }
+  function renderInline(el, text) {
+    // inline markers only (no links here); newlines stay literal (pre-wrap renders them)
+    var rx = /(\*\*|__)(.+?)\1|(\*|_)(.+?)\3|`([^`]+)`/g;
+    var last = 0,
+      m;
+    while ((m = rx.exec(text))) {
+      if (m.index > last) el.appendChild(document.createTextNode(text.slice(last, m.index)));
+      var tag, inner;
+      if (m[1] != null) {
+        tag = "strong";
+        inner = m[2];
+      } else if (m[3] != null) {
+        tag = "em";
+        inner = m[4];
+      } else {
+        tag = "code";
+        inner = m[5];
+      }
+      var node = document.createElement(tag);
+      node.textContent = inner; // never innerHTML
+      el.appendChild(node);
+      last = rx.lastIndex;
+    }
+    if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
+  }
+  function renderRich(el, text) {
+    // links first (they may span inline markers), then inline markers on the gaps
+    var rx = /\[([^\]]*)\]\(([^)\s]+)\)/g;
+    var last = 0,
+      m;
+    while ((m = rx.exec(text))) {
+      if (m.index > last) renderInline(el, text.slice(last, m.index));
+      var href = safeHref(m[2]);
+      if (href) {
+        var a = document.createElement("a");
+        a.href = href;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        renderInline(a, m[1]); // label may carry **bold** etc.
+        el.appendChild(a);
+      } else {
+        // rejected scheme → render the whole [label](url) literally as text
+        el.appendChild(document.createTextNode(m[0]));
+      }
+      last = rx.lastIndex;
+    }
+    if (last < text.length) renderInline(el, text.slice(last));
+  }
+
   function add(cls, text) {
     var d = document.createElement("div");
     d.className = "msg " + cls;
-    d.textContent = text;
+    // Only AI-emitted bubbles get markdown; visitor (me) + system (sys) stay
+    // literal so a visitor can never inject markup.
+    if (cls === "bot" || cls === "op") renderRich(d, String(text));
+    else d.textContent = text;
     log.appendChild(d);
     log.scrollTop = log.scrollHeight;
     return d;
