@@ -36,6 +36,7 @@ export interface WidgetTheme {
   headerTitle?: string; // header text (supersedes legacy data-title)
   radius?: number; // panel/bubble corner radius px, 0–20. Default 14
   font?: string; // optional CSS font-family stack
+  sound?: boolean; // notification ding on inbound message while panel closed. Default true
 }
 
 export interface TenantConfig {

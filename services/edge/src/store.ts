@@ -19,6 +19,7 @@ export function publicWidgetConfig(cfg: Partial<TenantConfig> | null) {
       headerTitle: th.headerTitle,
       radius: th.radius,
       font: th.font,
+      sound: th.sound,
     },
     // Feature A appends PUBLIC-safe form + connector-CTA projections here.
   };

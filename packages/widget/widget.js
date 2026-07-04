@@ -67,8 +67,14 @@
     cfg.accent +
     ";--k-launcher:var(--k-primary);--k-radius:14px;--k-font:-apple-system,Segoe UI,Roboto,sans-serif}" +
     "*{box-sizing:border-box;font-family:var(--k-font)}" +
-    ".btn{width:56px;height:56px;border-radius:50%;border:0;background:var(--k-launcher)" +
+    ".btn{position:relative;width:56px;height:56px;border-radius:50%;border:0;background:var(--k-launcher)" +
     ";color:#fff;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.25);font-size:24px;margin-bottom:env(safe-area-inset-bottom,0)}" +
+    "@keyframes kpulse{0%,100%{transform:scale(1)}30%{transform:scale(1.12)}60%{transform:scale(.96)}}" +
+    ".btn.knudge{animation:kpulse .6s ease-in-out 2}" +
+    "@media (prefers-reduced-motion:reduce){.btn.knudge{animation:none}}" +
+    ".btn .dot{position:absolute;top:-2px;right:-2px;width:14px;height:14px;border-radius:50%;background:#f0426b;border:2px solid #fff;display:none}" +
+    ".btn.kunread .dot{display:block}" +
+    ".hd .mute{cursor:pointer;opacity:.85;font-size:16px;line-height:1;background:none;border:0;color:#fff;padding:0}" +
     ".panel{display:none;flex-direction:column;width:380px;max-width:calc(100vw - 5.5rem);height:480px;max-height:min(500px,70dvh,var(--kvvh,100dvh));background:#fff;border-radius:var(--k-radius);overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.28)}" +
     "@keyframes kslide{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}" +
     ".panel.open{display:flex;animation:kslide .22s cubic-bezier(.16,1,.3,1)}" +
@@ -95,12 +101,12 @@
     ".cap button{border:0;background:#111;color:#fff;border-radius:8px;padding:8px;cursor:pointer;font-size:13px}" +
     "</style>" +
     '<div class="panel" part="panel">' +
-    '<div class="hd"><img class="av" alt="" hidden><span class="ttl"></span><span class="x">&times;</span></div>' +
+    '<div class="hd"><img class="av" alt="" hidden><span class="ttl"></span><button type="button" class="mute" aria-label="Mute notifications"></button><span class="x">&times;</span></div>' +
     '<div class="log"></div>' +
     '<form class="cap"><input class="cn" placeholder="Your name"><input class="cc" placeholder="Email or phone"><button type="submit">Leave contact</button></form>' +
     '<form class="ft"><input class="in" placeholder="Type a message…" autocomplete="off"><button type="submit">Send</button></form>' +
     "</div>" +
-    '<button class="btn" aria-label="Open chat">💬</button>';
+    '<button class="btn" aria-label="Open chat">💬<span class="dot"></span></button>';
 
   var $ = function (s) {
     return root.querySelector(s);
@@ -116,8 +122,10 @@
 
   // ── theme (boot fetch, init-gated, NO poll — decorative → never blocks chat) ──
   var greeting = ""; // optional first bot bubble on open; set by theme
+  var soundEnabled = true; // theme.sound (tenant); default ON. AND-gated with visitor mute below.
   function applyTheme(th) {
     if (!th) return;
+    if (th.sound === false) soundEnabled = false;
     var pc = clampColor(th.primaryColor);
     if (pc) host.style.setProperty("--k-primary", pc);
     var lc = clampColor(th.launcherColor);
@@ -150,6 +158,72 @@
     })
     .catch(function () {}); // theme is decorative; chat works without it
 
+  // ── message notifications (ding + launcher pulse + unread dot) ──────────────
+  // Fires ONLY on an inbound (bot/operator) message while the panel is CLOSED.
+  var MUTE_KEY = "krispy_muted_" + cfg.tenant;
+  var muted = localStorage.getItem(MUTE_KEY) === "1";
+  var hasInteracted = false; // autoplay policy: stay silent until first interaction
+  var launcher = $(".btn"),
+    muteBtn = $(".mute");
+
+  function renderMute() {
+    muteBtn.textContent = muted ? "🔇" : "🔔";
+    muteBtn.setAttribute("aria-label", muted ? "Unmute notifications" : "Mute notifications");
+  }
+  renderMute();
+  muteBtn.addEventListener("click", function () {
+    muted = !muted;
+    localStorage.setItem(MUTE_KEY, muted ? "1" : "0");
+    renderMute();
+  });
+
+  // WebAudio "ding" — two short oscillator notes, ~150ms. No file, no base64.
+  var audioCtx = null;
+  function playDing() {
+    if (!soundEnabled || muted || !hasInteracted) return;
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      audioCtx = audioCtx || new AC();
+      if (audioCtx.state === "suspended") audioCtx.resume();
+      var now = audioCtx.currentTime;
+      [
+        [880, 0],
+        [1174.66, 0.08],
+      ].forEach(function (n) {
+        var osc = audioCtx.createOscillator();
+        var gain = audioCtx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = n[0];
+        var t = now + n[1];
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(0.15, t + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(t);
+        osc.stop(t + 0.15);
+      });
+    } catch {
+      /* audio optional */
+    }
+  }
+
+  // Inbound message landed → notify only if the panel is closed.
+  function notifyInbound() {
+    if (panel.classList.contains("open")) return;
+    playDing();
+    launcher.classList.add("kunread");
+    launcher.classList.remove("knudge");
+    void launcher.offsetWidth; // restart the animation if it's mid-flight
+    launcher.classList.add("knudge");
+  }
+
+  // First interaction unlocks audio (browser autoplay policy).
+  function markInteracted() {
+    hasInteracted = true;
+  }
+  host.addEventListener("pointerdown", markInteracted);
+
   function add(cls, text) {
     var d = document.createElement("div");
     d.className = "msg " + cls;
@@ -175,7 +249,9 @@
 
   var opened = false;
   function open() {
+    hasInteracted = true; // opening counts as interaction (unlocks audio)
     panel.classList.add("open");
+    launcher.classList.remove("kunread", "knudge"); // clear unread on open
     if (!opened) {
       opened = true;
       add("sys", "You're chatting with an AI assistant. A human can jump in anytime.");
@@ -223,6 +299,7 @@
           handedOff = true;
           markHuman();
           add("op", ev.text);
+          notifyInbound();
         } else if (ev.type === "handoff") {
           showCapture();
         }
@@ -402,6 +479,7 @@
         if (res.reply) {
           add(res.degraded ? "op" : "bot", res.reply);
           history.push({ role: "assistant", content: res.reply });
+          notifyInbound(); // self-gates: no-op while panel open
         }
         if (res.form) showForm(res.form);
         else if (res.handoff) showCapture();
