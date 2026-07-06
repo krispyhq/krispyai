@@ -40,28 +40,46 @@ ENV_LOCAL = 'set -a && [ -f ' + REPO_ROOT + '/.env.local ] && . ' + REPO_ROOT + 
 # (fixes: portless stays alive while a --watch server silently loops on a crash).
 def portless_cmd(args, env='', health_url=''):
     cmd = (env + ' ' if env else '') + 'portless --force ' + args
-    retry = 'for i in 1 2 3 4 5; do ' + cmd + ' && break || echo "portless lock failed (attempt $i/5), retrying in ${i}s..." && sleep $i; done'
+    retry = 'for i in 1 2 3 4 5 6 7 8; do ' + cmd + ' && break || echo "portless lock failed (attempt $i/8), retrying in 2s..." && sleep 2; done'
     if not health_url:
         return retry
     watchdog = '(sleep 20; FAILS=0; while true; do sleep 10; ' + 'if curl -sf -o /dev/null ' + health_url + ' 2>/dev/null; then FAILS=0; ' + 'else FAILS=$((FAILS+1)); echo "[watchdog] health check failed ($FAILS/3) for ' + health_url + '"; ' + 'if [ $FAILS -ge 3 ]; then echo "[watchdog] killing process group after 3 failed checks"; kill 0; exit 1; fi; ' + 'fi; done) &'
     # Wrap in { } so the backgrounded watchdog (&) doesn't break the parent shell.
     return '{ ' + watchdog + ' ' + retry + '; }'
 
+# Fixed-port alias (adimoyal's proven pattern): the PROCESS owns a real port and
+# `portless alias <name> <port>` just maps the named URL to it — NO portless
+# --force random-port lock race (portless's ~1s lock budget vs wrangler's slow
+# bind → "lock failed" → duplicate wranglers). `run` already contains the server's
+# own --port/-l <port>; we prepend the alias + the kill-on-hang watchdog so Tilt
+# restarts a wedged process. Use for wrangler and anything that owns its port.
+def fixed_port_cmd(name, port, run, env='', health_url=''):
+    alias = 'portless alias ' + name + ' ' + str(port) + ' || true; '
+    serve = (env + ' ' if env else '') + run
+    if not health_url:
+        return alias + serve
+    watchdog = '(sleep 20; FAILS=0; while true; do sleep 10; ' + 'if curl -sf -o /dev/null ' + health_url + ' 2>/dev/null; then FAILS=0; ' + 'else FAILS=$((FAILS+1)); echo "[watchdog] health check failed ($FAILS/3) for ' + health_url + '"; ' + 'if [ $FAILS -ge 3 ]; then echo "[watchdog] killing process group after 3 failed checks"; kill 0; exit 1; fi; ' + 'fi; done) &'
+    return '{ ' + alias + watchdog + ' ' + serve + '; }'
+
 # =============================================================================
 # Services (served — have a URL, wrapped with portless)
 # =============================================================================
 
 # edge — the live-chat + human-handoff Worker (Hono-style routes + SessionDO), run
-# under `wrangler dev`. wrangler needs an explicit port, so unlike the others it
-# takes --port '$PORT': the single quotes keep Tilt/Starlark from expanding it,
-# so the *inner* sh that portless spawns expands portless's injected $PORT.
-# edge serves GET /health.
+# under `wrangler dev`. Pinned to a FIXED port (8787) via the fixed-port pattern:
+# wrangler OWNS the port (--port 8787), and portless just aliases edge.krispy to
+# it. This removes the old `portless --force --port '$PORT'` random-port + retry
+# loop, whose ~1s lock budget lost the race against wrangler's slow bind ("lock
+# failed" → duplicate wranglers). --ip 127.0.0.1 keeps the bind local; the
+# watchdog heals a hung wrangler so Tilt auto-restarts it. edge serves GET /health.
+EDGE_PORT = 8787
 local_resource(
     'edge',
-    serve_cmd='cd ' + REPO_ROOT + '/services/edge && ' + ENV_LOCAL + portless_cmd(
-        "edge.krispy " + BUN + " x wrangler dev --port '$PORT'",
-        health_url=PORTLESS_PROXY.format('edge') + '/health'),
-    links=[PORTLESS_PROXY.format('edge') + '/health'],
+    serve_cmd='cd ' + REPO_ROOT + '/services/edge && ' + ENV_LOCAL + fixed_port_cmd(
+        'edge.krispy', EDGE_PORT,
+        BUN + ' x wrangler dev --port ' + str(EDGE_PORT) + ' --ip 127.0.0.1',
+        health_url='http://localhost:' + str(EDGE_PORT) + '/health'),
+    links=['http://localhost:' + str(EDGE_PORT) + '/health', PORTLESS_PROXY.format('edge') + '/health'],
     labels=['services'],
 )
 
@@ -70,14 +88,17 @@ local_resource(
 # =============================================================================
 
 # widget — the embeddable chat widget: a static index.html + widget.js bundle.
-# `serve` binds portless's injected $PORT and proxies the named URL to it, so the
-# widget demo page is reachable at the stable widget.krispy URL. No health route
-# (static server), so no watchdog.
+# Pinned to a FIXED port (3080) via the fixed-port pattern; `serve -l` owns the
+# port and portless just aliases widget.krispy to it. Fixed avoids `serve`'s
+# default :3000 (which collided with the cloud web app when portless didn't
+# inject $PORT). Static server, no health route → no watchdog.
+WIDGET_PORT = 3080
 local_resource(
     'widget',
-    serve_cmd='cd ' + REPO_ROOT + ' && ' + portless_cmd(
-        "widget.krispy " + BUN + " x serve packages/widget -l '$PORT'"),
-    links=[PORTLESS_PROXY.format('widget')],
+    serve_cmd='cd ' + REPO_ROOT + ' && ' + fixed_port_cmd(
+        'widget.krispy', WIDGET_PORT,
+        BUN + ' x serve packages/widget -l tcp://0.0.0.0:' + str(WIDGET_PORT)),
+    links=['http://localhost:' + str(WIDGET_PORT), PORTLESS_PROXY.format('widget')],
     labels=['packages'],
 )
 
@@ -85,8 +106,8 @@ print("""
 ================================================================================
                     KRISPYAI (public core) LOCAL DEV (Portless)
 ================================================================================
-  Edge:   http://edge.krispy.localhost:1355     (/health — Worker via wrangler dev)
-  Widget: http://widget.krispy.localhost:1355   (static embed bundle)
+  Edge:   http://localhost:8787  (or edge.krispy.localhost:1355)   (/health — wrangler dev)
+  Widget: http://localhost:3080  (or widget.krispy.localhost:1355) (static embed bundle)
 
   No-Tilt path: `bun run dev:edge` + `bun run dev:widget` (two terminals).
   Portless proxy: install with `npm install -g portless` (starts automatically).
