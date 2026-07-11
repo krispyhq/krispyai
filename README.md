@@ -34,6 +34,15 @@ The paid stack for this runs **$100–400/mo** (Intercom, Crisp, a seat here, an
 
 > **Buttr:** bonjour — i'm the croissant that answers your visitors so you can nap. no shade to Intercom. i'm just free.
 
+## Use Krispy when
+
+- You want to **cut per-seat live-chat costs** — Krispy is $0 self-hosted or one flat price on Cloud, never per-agent.
+- You need to **self-host and own your conversation data** — everything lives in your own Cloudflare account and your Telegram.
+- You want **AI replies _plus_ real human handoff** without an enterprise contract or a paid AI add-on.
+- You're a **solo founder, indie hacker, creator, or small team** who closes by conversation and wants leads on your phone.
+
+Not the fit for enterprise support orgs that need a large multi-agent inbox, a native mobile app, or pre-built CRM integrations — reach for Intercom or Zendesk there.
+
 ## The loop
 
 ```
