@@ -59,14 +59,14 @@ case "$TARGET" in
         && "$BUN" run build \
         && "$BUN" x wrangler pages deploy out \
              --project-name "krispy-docs-${ENV}" \
-             --branch "$([ "$ENV" = production ] && echo main || echo preview)" )
+             --branch "$([ "$ENV" = production ] && echo master || echo preview)" )
     SMOKE_KIND=pages
     ;;
   widget)
     echo "→ deploy widget ($ENV)"
     # The widget is a static bundle (no build step) — deploy the dir as-is.
     "$BUN" x wrangler pages deploy packages/widget \
-      --project-name "krispy-widget-${ENV}" --branch "$([ "$ENV" = production ] && echo main || echo preview)"
+      --project-name "krispy-widget-${ENV}" --branch "$([ "$ENV" = production ] && echo master || echo preview)"
     SMOKE_KIND=pages
     ;;
 esac
