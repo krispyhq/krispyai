@@ -20,6 +20,10 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 - Chat suite: security guardrails — always-appended `SECURITY_INSTRUCTION` in the system prompt (refuses prompt/architecture/secret disclosure, injection resistance); survives custom tenant prompt overrides.
 - Docs site: Fumadocs documentation site under `apps/docs` (quickstart, concepts, security, guides, reference for edge routes / tenant config / CLI / markers).
 - Governance: `CHANGELOG.md` + documentation-sync rule (`AGENTS.md` §7).
+- CI: build gate — CI now builds `apps/docs` (present-guarded) after typecheck/test.
+- API contract: `api-collection/openapi.yaml` (OpenAPI 3.1) covering the edge Worker's full HTTP surface; new Bruno requests for `/api/chat`, `/api/contact`, `/api/lead`, `/api/widget/config`, `/api/usage`. `AGENTS.md` §7 now requires OpenAPI + Bruno on any route change.
+- Deploy: Tilt `deploy:*` manual resources + `./deploy.sh <edge|docs|widget> <preview|production>` (preflight → build → `wrangler deploy` → smoke) with `scripts/cf-deploy-preflight.mjs` + `scripts/cf-deploy-smoke.mjs`; named `preview`/`production` wrangler envs for the edge Worker. Cloudflare creds sourced from Infisical-fed `.env.local`, never GitHub Actions.
+- Release: `@krispy/cli` is now publishable (`0.1.0`, public) via npm Trusted Publishing (`.github/workflows/publish.yml`, OIDC, no npm token); other packages stay private. Founder setup + first-publish bootstrap documented in `AGENTS.md` §§10–11.
 
 ### Changed
 
