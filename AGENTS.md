@@ -85,7 +85,7 @@ KRISPY_API=https://krispy-edge.YOU.workers.dev TENANT_SYNC_SECRET=... \
 
 Any change that adds or modifies **behavior, API surface, config/env vars, or CLI flags** is **incomplete** until the matching docs are updated **in the same PR/commit**:
 
-- **Docs site** — the Fumadocs pages under `apps/docs/content/docs/**` (lands via the `docs/onboarding` branch; once merged, this is the canonical user-facing surface). Route in the map:
+- **Docs site** — the Fumadocs pages under `apps/docs/content/docs/**` (merged to master — the canonical user-facing surface). Route in the map:
   - edge routes / request-response shapes / error codes / auth → `reference/edge-routes.mdx`
   - tenant-config schema (`TenantConfig`, theme, lead form, connectors) → `reference/tenant-config.mdx`
   - CLI commands / flags → `reference/cli.mdx`
