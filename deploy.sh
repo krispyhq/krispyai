@@ -51,11 +51,15 @@ case "$TARGET" in
     if [ ! -f apps/docs/package.json ]; then
       echo "✘ apps/docs not present on this ref — cannot deploy docs." >&2; exit 1
     fi
-    ( cd apps/docs && "$BUN" install --frozen-lockfile && "$BUN" run build )
-    # Fumadocs/Next static export lands in apps/docs/out (next export) or .next; adjust
-    # the dir to your build. Pages project name is env-suffixed for isolation.
-    ( cd apps/docs && "$BUN" x wrangler pages deploy out \
-        --project-name "krispy-docs-${ENV}" --branch "$([ "$ENV" = production ] && echo main || echo preview)" )
+    # apps/docs is a Next.js/Fumadocs app (SSG + a dynamic /docs/[[...slug]] route),
+    # NOT a plain `next export` static site — so it deploys to CF Pages via
+    # @cloudflare/next-on-pages, which emits .vercel/output/static. `bun run build`
+    # is the CI gate; next-on-pages re-runs the build under the CF adapter.
+    ( cd apps/docs && "$BUN" install --frozen-lockfile \
+        && "$BUN" x @cloudflare/next-on-pages@1 \
+        && "$BUN" x wrangler pages deploy .vercel/output/static \
+             --project-name "krispy-docs-${ENV}" \
+             --branch "$([ "$ENV" = production ] && echo main || echo preview)" )
     SMOKE_KIND=pages
     ;;
   widget)
