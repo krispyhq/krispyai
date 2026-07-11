@@ -21,7 +21,7 @@ Open-source live chat with a human handoff to Telegram — the free, self-hostab
 
 ## What it is
 
-Krispy is open-source live chat with a human in the loop. An AI answers your visitors in your voice, and hands off to *you* on Telegram the moment a real person is needed — you reply from your phone, and it lands live in the chat while the bot goes quiet.
+Krispy is open-source live chat with a human in the loop. An AI answers your visitors in your voice, and hands off to _you_ on Telegram the moment a real person is needed — you reply from your phone, and it lands live in the chat while the bot goes quiet.
 
 The paid stack for this runs **$100–400/mo** (Intercom, Crisp, a seat here, an AI add-on there). Krispy self-hosts on Cloudflare's free tier for **$0** — no per-seat tax, no login your customers never asked for, no conversations living on someone else's servers.
 
@@ -145,11 +145,11 @@ TENANT_SYNC_SECRET=... \
   bun packages/cli/src/index.ts set-kbase ./kbase.md
 ```
 
-| command | what it does |
-|---------|--------------|
-| `krispy init` | guided first-run wizard — Telegram → train → embed → next steps (`POST /api/tenant/config`) |
-| `krispy set-kbase <file>` | write `<file>`'s contents as the bot's system prompt (`POST /api/tenant/config`) |
-| `krispy dev` | run the edge Worker locally (`wrangler dev`) |
+| command                   | what it does                                                                                |
+| ------------------------- | ------------------------------------------------------------------------------------------- |
+| `krispy init`             | guided first-run wizard — Telegram → train → embed → next steps (`POST /api/tenant/config`) |
+| `krispy set-kbase <file>` | write `<file>`'s contents as the bot's system prompt (`POST /api/tenant/config`)            |
+| `krispy dev`              | run the edge Worker locally (`wrangler dev`)                                                |
 
 Config via env: `KRISPY_API` (Worker URL), `KRISPY_TENANT` (default `self`), `TENANT_SYNC_SECRET` (must match the Worker's). Details: [`packages/cli/README.md`](./packages/cli/README.md).
 
@@ -158,17 +158,20 @@ Config via env: `KRISPY_API` (Worker URL), `KRISPY_TENANT` (default `self`), `TE
 Host the dependency-free `widget.js` anywhere static, then drop one tag on any page. It lives in a Shadow DOM, so your site's CSS can't leak in.
 
 ```html
-<script src="https://YOUR-HOST/widget.js"
-        data-api="https://krispy-edge.YOU.workers.dev"
-        data-tenant="self" async></script>
+<script
+  src="https://widget.krispyai.com/widget.js"
+  data-api="https://edge.krispyai.com"
+  data-tenant="self"
+  async
+></script>
 ```
 
-| attribute | required | default | meaning |
-|-----------|----------|---------|---------|
-| `data-api` | yes | — | your `@krispy/edge` Worker base URL |
-| `data-tenant` | no | `self` | tenant id (multi-tenant uses this) |
-| `data-title` | no | `Chat with us` | header text |
-| `data-accent` | no | `#e8552d` | brand color |
+| attribute     | required | default        | meaning                             |
+| ------------- | -------- | -------------- | ----------------------------------- |
+| `data-api`    | yes      | —              | your `@krispy/edge` Worker base URL |
+| `data-tenant` | no       | `self`         | tenant id (multi-tenant uses this)  |
+| `data-title`  | no       | `Chat with us` | header text                         |
+| `data-accent` | no       | `#e8552d`      | brand color                         |
 
 Details: [`packages/widget/README.md`](./packages/widget/README.md).
 
@@ -176,13 +179,13 @@ Details: [`packages/widget/README.md`](./packages/widget/README.md).
 
 Fair to the competition — Krispy wins on cost, openness, and lock-in, not on snark.
 
-| | **Krispy** | Intercom | Crisp | Chatwoot |
-|---|---|---|---|---|
-| Open source | ✅ MIT | ❌ | ❌ | ✅ |
-| Free to self-host | ✅ CF free tier, no key | ❌ | ❌ | ⚠️ run your own server |
-| AI answers, built in | ✅ free (CF Workers AI) | ⚠️ paid add-on | ⚠️ paid add-on | ⚠️ BYO |
-| Human handoff to *your phone* | ✅ Telegram, native | ✅ their app, paid | ✅ their app, paid | ⚠️ |
-| Per-seat tax | ❌ none | ✅ $/seat | ✅ $/seat | ❌ (self-host) |
+|                               | **Krispy**              | Intercom           | Crisp              | Chatwoot               |
+| ----------------------------- | ----------------------- | ------------------ | ------------------ | ---------------------- |
+| Open source                   | ✅ MIT                  | ❌                 | ❌                 | ✅                     |
+| Free to self-host             | ✅ CF free tier, no key | ❌                 | ❌                 | ⚠️ run your own server |
+| AI answers, built in          | ✅ free (CF Workers AI) | ⚠️ paid add-on     | ⚠️ paid add-on     | ⚠️ BYO                 |
+| Human handoff to _your phone_ | ✅ Telegram, native     | ✅ their app, paid | ✅ their app, paid | ⚠️                     |
+| Per-seat tax                  | ❌ none                 | ✅ $/seat          | ✅ $/seat          | ❌ (self-host)         |
 
 Intercom is great at being Intercom. It's just not built for a solo founder who wants to own their stack.
 
@@ -206,7 +209,7 @@ docs/         linting · secrets · agent-skills
 api-collection/  Bruno requests for the edge Worker's routes
 ```
 
-Want *just* the chat? `cd services/edge`, deploy, embed `packages/widget`. That's the whole thing.
+Want _just_ the chat? `cd services/edge`, deploy, embed `packages/widget`. That's the whole thing.
 
 ## Tech
 
