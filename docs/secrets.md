@@ -23,9 +23,13 @@ Local `wrangler dev` reads them from a git-ignored `.dev.vars` in `services/edge
 
 Copy `.env.example` → `.env.local`, fill it in. Keep it clean — **strip inline comments** (an unstripped comment can corrupt a value). Only `TENANT_SYNC_SECRET` is a real secret here, and it must match the Worker's.
 
-## 3. Team + prod — [Infisical](https://infisical.com) (optional)
+## 3. Team + prod — [Infisical](https://infisical.com) is the source of truth
 
-Once more than one person or machine needs the secrets, make **Infisical** (open-source secrets manager) the single source of truth — no secret ever lives in a committed file, and every environment pulls from one place. It pushes to Cloudflare Workers via the [native Cloudflare connector](https://infisical.com/docs/integrations/cloud/cloudflare-pages), so you never hand-copy a secret into the platform.
+**Infisical (open-source secrets manager) is the single source of truth for every secret and for the Cloudflare deploy creds.** No secret ever lives in a committed file; every environment pulls from one place. `wrangler secret put` (§1) stays the _mechanism_ the Worker's runtime secrets reach Cloudflare — but the _value_ originates in Infisical, and the deploy path reads it from there, never from a hand-set field:
+
+- **Worker runtime secrets** (`TELEGRAM_*`, `TENANT_SYNC_SECRET`, `BILLING_SYNC_SECRET`, …) sync to Cloudflare via the [native Cloudflare connector](https://infisical.com/docs/integrations/cloud/cloudflare-pages), so you never hand-copy a secret into the platform.
+- **Deploy creds** (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`) are fed from Infisical into a git-ignored `.env.local`, which [`deploy.sh`](../deploy.sh) sources (`set -a; . .env.local; set +a`) and [`scripts/cf-deploy-preflight.mjs`](../scripts/cf-deploy-preflight.mjs) asserts are present before any `wrangler deploy`. They are **never** committed and **never** placed in GitHub Actions — deploy is Tilt + wrangler, not CI.
+- The API token needs: **Workers Scripts:Edit**, **Cloudflare Pages:Edit**, **Workers KV Storage:Edit** (Durable Objects are covered by Workers Scripts).
 
 ## Rules
 

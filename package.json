@@ -9,11 +9,11 @@
     "dev": "echo 'Run \"bun run dev:edge\" (Worker on :8787) and \"bun run dev:widget\" (demo on :3000) in two terminals. See README → Local dev.'",
     "dev:edge": "bun --filter @krispy/edge dev",
     "dev:widget": "bunx serve packages/widget",
-    "typecheck": "bun --filter '@krispy/*' typecheck",
+    "typecheck": "bun --filter '@krispy*/*' typecheck",
     "lint": "oxlint",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
-    "test": "bun --filter '@krispy/*' test",
+    "test": "bun --filter '@krispy*/*' test",
     "check": "bun run typecheck && bun run lint && bun run test"
   },
   "devDependencies": {
@@ -21,5 +21,5 @@
     "oxlint": "1.72.0",
     "oxlint-tsgolint": "^0.24.0"
   },
-  "packageManager": "bun@1.1.34"
+  "packageManager": "bun@1.3.12"
 }
