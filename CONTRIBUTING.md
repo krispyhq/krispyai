@@ -4,7 +4,7 @@ Thanks for helping improve the stack. This repo is the **lean, self-hostable cor
 
 ## Prerequisites
 
-- **[Bun](https://bun.com)** ≥ 1.1.34 (the package manager and runtime — never `npm`/`yarn`/`pnpm`).
+- **[Bun](https://bun.com)** ≥ 1.3.12 (the package manager and runtime — never `npm`/`yarn`/`pnpm`).
 - A **Cloudflare account** (free) for `wrangler dev` / deploy.
 - Node isn't required to run the app, but some MCP servers (`agents/mcp.json`) use `npx`.
 
@@ -33,11 +33,11 @@ bunx lefthook install
 
 ## The map (read before you add code)
 
-| Path | Role |
-| --- | --- |
-| `services/edge` | ⭐ the Cloudflare Worker + `SessionDO` — chat + Telegram handoff |
-| `packages/widget` | ⭐ the dependency-free embeddable `widget.js` |
-| `packages/cli` | the `krispy` CLI (`set-kbase`, `dev`) |
+| Path              | Role                                                             |
+| ----------------- | ---------------------------------------------------------------- |
+| `services/edge`   | ⭐ the Cloudflare Worker + `SessionDO` — chat + Telegram handoff |
+| `packages/widget` | ⭐ the dependency-free embeddable `widget.js`                    |
+| `packages/cli`    | the `krispy` CLI (`set-kbase`, `dev`)                            |
 
 Full detail lives in [`AGENTS.md`](./AGENTS.md).
 
