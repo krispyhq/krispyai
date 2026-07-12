@@ -97,7 +97,11 @@ describe("parseOwnerReply", () => {
           from: { is_bot: false, id: 777, first_name: "Shai", username: "shaisnir" },
         },
       }),
-    ).toEqual({ threadId: 42, text: "on it", from: { id: 777, name: "Shai", username: "shaisnir" } });
+    ).toEqual({
+      threadId: 42,
+      text: "on it",
+      from: { id: 777, name: "Shai", username: "shaisnir" },
+    });
   });
   test("bot's own echo → ignored", () => {
     expect(
@@ -171,7 +175,14 @@ describe("buildMentions", () => {
 describe("sendHandoffAlert", () => {
   test("LOUD (disable_notification=false) with mention entities prepended", async () => {
     const { bodies, fetchImpl } = captureTgBodies();
-    await sendHandoffAlert("tok", "-100", 5, "🙋 needs a human", [{ id: 777, name: "Shai" }], fetchImpl);
+    await sendHandoffAlert(
+      "tok",
+      "-100",
+      5,
+      "🙋 needs a human",
+      [{ id: 777, name: "Shai" }],
+      fetchImpl,
+    );
     const b = bodies[0];
     expect(b.disable_notification).toBe(false);
     expect(b.text).toBe("Shai\n🙋 needs a human");
@@ -193,7 +204,9 @@ describe("upsertOperator", () => {
     const env = fakeEnv();
     await mergeTenantConfig(env, "self", { botToken: "t", chatId: "-1" });
     await upsertOperator(env, "self", { id: 1, name: "Shai", username: "shaisnir" });
-    expect(await getOperators(env, "self")).toEqual([{ id: 1, name: "Shai", username: "shaisnir" }]);
+    expect(await getOperators(env, "self")).toEqual([
+      { id: 1, name: "Shai", username: "shaisnir" },
+    ]);
   });
   test("idempotent on id — refreshes name/username in place, no duplicate", async () => {
     const env = fakeEnv();

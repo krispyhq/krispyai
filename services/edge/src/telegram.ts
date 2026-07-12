@@ -86,7 +86,12 @@ export function buildMentions(operators: MentionOperator[]): {
       text += `@${op.username}`;
     } else {
       const label = op.name?.trim() || `user${op.id}`;
-      entities.push({ type: "text_mention", offset: text.length, length: label.length, user: { id: op.id } });
+      entities.push({
+        type: "text_mention",
+        offset: text.length,
+        length: label.length,
+        user: { id: op.id },
+      });
       text += label;
     }
   }
