@@ -9,11 +9,14 @@ load_dynamic('.devops/Tiltfile')
 
 # =============================================================================
 # Dashboard "title" — Tilt has no native project-title setting, so a banner
-# resource in its own CAPITALIZED label group (capitals sort before lowercase)
-# headlines the sidebar with the project name. Cosmetic, zero-cost.
+# resource in a digit-prefixed label group (Tilt sorts groups case-insensitively,
+# so a leading digit is the only thing that sorts above the alphabet) headlines
+# the sidebar with the project name. Cosmetic, zero-cost. Gated to the entry
+# Tiltfile so it doesn't double up when the cloud umbrella include()s this one.
 # =============================================================================
-local_resource(
-    'KRISPY-CORE',
-    cmd='echo "🥐 KrispyAI (public core) — dev dashboard · ./tilt_up.sh · UI :10440"',
-    labels=['KRISPY-CORE'],
-)
+if config.main_path == os.path.abspath('Tiltfile'):
+    local_resource(
+        'KRISPY-CORE',
+        cmd='echo "🥐 KrispyAI (public core) — dev dashboard · ./tilt_up.sh · UI :10440"',
+        labels=['0-KRISPY-CORE'],
+    )
