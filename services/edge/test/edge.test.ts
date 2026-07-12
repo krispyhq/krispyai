@@ -1003,6 +1003,42 @@ describe("SessionDO ring buffer", () => {
     expect((await do_.fetch(new Request("https://do/log"))).status).toBe(403);
     expect((await do_.fetch(new Request("https://do/summary"))).status).toBe(403);
   });
+
+  test("live /log appends mirror {type:'message'} to OPERATOR sockets only; seed stays silent", async () => {
+    // fake state with one tagged operator socket + one visitor socket
+    const opFrames: string[] = [];
+    const visitorFrames: string[] = [];
+    const opSocket = { send: (d: string) => void opFrames.push(d) };
+    const visitorSocket = { send: (d: string) => void visitorFrames.push(d) };
+    const store = new Map<string, unknown>();
+    const state = {
+      acceptWebSocket: () => {},
+      getWebSockets: (tag?: string) =>
+        tag === "operator" ? [opSocket] : [opSocket, visitorSocket],
+      storage: {
+        get: async (k: string) => store.get(k),
+        put: async (k: string, v: unknown) => void store.set(k, v),
+      },
+    } as unknown as DurableObjectState;
+    const do_ = new SessionDO(state, env);
+
+    // seed replay → ring fills, but nothing is broadcast (backfill, not live)
+    await post(do_, "/log", { messages: [{ role: "visitor", text: "old" }], seed: true });
+    expect(opFrames).toHaveLength(0);
+
+    // live visitor + AI turns → operator socket streams them, visitor socket silent
+    await post(do_, "/log", {
+      messages: [
+        { role: "visitor", text: "are you there?", ts: 1111 },
+        { role: "ai", text: "getting a human", ts: 2222 },
+      ],
+    });
+    expect(opFrames.map((f) => JSON.parse(f) as unknown)).toEqual([
+      { type: "message", role: "visitor", text: "are you there?", ts: 1111 },
+      { type: "message", role: "ai", text: "getting a human", ts: 2222 },
+    ]);
+    expect(visitorFrames).toHaveLength(0);
+  });
 });
 
 // ── operator app routes (Buttr §3a–§3c) ──────────────────────────────────────

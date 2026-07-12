@@ -137,9 +137,23 @@ export class SessionDO {
         return Response.json({ ok: true, seeded: false });
       }
       const now = Date.now();
-      const log = await this.appendRing(
-        (messages ?? []).map((m) => ({ role: m.role, text: m.text, ts: m.ts ?? now })),
-      );
+      const appended: RingMsg[] = (messages ?? []).map((m) => ({
+        role: m.role,
+        text: m.text,
+        ts: m.ts ?? now,
+      }));
+      const log = await this.appendRing(appended);
+      // Mirror LIVE visitor/AI turns to operator sockets so an open Buttr thread
+      // streams in realtime (§3d/§6). Seed replays are backfill (the app reads
+      // them via /log) and visitor sockets are untouched — they'd echo the
+      // visitor's own text back at them.
+      if (!seed) {
+        const operators = this.state.getWebSockets("operator");
+        for (const m of appended) {
+          if (m.role === "operator") continue; // operator replies broadcast via /operator
+          broadcast(operators, { type: "message", role: m.role, text: m.text, ts: m.ts });
+        }
+      }
       return Response.json({ ok: true, size: log.length });
     }
 

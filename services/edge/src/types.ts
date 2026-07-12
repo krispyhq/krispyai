@@ -128,4 +128,6 @@ export type ServerEvent =
   | { type: "ready"; handedOff: boolean }
   | { type: "operator"; text: string }
   | { type: "handoff" }
-  | { type: "resume" };
+  | { type: "resume" }
+  /** Live visitor/AI ring-append mirrored to `role=operator` sockets only (Buttr thread, §3d/§6). */
+  | { type: "message"; role: "visitor" | "ai"; text: string; ts: number };
