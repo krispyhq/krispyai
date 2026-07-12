@@ -6,3 +6,14 @@
 # Vercel Portless: <service>.krispy.localhost:1355 — no pinned service ports.
 
 load_dynamic('.devops/Tiltfile')
+
+# =============================================================================
+# Dashboard "title" — Tilt has no native project-title setting, so a banner
+# resource in its own CAPITALIZED label group (capitals sort before lowercase)
+# headlines the sidebar with the project name. Cosmetic, zero-cost.
+# =============================================================================
+local_resource(
+    'KRISPY-CORE',
+    cmd='echo "🥐 KrispyAI (public core) — dev dashboard · ./tilt_up.sh · UI :10440"',
+    labels=['KRISPY-CORE'],
+)
