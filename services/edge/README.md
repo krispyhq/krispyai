@@ -5,7 +5,7 @@ The live-chat + human-handoff backend. **One Cloudflare Worker** hosts both the
 `wrangler.toml`, runnable end-to-end under `wrangler dev`.
 
 > Design note: the brief said "Pages Functions + a Worker/DO". There's no static
-> site to host here (the widget embeds on the *customer's* site) and a DO must live
+> site to host here (the widget embeds on the _customer's_ site) and a DO must live
 > in a Worker regardless, so a lone Worker is strictly simpler — fewer moving parts,
 > one origin, no Pages↔Worker binding dance. The route layout maps 1:1 to Pages
 > Functions if you ever want to split them.
@@ -24,17 +24,17 @@ owner replies in topic ──POST /api/telegram/webhook──▶ Worker
 
 ## Endpoints
 
-| method | path | purpose |
-|--------|------|---------|
-| POST | `/api/chat` | `{sessionId, message, tenantId?, history?}` → `{reply, handoff, handedOff, degraded?}` |
-| POST | `/api/contact` | `[!HANDOFF]` contact-capture → owner's topic |
-| POST | `/api/telegram/webhook` | owner reply → push to visitor via DO |
-| POST | `/api/billing/entitlement` | billing → gate: mirror an entitlement snapshot into KV *(secret-guarded)* |
-| GET | `/api/tenant/config?t=<tenant>` | read a tenant's config `{botToken, chatId, systemPrompt?, model?}`, 404 if none *(secret-guarded)* |
-| POST | `/api/tenant/config` | `{tenantId, config}` merge into the tenant's KV config — the `krispy` CLI writes here *(secret-guarded)* |
-| GET | `/api/session/:id/ws?t=<tenant>` | visitor's live channel (WebSocket → DO) |
-| GET | `/api/usage?t=<tenant>` | metering + plan readout (`usage` also carries approx `tokens`) |
-| GET | `/health` | liveness |
+| method | path                             | purpose                                                                                                  |
+| ------ | -------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| POST   | `/api/chat`                      | `{sessionId, message, tenantId?, history?}` → `{reply, handoff, handedOff, degraded?}`                   |
+| POST   | `/api/contact`                   | `[!HANDOFF]` contact-capture → owner's topic                                                             |
+| POST   | `/api/telegram/webhook`          | owner reply → push to visitor via DO                                                                     |
+| POST   | `/api/billing/entitlement`       | billing → gate: mirror an entitlement snapshot into KV _(secret-guarded)_                                |
+| GET    | `/api/tenant/config?t=<tenant>`  | read a tenant's config `{botToken, chatId, systemPrompt?, model?}`, 404 if none _(secret-guarded)_       |
+| POST   | `/api/tenant/config`             | `{tenantId, config}` merge into the tenant's KV config — the `krispy` CLI writes here _(secret-guarded)_ |
+| GET    | `/api/session/:id/ws?t=<tenant>` | visitor's live channel (WebSocket → DO)                                                                  |
+| GET    | `/api/usage?t=<tenant>`          | metering + plan readout (`usage` also carries approx `tokens`)                                           |
+| GET    | `/health`                        | liveness                                                                                                 |
 
 ### Cost knobs — the "turn tax"
 
@@ -42,11 +42,11 @@ Each chat turn re-sends the whole history to the LLM, so naive cost grows quadra
 with conversation length. Three bounds (all optional env vars; code defaults shown) keep
 per-turn cost flat, without changing product behavior on normal short chats:
 
-| env var | default | why |
-|---------|---------|-----|
-| `MAX_HISTORY_MSGS` | `8` | Sliding window — the AI only sees the last N prior messages (system + latest user always kept, oldest turns trimmed). Caps the input that grows every turn. |
-| `MAX_OUTPUT_TOKENS` | `256` | Hard cap on reply length (output tokens are ~4–5× the price of input). A brevity line is also appended to the system prompt so the cap rarely bites. |
-| `MAX_AI_TURNS` | `10` | After N AI turns in a session with no resolution, hand off to a human instead of paying for another (likely-looping) turn — cost *and* UX. Generous: short chats never hit it. |
+| env var             | default | why                                                                                                                                                                            |
+| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `MAX_HISTORY_MSGS`  | `8`     | Sliding window — the AI only sees the last N prior messages (system + latest user always kept, oldest turns trimmed). Caps the input that grows every turn.                    |
+| `MAX_OUTPUT_TOKENS` | `256`   | Hard cap on reply length (output tokens are ~4–5× the price of input). A brevity line is also appended to the system prompt so the cap rarely bites.                           |
+| `MAX_AI_TURNS`      | `10`    | After N AI turns in a session with no resolution, hand off to a human instead of paying for another (likely-looping) turn — cost _and_ UX. Generous: short chats never hit it. |
 
 Metering now also tracks approximate tokens (`chars/4` estimate, since Workers AI's
 response exposes no usage counts) under the `usage:<tenant>:<yyyymm>:tokens` KV counter,
@@ -101,8 +101,8 @@ simulated KV.
 2. **Telegram bot** — talk to [@BotFather](https://t.me/BotFather) → `/newbot` →
    copy the token. Then `bunx wrangler secret put TELEGRAM_BOT_TOKEN`.
 3. **Supergroup with Topics** — create a Telegram group, upgrade it to a supergroup,
-   enable **Topics** in group settings, add your bot as an **admin** (needs *Manage
-   Topics*). Get the chat id (e.g. via [@RawDataBot], looks like `-1001234567890`) →
+   enable **Topics** in group settings, add your bot as an **admin** (needs _Manage
+   Topics_). Get the chat id (e.g. via [@RawDataBot], looks like `-1001234567890`) →
    `bunx wrangler secret put TELEGRAM_CHAT_ID`.
 4. **Webhook secret** — pick a random string →
    `bunx wrangler secret put TELEGRAM_WEBHOOK_SECRET`.
