@@ -8,6 +8,7 @@ Load full context from a previous Claude Code session so you can continue where 
 Restores tasks, plan, and code changes — not just the summary.
 
 **Usage**:
+
 - `/immorterm:recall` — list recent sessions with numbers, then ask which to resume
 - `/immorterm:recall last` — resume the most recent ended session
 - `/immorterm:recall 3` — resume session #3 from the list
@@ -20,6 +21,7 @@ Restores tasks, plan, and code changes — not just the summary.
 ## Step 1: Resolve the session
 
 If `$ARGUMENTS` is empty or not provided:
+
 1. Call `list_sessions(hours_ago=72)` to show all recent sessions with numbers. Sessions are sorted by `last_active` (most recent activity first).
 2. Present the list to the user with title, terminal name, last active time, status, summary, **and tasks** (if available). Format each session like:
    ```
@@ -35,20 +37,24 @@ If `$ARGUMENTS` is empty or not provided:
 4. Proceed with the selected session
 
 If `$ARGUMENTS` is `last`:
+
 1. Call `list_sessions(hours_ago=72, limit=1, status="ended")` to get the most recent ended session
 2. Use its `session_id`
 
 If `$ARGUMENTS` is a number (e.g., `3`):
+
 1. Call `list_sessions(hours_ago=72)` to get the numbered list
 2. Find the session with `# == $ARGUMENTS`
 3. Use its `session_id`
 
 If `$ARGUMENTS` is a session ID (8+ hex chars):
+
 1. Use it directly (if 8 chars, it's the short `sid` — pass as-is to `get_session_context`)
 
 ## Step 2: Load full session context
 
 Call `get_session_context(session_id="<resolved_session_id>")` to load:
+
 - Session summary (what was worked on)
 - All extracted facts and decisions
 - Pending decisions (planned but not yet implemented)
@@ -56,6 +62,7 @@ Call `get_session_context(session_id="<resolved_session_id>")` to load:
 ## Step 3: Load code changes
 
 Call `list_code_changes(session_id="<resolved_session_id>")` to see:
+
 - Which files were modified
 - Line counts (added/removed)
 

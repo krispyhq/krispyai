@@ -1,6 +1,4 @@
 {
   "_immortermManaged": true,
-  "plugin": [
-    "@immorterm/opencode-plugin"
-  ]
+  "plugin": ["@immorterm/opencode-plugin"]
 }

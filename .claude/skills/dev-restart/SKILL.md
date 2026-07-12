@@ -25,12 +25,12 @@ The clean way to pick up **dependency or Tiltfile/config changes** across the wh
 
 ## Coexisting Tilt UI ports (all share portless on `:1355`)
 
-| Project | Tilt UI port(s) |
-|---|---|
-| delulus | 10370 |
-| builders-stack | 10380 |
-| krispyai | tool 10440 · cloud 10441 · umbrella **10442** |
-| ringtail | tool 10450 · site 10451 · umbrella 10452 |
+| Project        | Tilt UI port(s)                               |
+| -------------- | --------------------------------------------- |
+| delulus        | 10370                                         |
+| builders-stack | 10380                                         |
+| krispyai       | tool 10440 · cloud 10441 · umbrella **10442** |
+| ringtail       | tool 10450 · site 10451 · umbrella 10452      |
 
 Note: envoyage-cloud and its umbrella now run on their own UI ports (**10461** / **10462**) — no conflict with krispyai.
 

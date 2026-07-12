@@ -19,21 +19,21 @@ The script already exports the PATH portless needs (`/opt/homebrew/bin`; bun's `
 
 ## Services (served roles via portless — no pinned service ports)
 
-| Resource | URL | What |
-|---|---|---|
-| edge | http://edge.krispy.localhost:1355 (or http://localhost:8787) | the live-chat + human-handoff Worker (`wrangler dev`), serves `GET /health` |
-| widget | http://widget.krispy.localhost:1355 (or http://localhost:3080) | the embeddable chat widget — static `index.html` + `widget.js` bundle |
+| Resource | URL                                                            | What                                                                        |
+| -------- | -------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| edge     | http://edge.krispy.localhost:1355 (or http://localhost:8787)   | the live-chat + human-handoff Worker (`wrangler dev`), serves `GET /health` |
+| widget   | http://widget.krispy.localhost:1355 (or http://localhost:3080) | the embeddable chat widget — static `index.html` + `widget.js` bundle       |
 
 Tilt UI: http://localhost:10440
 
 ## Coexisting Tilt UI ports (all share portless on `:1355`)
 
-| Project | Tilt UI port(s) |
-|---|---|
-| delulus | 10370 |
-| builders-stack | 10380 |
-| krispyai | tool **10440** · cloud 10441 · umbrella 10442 |
-| ringtail | tool 10450 · site 10451 · umbrella 10452 |
+| Project        | Tilt UI port(s)                               |
+| -------------- | --------------------------------------------- |
+| delulus        | 10370                                         |
+| builders-stack | 10380                                         |
+| krispyai       | tool **10440** · cloud 10441 · umbrella 10442 |
+| ringtail       | tool 10450 · site 10451 · umbrella 10452      |
 
 Note: envoyage-cloud and its umbrella now run on their own UI ports (**10461** / **10462**) — no conflict with krispyai.
 
