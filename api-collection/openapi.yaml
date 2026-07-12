@@ -195,8 +195,9 @@ paths:
         visitor receives `{ type: "ready", handedOff }` on connect, then `operator` / `handoff`
         / `resume` events. Not a normal JSON response — this row documents the upgrade contract.
         With `role=operator` the DO tags the socket as an operator's (the Buttr app's in-thread
-        live channel) — it receives the same full event union; the tag exists so operator-only
-        events can be added without touching the visitor fan-out.
+        live channel) — it receives the full event union PLUS the operator-only
+        `{ type: "message", role: "visitor" | "ai", text, ts }` mirror of live ring appends
+        (seed replays stay silent). The visitor fan-out is untouched.
       security: [] # public — no auth
       parameters:
         - name: id
