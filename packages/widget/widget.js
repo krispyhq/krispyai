@@ -67,7 +67,9 @@
     "<style>" +
     // ── Design tokens (krispy boulangerie palette) ──
     ":host{" +
-    "--k-primary:" + cfg.accent + ";" +
+    "--k-primary:" +
+    cfg.accent +
+    ";" +
     "--k-launcher:var(--k-primary);" +
     "--k-radius:12px;" +
     "--k-font:Inter,-apple-system,'Segoe UI',Roboto,sans-serif;" +
@@ -89,7 +91,6 @@
     "--k-pistachio-text:#0d7560" +
     "}" +
     "*{box-sizing:border-box;font-family:var(--k-font)}" +
-
     // ── Launcher button ──
     ".btn{" +
     "position:relative;width:56px;height:56px;border-radius:50%;border:0;" +
@@ -103,19 +104,15 @@
     ".btn:hover{box-shadow:0 12px 32px rgba(36,26,18,.28),0 3px 8px rgba(36,26,18,.14);transform:translateY(-1px)}" +
     ".btn:active{transform:translateY(0);box-shadow:0 4px 12px rgba(36,26,18,.18)}" +
     ".btn svg{width:26px;height:26px;flex:0 0 auto}" +
-
     // Unread dot (jam)
     ".btn .dot{position:absolute;top:-2px;right:-2px;width:14px;height:14px;border-radius:50%;background:var(--k-jam);border:2px solid #fff;display:none}" +
     ".btn.kunread .dot{display:block}" +
-
     // Online dot (pistachio) — always shows on launcher
     ".btn .online{position:absolute;bottom:1px;right:1px;width:11px;height:11px;border-radius:50%;background:var(--k-pistachio);border:2px solid #fff}" +
-
     // Knudge pulse animation
     "@keyframes kpulse{0%,100%{transform:scale(1)}30%{transform:scale(1.12)}60%{transform:scale(.96)}}" +
     ".btn.knudge{animation:kpulse .6s ease-in-out 2}" +
     "@media (prefers-reduced-motion:reduce){.btn.knudge{animation:none}}" +
-
     // ── Panel ──
     ".panel{" +
     "display:none;flex-direction:column;" +
@@ -130,7 +127,6 @@
     "@keyframes kslide{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}" +
     ".panel.open{display:flex;animation:kslide .22s cubic-bezier(.16,1,.3,1)}" +
     "@media (prefers-reduced-motion:reduce){.panel.open{animation:none}}" +
-
     // ── Header (.hd) — warm cream surface, not flat gold bar ──
     ".hd{" +
     "background:var(--k-card);" +
@@ -185,7 +181,6 @@
     "transition:color 0.15s,background 0.15s;flex-shrink:0;display:flex;align-items:center;justify-content:center" +
     "}" +
     ".hd .x:hover{background:var(--k-muted);color:var(--k-espresso)}" +
-
     // ── Message log (.log) ──
     ".log{" +
     "flex:1;overflow-y:auto;padding:16px 14px;" +
@@ -197,7 +192,6 @@
     ".log::-webkit-scrollbar{width:4px}" +
     ".log::-webkit-scrollbar-track{background:transparent}" +
     ".log::-webkit-scrollbar-thumb{background:var(--k-border);border-radius:4px}" +
-
     // ── Message bubbles ──
     ".msg{" +
     "max-width:82%;padding:10px 14px;" +
@@ -242,7 +236,6 @@
     "@keyframes kmsg{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}" +
     ".msg{animation:kmsg .2s cubic-bezier(.16,1,.3,1) both}" +
     "@media (prefers-reduced-motion:reduce){.msg{animation:none}}" +
-
     // ── Typing indicator (three bouncing dots) ──
     "@keyframes kbounce{0%,80%,100%{transform:translateY(0);opacity:.45}40%{transform:translateY(-5px);opacity:1}}" +
     ".typing{" +
@@ -260,7 +253,6 @@
     ".typing span:nth-child(2){animation-delay:.2s}" +
     ".typing span:nth-child(3){animation-delay:.4s}" +
     "@media (prefers-reduced-motion:reduce){.typing span{animation:none;opacity:.6}}" +
-
     // ── Composer (.ft) ──
     ".ft{" +
     "display:flex;border-top:1px solid var(--k-border);" +
@@ -294,7 +286,6 @@
     ".ft button:active{transform:translateY(0)}" +
     ".ft button:disabled{opacity:.45;cursor:default;transform:none;box-shadow:none}" +
     ".ft button svg{width:17px;height:17px;flex:0 0 auto}" +
-
     // ── Contact capture (.cap) ──
     ".cap{" +
     "padding:12px 14px;background:var(--k-card);" +
@@ -317,10 +308,8 @@
     "}" +
     ".cap button:hover{background:#3d2e22}" +
     "</style>" +
-
     // ── Panel markup ──
     '<div class="panel" part="panel">' +
-
     // Header: avatar + title/status + mute + close
     // Avatar shows the BUTTR mark by default; applyTheme can replace src or hide
     '<div class="hd">' +
@@ -328,30 +317,27 @@
     '<div class="ttl-wrap">' +
     '<span class="ttl"></span>' +
     '<span class="sub"><span class="pdot"></span>we usually reply in minutes</span>' +
-    '</div>' +
+    "</div>" +
     '<button type="button" class="mute" aria-label="Mute notifications"></button>' +
     // Close button: inline SVG X (no innerHTML for user data — this is static chrome)
     '<button type="button" class="x" aria-label="Close chat">' +
     '<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" width="18" height="18">' +
     '<path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>' +
-    '</svg>' +
-    '</button>' +
-    '</div>' +
-
+    "</svg>" +
+    "</button>" +
+    "</div>" +
     '<div class="log"></div>' +
     '<form class="cap"><input class="cn" placeholder="Your name"><input class="cc" placeholder="Email or phone"><button type="submit">Leave contact</button></form>' +
-
     // Composer: text input + paper-plane send button
     '<form class="ft">' +
     '<input class="in" placeholder="Type a message…" autocomplete="off">' +
     '<button type="submit" aria-label="Send message">' +
     '<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">' +
     '<path d="M17 10L3 3l3.5 7L3 17l14-7z" fill="currentColor"/>' +
-    '</svg>' +
-    '</button>' +
-    '</form>' +
-    '</div>' +
-
+    "</svg>" +
+    "</button>" +
+    "</form>" +
+    "</div>" +
     // Launcher button: inline croissant SVG + unread dot + online dot
     '<button class="btn" aria-label="Open chat">' +
     // Buttr croissant mark — tasteful ~24px croissant path, gold fill + espresso outline
@@ -367,10 +353,10 @@
     // Tip highlights
     '<circle cx="5.5" cy="12.5" r="2" fill="#f6d9a8" stroke="#241a12" stroke-width="1.1"/>' +
     '<circle cx="22.5" cy="15.5" r="2" fill="#f6d9a8" stroke="#241a12" stroke-width="1.1"/>' +
-    '</svg>' +
+    "</svg>" +
     '<span class="dot"></span>' +
     '<span class="online"></span>' +
-    '</button>';
+    "</button>";
 
   var $ = function (s) {
     return root.querySelector(s);
