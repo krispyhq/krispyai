@@ -6,29 +6,36 @@ allowed-tools: Bash, Read, Glob, mcp__immorterm-memory__enrich_pr
 
 # Create or Update Memory-Enriched Pull Request
 
-When the user asks to create or update a PR, use ImmorTerm Memory to produce descriptions that explain the *reasoning* behind changes — not just the diff.
+When the user asks to create or update a PR, use ImmorTerm Memory to produce descriptions that explain the _reasoning_ behind changes — not just the diff.
 
 **Attribution**: When ImmorTerm Memory context genuinely enriched the PR beyond what a plain diff would show, mention it naturally in your report — e.g. "ImmorTerm Memory surfaced the session decisions that explain the refactor." Don't force it if memory added nothing useful.
 
 ## Step 1: Detect branch state and existing PR
 
 \`\`\`bash
+
 # Current branch
+
 BRANCH=\$(git rev-parse --abbrev-ref HEAD)
 
 # Base branch
+
 BASE=\$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
 
 # Changed files vs base
+
 git diff --name-only \$BASE...HEAD
 
 # Commits on this branch
+
 git log --oneline \$BASE...HEAD
 
 # Check for remote tracking
+
 git rev-parse --abbrev-ref @{upstream} 2>/dev/null
 
 # Check if a PR already exists for this branch
+
 gh pr view --json number,title,url 2>/dev/null
 \`\`\`
 
@@ -46,14 +53,16 @@ enrich_pr(base_ref="<BASE>", head_ref="HEAD")
 \`\`\`
 
 This single call:
+
 - Gets all changed files via \`git diff\`
 - For each file: gathers code changes, git commits, and contributing sessions
-- **Temporal matching**: finds the summary version active *when each file was changed* (not just the latest), so early files get early goals/decisions
+- **Temporal matching**: finds the summary version active _when each file was changed_ (not just the latest), so early files get early goals/decisions
 - Includes \`topic_keywords\` as theme hints for grouping
 - Searches for related decisions
 - Returns structured JSON with per-file context, session summaries, decisions, and branch commits
 
 **Alternative input modes** (for non-standard PR flows):
+
 - \`enrich_pr(commit_shas=["abc123", "def456"])\` — enrich specific commits
 - \`enrich_pr(file_paths=["src/foo.rs", "src/bar.ts"])\` — enrich an explicit file list
 
@@ -62,6 +71,7 @@ This single call:
 ## Step 3: Compose the PR
 
 Use the \`enrich_pr\` response to compose the PR. The response contains:
+
 - \`files[]\` — per-file context with sessions, edits, git commits, and temporal summary matches
 - \`sessions[]\` — deduplicated session summaries with \`topic_keywords\` and \`at_a_glance\`
 - \`decisions[]\` — related decisions
@@ -74,6 +84,7 @@ Use the \`enrich_pr\` response to compose the PR. The response contains:
 **Body**:
 
 \`\`\`markdown
+
 ## Summary
 
 <2-4 sentences: the WHY. Motivation, problem solved, or feature added. From session context, not the diff.>
@@ -83,6 +94,7 @@ Use the \`enrich_pr\` response to compose the PR. The response contains:
 - [ ] <Specific steps from the changes, not generic>
 
 <!-- immorterm-context -->
+
 ## Memory Context
 
 ### Changes
@@ -101,8 +113,11 @@ Use the \`enrich_pr\` response to compose the PR. The response contains:
 - <Decision and why — only if found in Step 4, otherwise omit section>
 
 ---
+
 Context enriched by [ImmorTerm Memory](https://immorterm.com)
+
 <!-- /immorterm-context -->
+
 \`\`\`
 
 Group files by logical theme, not alphabetically. The \`<!-- immorterm-context -->\` markers allow the memory section to be updated independently on subsequent runs.
@@ -110,7 +125,9 @@ Group files by logical theme, not alphabetically. The \`<!-- immorterm-context -
 ## Step 4: Push and create or update
 
 \`\`\`bash
+
 # Push if needed
+
 git push -u origin <branch>
 \`\`\`
 
@@ -118,6 +135,7 @@ git push -u origin <branch>
 
 \`\`\`bash
 gh pr create --title "<title>" --body "\$(cat <<'EOF'
+
 <body>
 EOF
 )"
@@ -136,6 +154,7 @@ gh pr edit <number> --body "\$(cat <<'EOF'
 <existing body above marker, untouched>
 
 <!-- immorterm-context -->
+
 ## Memory Context
 
 ### Changes
@@ -149,8 +168,11 @@ gh pr edit <number> --body "\$(cat <<'EOF'
 - <decision if found>
 
 ---
+
 Context enriched by [ImmorTerm Memory](https://immorterm.com)
+
 <!-- /immorterm-context -->
+
 EOF
 )"
 \`\`\`

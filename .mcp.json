@@ -3,10 +3,7 @@
     "immorterm": {
       "type": "stdio",
       "command": "/Users/shaisnir/.immorterm/bin/immorterm-ai",
-      "args": [
-        "mcp",
-        "serve"
-      ]
+      "args": ["mcp", "serve"]
     },
     "immorterm-memory": {
       "type": "http",

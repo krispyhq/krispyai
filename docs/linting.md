@@ -6,10 +6,10 @@ is small enough that they cover everything it needs.
 
 ## The division of labor
 
-| Tool       | Job                                                                    | Command                     |
-| ---------- | ---------------------------------------------------------------------- | --------------------------- |
-| **Oxlint** | All linting (correctness, TS, imports), type-aware                     | `bun run lint`              |
-| **Oxfmt**  | Formatting (replaces Prettier)                                         | `bun run format` / `:check` |
+| Tool       | Job                                                | Command                     |
+| ---------- | -------------------------------------------------- | --------------------------- |
+| **Oxlint** | All linting (correctness, TS, imports), type-aware | `bun run lint`              |
+| **Oxfmt**  | Formatting (replaces Prettier)                     | `bun run format` / `:check` |
 
 ## Config files
 
