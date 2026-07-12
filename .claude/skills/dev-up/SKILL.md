@@ -6,7 +6,7 @@ allowed-tools: Bash, Read
 
 # Dev Up — start the krispyai umbrella (tool + cloud)
 
-`dev_*` is the **whole-stack umbrella**: one Tilt that serves the public core / tool (edge + widget) *and* the cloud stack (web · api · landing · blog · payment · storybook) together. The umbrella scripts live in **krispyai-cloud** (`dev.Tiltfile` `include()`s the tool's Tiltfile via the sibling path `../krispyai`), so this skill `cd`s there.
+`dev_*` is the **whole-stack umbrella**: one Tilt that serves the public core / tool (edge + widget) _and_ the cloud stack (web · api · landing · blog · payment · storybook) together. The umbrella scripts live in **krispyai-cloud** (`dev.Tiltfile` `include()`s the tool's Tiltfile via the sibling path `../krispyai`), so this skill `cd`s there.
 
 **CRITICAL**: NEVER run `tilt up` directly and NEVER `kill` Tilt / portless by hand. Always use `./dev_up.sh`. Multiple Tilt projects share portless on `:1355` — a stray `tilt up` fights over portless routes and orphans a dashboard.
 
@@ -21,27 +21,27 @@ The script exports the PATH portless needs (`/opt/homebrew/bin`; bun's `~/.bun/b
 
 ## Services (served roles via portless — no pinned service ports)
 
-| Resource | URL | What |
-|---|---|---|
-| edge | http://edge.krispy.localhost:1355 (or :8787) | tool — live-chat + handoff Worker, `GET /health` |
-| widget | http://widget.krispy.localhost:1355 (or :3080) | tool — embeddable chat widget bundle |
-| web | http://web.krispy.localhost:1355 (or http://localhost:5747) | cloud — Next.js dashboard (fixed port, OAuth-ready) |
-| api | http://api.krispy.localhost:1355 (or http://localhost:5748) | cloud — Hono + OpenAPI + Better Auth, `/health` |
-| landing | http://landing.krispy.localhost:1355 | cloud — public marketing site |
-| blog | http://blog.krispy.localhost:1355 | cloud — public SSG MDX blog |
-| payment | http://payment.krispy.localhost:1355 | cloud — Merchant-of-Record billing, `/health` |
-| storybook | http://storybook.krispy.localhost:1355 | cloud — `@krispy/ui` design system |
+| Resource  | URL                                                         | What                                                |
+| --------- | ----------------------------------------------------------- | --------------------------------------------------- |
+| edge      | http://edge.krispy.localhost:1355 (or :8787)                | tool — live-chat + handoff Worker, `GET /health`    |
+| widget    | http://widget.krispy.localhost:1355 (or :3080)              | tool — embeddable chat widget bundle                |
+| web       | http://web.krispy.localhost:1355 (or http://localhost:5747) | cloud — Next.js dashboard (fixed port, OAuth-ready) |
+| api       | http://api.krispy.localhost:1355 (or http://localhost:5748) | cloud — Hono + OpenAPI + Better Auth, `/health`     |
+| landing   | http://landing.krispy.localhost:1355                        | cloud — public marketing site                       |
+| blog      | http://blog.krispy.localhost:1355                           | cloud — public SSG MDX blog                         |
+| payment   | http://payment.krispy.localhost:1355                        | cloud — Merchant-of-Record billing, `/health`       |
+| storybook | http://storybook.krispy.localhost:1355                      | cloud — `@krispy/ui` design system                  |
 
 Tilt UI: http://localhost:10442
 
 ## Coexisting Tilt UI ports (all share portless on `:1355`)
 
-| Project | Tilt UI port(s) |
-|---|---|
-| delulus | 10370 |
-| builders-stack | 10380 |
-| krispyai | tool 10440 · cloud 10441 · umbrella **10442** |
-| ringtail | tool 10450 · site 10451 · umbrella 10452 |
+| Project        | Tilt UI port(s)                               |
+| -------------- | --------------------------------------------- |
+| delulus        | 10370                                         |
+| builders-stack | 10380                                         |
+| krispyai       | tool 10440 · cloud 10441 · umbrella **10442** |
+| ringtail       | tool 10450 · site 10451 · umbrella 10452      |
 
 Note: envoyage-cloud and its umbrella now run on their own UI ports (**10461** / **10462**) — no conflict with krispyai.
 

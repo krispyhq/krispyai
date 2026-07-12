@@ -13,6 +13,7 @@ Start an interactive conversation with a previous Claude Code session. A subagen
 Call `list_sessions(hours_ago=72)` to get recent sessions.
 
 Sessions are sorted by `last_active` (most recent activity first). Present the last 10 sessions to the user as a formatted list, then use **AskUserQuestion** to let them pick:
+
 - Show up to 4 sessions as options
 - The option **label** uses `title` if available, otherwise `terminal_name`: "My Session Title (5m ago)" or "terminal_name (2h ago)". The time shown is relative to `last_active`. If `terminal_status` is `"shelved"`, append `[SHELVED]`.
 - The option **description** includes: terminal_name (if different from label), status, edit count, and summary snippet. Example: "✳ Claude Code · alive · 41 edits — Fixed three deployment bugs"
@@ -28,6 +29,7 @@ Store the selected session's `session_id` and terminal name for display. Initial
 ## Step 2: Question Loop
 
 Use **AskUserQuestion** to ask: "What would you like to ask this session?"
+
 - Option 1: "Change session" — description: "Switch to a different session"
 - Option 2: "Done" — description: "Exit /ask"
 - The user types their question via the "Other" free-text input
@@ -37,6 +39,7 @@ Use **AskUserQuestion** to ask: "What would you like to ask this session?"
 ## Step 3: Dispatch to Subagent
 
 Spawn a **Task** with these parameters:
+
 - `subagent_type`: "general-purpose"
 - `model`: "sonnet"
 - `max_turns`: 8
@@ -82,6 +85,7 @@ CURRENT QUESTION:
 Replace `<SESSION_ID>` with the actual session_id, `<CONVERSATION_LOG_OR_NONE>` with the formatted Q&A log (or "None — this is the first question." if empty), and `<THE_QUESTION>` with the user's question.
 
 **Format the conversation log** as:
+
 ```
 Q1: <question>
 A1: <answer summary, max 2-3 sentences>
@@ -91,6 +95,7 @@ A2: <answer summary>
 ```
 
 When the subagent returns, present the answer:
+
 ```
 ## Session #N says:
 
