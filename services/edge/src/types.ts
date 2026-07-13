@@ -70,6 +70,10 @@ export interface Operator {
   id: number;
   name?: string;
   username?: string;
+  /** Which channel this operator works from. Absent = 'telegram' (back-compat —
+   * every pre-existing KV row has no channel). 'app' operators are skipped by the
+   * Telegram @mention path so they aren't double-pinged (push + mention). */
+  channel?: "telegram" | "app";
 }
 
 export interface Env {
@@ -106,6 +110,12 @@ export interface Env {
    * a build-time default is used when unset — DOs aren't publicly addressable). */
   DO_INTERNAL_SECRET?: string;
 
+  // --- operator-app push (Buttr; optional — unset → pushToApp no-ops) ---
+  /** Cloud endpoint returning a tenant's Expo push tokens (see push.ts contract). */
+  PUSH_TOKENS_URL?: string;
+  /** Shared secret sent as x-push-tokens-secret on the token fetch. */
+  PUSH_TOKENS_SECRET?: string;
+
   // --- lead email (Feature A; optional — no key → email delivery no-ops) ---
   /** Resend API key for lead-email delivery (reuses the cloud's existing key). */
   RESEND_API_KEY?: string;
@@ -118,4 +128,6 @@ export type ServerEvent =
   | { type: "ready"; handedOff: boolean }
   | { type: "operator"; text: string }
   | { type: "handoff" }
-  | { type: "resume" };
+  | { type: "resume" }
+  /** Live visitor/AI ring-append mirrored to `role=operator` sockets only (Buttr thread, §3d/§6). */
+  | { type: "message"; role: "visitor" | "ai"; text: string; ts: number };
