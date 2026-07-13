@@ -98,18 +98,12 @@
     "}" +
     "*{box-sizing:border-box;font-family:var(--k-font)}" +
     // ── Launcher button ──
-    ".btn{" +
-    "position:relative;width:56px;height:56px;border-radius:50%;border:0;" +
-    "background:var(--k-launcher);color:var(--k-espresso);cursor:pointer;" +
-    "box-shadow:0 8px 24px rgba(36,26,18,.22),0 2px 6px rgba(36,26,18,.12);" +
-    "display:flex;align-items:center;justify-content:center;" +
-    "margin-bottom:env(safe-area-inset-bottom,0);" +
-    "transition:box-shadow 0.2s,transform 0.15s;" +
-    "outline:none" +
-    "}" +
+    ".btn{position:relative;width:76px;height:76px;border:0;background:transparent;cursor:pointer;padding:0;margin-bottom:env(safe-area-inset-bottom,0);display:flex;align-items:center;justify-content:center}" +
     ".btn:hover{box-shadow:0 12px 32px rgba(36,26,18,.28),0 3px 8px rgba(36,26,18,.14);transform:translateY(-1px)}" +
     ".btn:active{transform:translateY(0);box-shadow:0 4px 12px rgba(36,26,18,.18)}" +
-    ".btn .bic{width:42px;height:42px;object-fit:contain;flex:0 0 auto;pointer-events:none}" +
+    ".btn .bic{width:72px;height:72px;object-fit:contain;flex:0 0 auto;pointer-events:none;filter:drop-shadow(0 6px 12px rgba(36,26,18,.28));transition:transform .18s cubic-bezier(.16,1,.3,1)}" +
+    ".btn:hover .bic{transform:scale(1.08) rotate(-6deg)}" +
+    "@media (prefers-reduced-motion:reduce){.btn:hover .bic{transform:none}}" +
     // Unread dot (jam)
     ".btn .dot{position:absolute;top:-2px;right:-2px;width:14px;height:14px;border-radius:50%;background:var(--k-jam);border:2px solid #fff;display:none}" +
     ".btn.kunread .dot{display:block}" +
