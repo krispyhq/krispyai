@@ -264,7 +264,9 @@ paths:
       operationId: operatorHandoffs
       description: >
         Every handed-off session for the tenant, newest activity first, each with a
-        `lastMessage` preview from the session's ring buffer. No dedicated handoff index
+        `lastMessage` preview from the session's ring buffer. Resolved sessions are
+        EXCLUDED by default; pass `includeResolved: true` to list them too (rows carry
+        `resolved: true`). No dedicated handoff index
         exists — the Worker scans the session→thread KV map (first page, 1000 sessions) and
         asks each SessionDO for a one-shot summary.
       security: [] # tonight — see /api/operator/reply auth note
@@ -277,6 +279,10 @@ paths:
               required: [tenantId]
               properties:
                 tenantId: { type: string }
+                includeResolved:
+                  type: boolean
+                  default: false
+                  description: Also list resolved sessions.
       responses:
         "200":
           description: The inbox list.
@@ -315,6 +321,46 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OperatorThreadResponse" }
+        "400":
+          description: Missing `tenantId` or `sessionId`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/operator/resolve:
+    post:
+      tags: [public]
+      summary: Toggle a session's resolved flag (inbox hygiene)
+      operationId: operatorResolve
+      description: >
+        Toggle the session's `resolved` flag in its SessionDO. Resolved sessions drop out
+        of the default `/api/operator/handoffs` inbox; toggling again un-resolves (undo an
+        accidental swipe). A NEW live visitor message on a resolved session un-resolves it
+        automatically — the conversation is live again.
+      security: [] # tonight — see /api/operator/reply auth note
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenantId, sessionId]
+              properties:
+                tenantId: { type: string }
+                sessionId: { type: string }
+      responses:
+        "200":
+          description: The new resolved state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, resolved]
+                properties:
+                  ok: { type: boolean, const: true }
+                  resolved:
+                    type: boolean
+                    description: The state AFTER the toggle.
         "400":
           description: Missing `tenantId` or `sessionId`.
           content:
@@ -525,7 +571,7 @@ components:
           description: Newest activity first.
           items:
             type: object
-            required: [sessionId, lastMessage, handedOff, ts]
+            required: [sessionId, lastMessage, handedOff, ts, resolved]
             properties:
               sessionId: { type: string }
               lastMessage:
@@ -535,6 +581,11 @@ components:
               ts:
                 type: [integer, "null"]
                 description: Epoch millis of the last message (null when the ring is empty).
+              resolved:
+                type: boolean
+                description: >
+                  Always false in the default response (resolved sessions are excluded);
+                  true only for rows returned via `includeResolved: true`.
 
     OperatorThreadResponse:
       type: object

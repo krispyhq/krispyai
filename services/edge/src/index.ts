@@ -10,6 +10,7 @@
 //   POST /api/operator/reply           operator app reply → visitor (same DO spine)
 //   POST /api/operator/handoffs        operator app inbox (handed-off sessions)
 //   POST /api/operator/thread          one session's ring-buffer messages
+//   POST /api/operator/resolve         toggle a session's resolved flag (inbox hygiene)
 //   GET  /api/session/:id/ws           live channel (→ SessionDO; ?role=operator tags)
 //   GET  /api/usage?t=<tenant>         metering readout (plan/usage hooks)
 //   GET  /health
@@ -105,6 +106,8 @@ export default {
       return handleOperatorHandoffs(request, env);
     if (request.method === "POST" && path === "/api/operator/thread")
       return handleOperatorThread(request, env);
+    if (request.method === "POST" && path === "/api/operator/resolve")
+      return handleOperatorResolve(request, env);
     if (request.method === "POST" && path === "/api/billing/entitlement")
       return handleEntitlementSync(request, env);
     if (request.method === "GET" && path === "/api/tenant/config")
@@ -428,15 +431,21 @@ async function handleOperatorReply(request: Request, env: Env): Promise<Response
   return json(env, { ok: true, delivered: true });
 }
 
-// POST /api/operator/handoffs { tenantId } → the operator app's inbox.
+// POST /api/operator/handoffs { tenantId, includeResolved? } → the operator app's
+// inbox. Resolved sessions are EXCLUDED by default (inbox hygiene); pass
+// { includeResolved: true } to list them too (each row carries `resolved`).
 // No dedicated handoff index exists — the session→thread KV map doubles as the
 // session index; each session's DO answers one /summary (handoff flag + ring tail).
 // ponytail: first KV page only (1000 sessions) + one DO subrequest per session —
 // fine for an operator inbox; add a real handoff index if a tenant outgrows it.
 async function handleOperatorHandoffs(request: Request, env: Env): Promise<Response> {
-  const b = (await request.json().catch(() => null)) as { tenantId?: string } | null;
+  const b = (await request.json().catch(() => null)) as {
+    tenantId?: string;
+    includeResolved?: boolean;
+  } | null;
   if (!b?.tenantId) return json(env, { error: "tenantId required" }, 400);
   const tenantId = b.tenantId;
+  const includeResolved = b.includeResolved === true;
   const prefix = `session:${tenantId}:`;
   const list = await env.KRISPY_KV.list({ prefix });
   const rows = await Promise.all(
@@ -445,11 +454,13 @@ async function handleOperatorHandoffs(request: Request, env: Env): Promise<Respo
       const r = await doFetch(env, tenantId, sessionId, "https://do/summary");
       const s = (await r.json()) as {
         handedOff: boolean;
+        resolved?: boolean;
         lastMessage: string | null;
         ts: number | null;
       };
-      return s.handedOff
-        ? { sessionId, lastMessage: s.lastMessage, handedOff: true as const, ts: s.ts }
+      const resolved = s.resolved === true;
+      return s.handedOff && (includeResolved || !resolved)
+        ? { sessionId, lastMessage: s.lastMessage, handedOff: true as const, ts: s.ts, resolved }
         : null;
     }),
   );
@@ -472,6 +483,22 @@ async function handleOperatorThread(request: Request, env: Env): Promise<Respons
   const r = await doFetch(env, b.tenantId, b.sessionId, "https://do/log");
   const { messages } = (await r.json()) as { messages: unknown[] };
   return json(env, { messages });
+}
+
+// POST /api/operator/resolve { tenantId, sessionId } → toggle the session's
+// resolved flag in its DO. Resolved sessions drop out of the default inbox; a new
+// live visitor message un-resolves them (the DO handles that on ring-append).
+async function handleOperatorResolve(request: Request, env: Env): Promise<Response> {
+  const b = (await request.json().catch(() => null)) as {
+    tenantId?: string;
+    sessionId?: string;
+  } | null;
+  if (!b?.tenantId || !b.sessionId) {
+    return json(env, { error: "tenantId and sessionId required" }, 400);
+  }
+  const r = await doFetch(env, b.tenantId, b.sessionId, "https://do/resolve", { method: "POST" });
+  const { resolved } = (await r.json()) as { resolved: boolean };
+  return json(env, { ok: true, resolved });
 }
 
 // ── POST /api/billing/entitlement ──────────────────────────────────────────

@@ -9,11 +9,13 @@
 //   GET  (Upgrade: websocket)  → visitor connects; gets {type:"ready", handedOff}
 //                                (?role=operator tags the socket — Buttr app, §3d)
 //   GET  /state                → { handedOff }   (chat flow reads this)
-//   GET  /summary              → { handedOff, lastMessage, ts }  (operator inbox row)
+//   GET  /summary              → { handedOff, resolved, lastMessage, ts }  (operator inbox row)
 //   GET  /log                  → { messages }    (the 20-msg ring — thread read)
 //   POST /log {messages,seed?} → append to the ring (seed: only if the ring is empty)
 //   POST /operator {text}      → set handedOff, broadcast + ring-append operator reply
 //   POST /handoff              → broadcast a handoff prompt (AI escalation)
+//   POST /resolve              → toggle the `resolved` flag (operator inbox hygiene);
+//                                a new LIVE visitor message un-resolves automatically
 import type { Env, ServerEvent } from "./types";
 import { DO_INTERNAL_HEADER, doInternalSecret } from "./store";
 
@@ -59,6 +61,10 @@ export class SessionDO {
 
   private async handedOff(): Promise<boolean> {
     return (await this.state.storage.get<boolean>("handedOff")) === true;
+  }
+
+  private async resolved(): Promise<boolean> {
+    return (await this.state.storage.get<boolean>("resolved")) === true;
   }
 
   private async ring(): Promise<RingMsg[]> {
@@ -112,10 +118,15 @@ export class SessionDO {
     // One inbox-row read: handoff flag + the ring tail — halves the per-session
     // subrequests of the /api/operator/handoffs KV scan vs /state + /log.
     if (request.method === "GET" && url.pathname.endsWith("/summary")) {
-      const [handedOff, log] = await Promise.all([this.handedOff(), this.ring()]);
+      const [handedOff, resolved, log] = await Promise.all([
+        this.handedOff(),
+        this.resolved(),
+        this.ring(),
+      ]);
       const last = log[log.length - 1];
       return Response.json({
         handedOff,
+        resolved,
         lastMessage: last?.text ?? null,
         ts: last?.ts ?? null,
       });
@@ -143,6 +154,12 @@ export class SessionDO {
         ts: m.ts ?? now,
       }));
       const log = await this.appendRing(appended);
+      // A new LIVE visitor message on a resolved session un-resolves it — the
+      // visitor came back, so it belongs in the inbox again. Seed replays are
+      // backfill of old turns, not new activity.
+      if (!seed && appended.some((m) => m.role === "visitor") && (await this.resolved())) {
+        await this.state.storage.put("resolved", false);
+      }
       // Mirror LIVE visitor/AI turns to operator sockets so an open Buttr thread
       // streams in realtime (§3d/§6). Seed replays are backfill (the app reads
       // them via /log) and visitor sockets are untouched — they'd echo the
@@ -163,6 +180,14 @@ export class SessionDO {
       await this.appendRing([{ role: "operator", text, ts: Date.now() }]);
       const n = broadcast(this.state.getWebSockets(), { type: "operator", text });
       return Response.json({ ok: true, delivered: n });
+    }
+
+    // Toggle the resolved flag (operator "done with this one" — inbox hygiene).
+    // Toggling (not one-way set) lets the app undo an accidental swipe.
+    if (request.method === "POST" && url.pathname.endsWith("/resolve")) {
+      const next = !(await this.resolved());
+      await this.state.storage.put("resolved", next);
+      return Response.json({ ok: true, resolved: next });
     }
 
     if (request.method === "POST" && url.pathname.endsWith("/handoff")) {
