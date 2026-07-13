@@ -1,0 +1,36 @@
+meta {
+  name: Operator - resolve session
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/operator/resolve
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "tenantId": "self",
+    "sessionId": "session-id-here"
+  }
+}
+
+tests {
+  test("responds 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("returns the toggled resolved state", function() {
+    expect(res.getBody().ok).to.equal(true);
+    expect(res.getBody().resolved).to.be.a("boolean");
+  });
+}
+
+docs {
+  Toggle a session's `resolved` flag (operator inbox hygiene). Resolved sessions are
+  excluded from the default `/api/operator/handoffs` response; toggling again un-resolves
+  (undo an accidental swipe). A NEW live visitor message on a resolved session also
+  un-resolves it automatically — the conversation is live again. Missing `tenantId` or
+  `sessionId` → 400. Response: `{ ok: true, resolved: boolean }` (the new state).
+}

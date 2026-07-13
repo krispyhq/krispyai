@@ -978,10 +978,11 @@ describe("SessionDO ring buffer", () => {
     expect((await msgs(do_)).map((m) => m.text)).toEqual(["old"]);
   });
 
-  test("/summary = handoff flag + ring tail (empty ring → nulls)", async () => {
+  test("/summary = handoff flag + resolved + ring tail (empty ring → nulls)", async () => {
     const do_ = new SessionDO(fakeDOState(), env);
     expect(await (await get(do_, "/summary")).json()).toEqual({
       handedOff: false,
+      resolved: false,
       lastMessage: null,
       ts: null,
     });
@@ -1002,6 +1003,43 @@ describe("SessionDO ring buffer", () => {
     const do_ = new SessionDO(fakeDOState(), env);
     expect((await do_.fetch(new Request("https://do/log"))).status).toBe(403);
     expect((await do_.fetch(new Request("https://do/summary"))).status).toBe(403);
+    expect((await do_.fetch(new Request("https://do/resolve", { method: "POST" }))).status).toBe(
+      403,
+    );
+  });
+
+  test("/resolve toggles the flag; /summary reflects it", async () => {
+    const do_ = new SessionDO(fakeDOState(), env);
+    expect(await (await post(do_, "/resolve", {})).json()).toEqual({ ok: true, resolved: true });
+    const s = (await (await get(do_, "/summary")).json()) as { resolved: boolean };
+    expect(s.resolved).toBe(true);
+    // toggle back (undo an accidental resolve)
+    expect(await (await post(do_, "/resolve", {})).json()).toEqual({ ok: true, resolved: false });
+  });
+
+  test("a new LIVE visitor message un-resolves the session; ai/operator/seed don't", async () => {
+    const do_ = new SessionDO(fakeDOState(), env);
+    const resolved = async () =>
+      ((await (await get(do_, "/summary")).json()) as { resolved: boolean }).resolved;
+
+    await post(do_, "/resolve", {});
+    // ai turn → stays resolved
+    await post(do_, "/log", { messages: [{ role: "ai", text: "fyi" }] });
+    expect(await resolved()).toBe(true);
+    // operator reply via /operator → stays resolved
+    await post(do_, "/operator", { text: "closing note" });
+    expect(await resolved()).toBe(true);
+    // live visitor message → back in the inbox
+    await post(do_, "/log", { messages: [{ role: "visitor", text: "one more thing!" }] });
+    expect(await resolved()).toBe(false);
+
+    // seed replay never un-resolves (backfill, not new activity) — needs an empty ring
+    const do2 = new SessionDO(fakeDOState(), env);
+    await post(do2, "/resolve", {});
+    await post(do2, "/log", { messages: [{ role: "visitor", text: "old" }], seed: true });
+    expect(((await (await get(do2, "/summary")).json()) as { resolved: boolean }).resolved).toBe(
+      true,
+    );
   });
 
   test("live /log appends mirror {type:'message'} to OPERATOR sockets only; seed stays silent", async () => {
@@ -1079,6 +1117,8 @@ describe("operator app routes", () => {
       ["/api/operator/reply", { sessionId: "s", text: "x" }], // no tenant
       ["/api/operator/thread", { tenantId: "a" }], // no session
       ["/api/operator/handoffs", {}], // no tenant
+      ["/api/operator/resolve", { tenantId: "a" }], // no session
+      ["/api/operator/resolve", { sessionId: "s" }], // no tenant
     ] as const) {
       expect((await worker.fetch(post(path, body), env)).status).toBe(400);
     }
@@ -1107,6 +1147,55 @@ describe("operator app routes", () => {
       handedOff: true,
     });
     expect(typeof conversations[0]!.ts).toBe("number");
+  });
+
+  test("resolve drops a session from the default inbox; includeResolved returns it; a new visitor message revives it", async () => {
+    const env = wireSessionNS(fakeEnv());
+    await linkThreadSession(env, "self", 1, "s-live");
+    await worker.fetch(
+      post("/api/operator/reply", { tenantId: "self", sessionId: "s-live", text: "done!" }),
+      env,
+    );
+
+    // resolve via the operator route
+    const res = await worker.fetch(
+      post("/api/operator/resolve", { tenantId: "self", sessionId: "s-live" }),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, resolved: true });
+
+    // default inbox → excluded
+    const inbox = await worker.fetch(post("/api/operator/handoffs", { tenantId: "self" }), env);
+    expect(((await inbox.json()) as { conversations: unknown[] }).conversations).toHaveLength(0);
+
+    // includeResolved → present, flagged resolved:true
+    const all = await worker.fetch(
+      post("/api/operator/handoffs", { tenantId: "self", includeResolved: true }),
+      env,
+    );
+    const { conversations } = (await all.json()) as {
+      conversations: { sessionId: string; resolved: boolean }[];
+    };
+    expect(conversations).toHaveLength(1);
+    expect(conversations[0]).toMatchObject({ sessionId: "s-live", resolved: true });
+
+    // a new live visitor message (the chat path's ring-append) un-resolves it
+    await worker.fetch(
+      new Request("https://edge.test/api/chat", {
+        method: "POST",
+        body: JSON.stringify({ sessionId: "s-live", tenantId: "self", message: "hello again?" }),
+      }),
+      env,
+    );
+    const revived = await worker.fetch(post("/api/operator/handoffs", { tenantId: "self" }), env);
+    const rows = (
+      (await revived.json()) as {
+        conversations: { sessionId: string; resolved: boolean }[];
+      }
+    ).conversations;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ sessionId: "s-live", resolved: false });
   });
 
   test("thread of an untouched session → empty messages", async () => {
