@@ -21,6 +21,12 @@
   };
   if (!cfg.api) return console.error("[krispy] missing data-api on <script>");
 
+  // Real Buttr mark — the background-removed mascot PNG shipped NEXT TO widget.js
+  // on the widget CDN (founder-approved public asset). Derived from the script src
+  // so it works on any host; the inline SVG data-URI below stays as the fallback.
+  var ASSET_BASE = script && script.src ? script.src.slice(0, script.src.lastIndexOf("/") + 1) : "";
+  var BUTTR_PNG = ASSET_BASE ? ASSET_BASE + "buttr.png" : "";
+
   // Default Buttr avatar — inline data-URI (self-contained; NEVER the private
   // ops/brand/stickers PNGs). A tiny croissant on cream, in brand gold/espresso.
   var BUTTR =
@@ -70,7 +76,7 @@
     "--k-primary:" +
     cfg.accent +
     ";" +
-    "--k-launcher:var(--k-primary);" +
+    "--k-launcher:#fbf6ee;" +
     "--k-radius:12px;" +
     "--k-font:Inter,-apple-system,'Segoe UI',Roboto,sans-serif;" +
     // Palette
@@ -103,7 +109,7 @@
     "}" +
     ".btn:hover{box-shadow:0 12px 32px rgba(36,26,18,.28),0 3px 8px rgba(36,26,18,.14);transform:translateY(-1px)}" +
     ".btn:active{transform:translateY(0);box-shadow:0 4px 12px rgba(36,26,18,.18)}" +
-    ".btn svg{width:26px;height:26px;flex:0 0 auto}" +
+    ".btn .bic{width:42px;height:42px;object-fit:contain;flex:0 0 auto;pointer-events:none}" +
     // Unread dot (jam)
     ".btn .dot{position:absolute;top:-2px;right:-2px;width:14px;height:14px;border-radius:50%;background:var(--k-jam);border:2px solid #fff;display:none}" +
     ".btn.kunread .dot{display:block}" +
@@ -338,22 +344,9 @@
     "</button>" +
     "</form>" +
     "</div>" +
-    // Launcher button: inline croissant SVG + unread dot + online dot
+    // Launcher button: real Buttr mascot (PNG from the widget CDN, data-URI fallback)
     '<button class="btn" aria-label="Open chat">' +
-    // Buttr croissant mark — tasteful ~24px croissant path, gold fill + espresso outline
-    '<svg viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
-    // Main body — crescent/croissant shape
-    '<path d="M14 6C9.5 6 5.5 9 4 13.5C5.5 12 7.5 11 10 11C11.5 8.5 13.5 7 16 7C15.4 6.3 14.7 6 14 6z" fill="#e39a2b" stroke="#241a12" stroke-width="1.2" stroke-linejoin="round"/>' +
-    '<path d="M14 22C18.5 22 22.5 19 24 14.5C22.5 16 20.5 17 18 17C16.5 19.5 14.5 21 12 21C12.6 21.7 13.3 22 14 22z" fill="#e39a2b" stroke="#241a12" stroke-width="1.2" stroke-linejoin="round"/>' +
-    // Center body — the bulk of the croissant
-    '<ellipse cx="14" cy="14" rx="6" ry="4.5" fill="#f6d9a8" stroke="#241a12" stroke-width="1.2"/>' +
-    // Score lines (the ridges)
-    '<path d="M10.5 13.5C11.5 12.5 13 12 14.5 12.5" stroke="#c9841c" stroke-width="0.9" stroke-linecap="round" opacity="0.8"/>' +
-    '<path d="M11 15.5C12 14.5 13.5 14 15 14.5" stroke="#c9841c" stroke-width="0.9" stroke-linecap="round" opacity="0.6"/>' +
-    // Tip highlights
-    '<circle cx="5.5" cy="12.5" r="2" fill="#f6d9a8" stroke="#241a12" stroke-width="1.1"/>' +
-    '<circle cx="22.5" cy="15.5" r="2" fill="#f6d9a8" stroke="#241a12" stroke-width="1.1"/>' +
-    "</svg>" +
+    '<img class="bic" alt="">' +
     '<span class="dot"></span>' +
     '<span class="online"></span>' +
     "</button>";
@@ -369,8 +362,18 @@
   var capForm = $(".cap");
   var avatarEl = $(".av");
   $(".ttl").textContent = cfg.title;
-  // Default avatar: BUTTR croissant mark. applyTheme can replace with a tenant URL.
-  avatarEl.src = BUTTR;
+  // Default avatar + launcher: real Buttr PNG, inline data-URI as onerror fallback.
+  var launcherIcon = $(".bic");
+  function setButtr(img) {
+    if (!img) return;
+    img.onerror = function () {
+      this.onerror = null;
+      this.src = BUTTR;
+    };
+    img.src = BUTTR_PNG || BUTTR;
+  }
+  setButtr(avatarEl);
+  setButtr(launcherIcon);
 
   // ── theme (boot fetch, init-gated, NO poll — decorative → never blocks chat) ──
   var greeting = ""; // optional first bot bubble on open; set by theme
