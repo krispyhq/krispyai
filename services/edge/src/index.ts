@@ -18,7 +18,7 @@
 import type { ChatMessage } from "./ai";
 import { workersAiRunner } from "./ai";
 import { chatFlow } from "./chat";
-import { SessionDO } from "./session-do";
+import { SessionDO, type RingMsg } from "./session-do";
 import { buildSystemPrompt } from "./system-prompt";
 import { parseOwnerReply, createForumTopic, sendToTopic, sendHandoffAlert } from "./telegram";
 import { authorizeOperator } from "./operator-auth";
@@ -50,6 +50,34 @@ import {
 export { SessionDO };
 
 const DEFAULT_TENANT = "self";
+
+// ── DO-ring memory (chat context) ────────────────────────────────────────────
+// The SessionDO's 20-msg ring is the bot's authoritative memory: the client's
+// history array is spoofable, capped at 10 by the widget, and lost across devices.
+
+/** Hard ceiling on the ring read — a slow/erroring DO must never make chat slower
+ * than the old client-history path. On timeout/failure we warn + fall back. */
+export const RING_READ_TIMEOUT_MS = 1_500;
+
+/** Cap on ring-derived history — mirrors the widget's own `history.slice(-10)`, so
+ * prompt size and the turn-tax guard keep exactly the pre-ring posture. */
+export const RING_HISTORY_MAX = 10;
+
+/** Ring → AI context. `visitor` → user; `ai` AND `operator` → assistant (the visitor
+ * heard operator turns as "the business speaking", and the bot must know what the
+ * human said after a hand-back). */
+export function ringToHistory(
+  msgs: { role: "visitor" | "ai" | "operator"; text: string }[],
+  cap = RING_HISTORY_MAX,
+): ChatMessage[] {
+  return msgs
+    .filter((m) => m.text)
+    .map((m) => ({
+      role: m.role === "visitor" ? ("user" as const) : ("assistant" as const),
+      content: m.text,
+    }))
+    .slice(-cap);
+}
 
 /** Parse a positive-integer env knob; undefined (→ code default) when unset/invalid. */
 const numEnv = (v?: string): number | undefined => {
@@ -176,21 +204,42 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
 
   const tenant = await getTenant(env, tenantId);
 
+  // Authoritative memory: one combined DO read (handoff flag + ring) replaces the
+  // /state read the flow made anyway — same subrequest count, and the AI context
+  // now comes from the server-side ring instead of the client's claim. GUARDED:
+  // timeout + any failure falls back to the client-sent history exactly as before
+  // (warn-logged so drift is observable); a slow DO never slows chat down.
+  let ctx: { handedOff: boolean; messages: RingMsg[] } | null = null;
+  try {
+    const r = await doFetch(env, tenantId, body.sessionId, "https://do/context", {
+      signal: AbortSignal.timeout(RING_READ_TIMEOUT_MS),
+    });
+    ctx = (await r.json()) as { handedOff: boolean; messages: RingMsg[] };
+  } catch (e) {
+    console.warn("ring context read failed — falling back to client history:", e);
+  }
+  // Client history is a SEED only: used when the ring is empty (first message of a
+  // legacy session) or when the ring read failed (fallback path above).
+  const history = ctx?.messages.length ? ringToHistory(ctx.messages) : body.history;
+
   // Telegram is optional: no config → topic ops no-op, chat still answers.
   const result = await chatFlow(
     {
       systemPrompt: buildSystemPrompt(tenant?.systemPrompt, tenant?.forms),
-      // Full history in; chatFlow applies the sliding window + counts turns (chokepoint).
-      history: body.history,
+      // Ring-derived (or seed) history in; chatFlow applies the sliding window +
+      // counts turns (chokepoint).
+      history,
       maxHistoryMsgs: numEnv(env.MAX_HISTORY_MSGS),
       maxAiTurns: numEnv(env.MAX_AI_TURNS),
       ai: workersAiRunner(env, tenant?.model || env.AI_MODEL),
       meter: (kind) => meter(env, tenantId, kind),
       meterTokens: (n) => meter(env, tenantId, "tokens", n),
-      isHandedOff: async (sessionId) => {
-        const r = await doFetch(env, tenantId, sessionId, "https://do/state");
-        return ((await r.json()) as { handedOff: boolean }).handedOff;
-      },
+      isHandedOff: ctx
+        ? async () => ctx.handedOff // already read in the combined /context fetch
+        : async (sessionId) => {
+            const r = await doFetch(env, tenantId, sessionId, "https://do/state");
+            return ((await r.json()) as { handedOff: boolean }).handedOff;
+          },
       ensureTopic: async (sessionId, firstMessage) => {
         if (!tenant) return 0;
         const existing = await getThreadForSession(env, tenantId, sessionId);

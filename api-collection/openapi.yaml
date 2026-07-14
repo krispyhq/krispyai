@@ -707,6 +707,11 @@ components:
         history:
           type: array
           items: { $ref: "#/components/schemas/ChatMessage" }
+          description: >
+            SEED/FALLBACK ONLY. The bot's authoritative context is the server-side
+            SessionDO ring; client history is used only when the ring is empty (first
+            message of a legacy session) or when the ring read fails/times out
+            (~1.5s guard). A non-empty ring always wins — spoofed history is ignored.
 
     ChatResult:
       type: object
