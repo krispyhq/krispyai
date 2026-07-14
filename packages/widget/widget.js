@@ -55,6 +55,34 @@
   }
 
   var history = []; // {role, content} — sent for context, capped server-side
+
+  // Transcript persistence (adimoyal HelpChat pattern): conversational bubbles
+  // survive a page refresh. Stored per-tenant; capped; sys lines + typing dots
+  // are transient and never stored. Restored bubbles replay through add() so
+  // they keep the same XSS-safe rendering path.
+  var MSG_KEY = "krispy_msgs_" + cfg.tenant;
+  var savedMsgs = [];
+  try {
+    savedMsgs = JSON.parse(localStorage.getItem(MSG_KEY) || "[]") || [];
+  } catch {
+    savedMsgs = [];
+  }
+  var restoring = false;
+  function persistMsg(cls, text) {
+    savedMsgs.push({ c: cls, t: String(text) });
+    if (savedMsgs.length > 60) savedMsgs = savedMsgs.slice(-60);
+    try {
+      localStorage.setItem(MSG_KEY, JSON.stringify(savedMsgs));
+    } catch {
+      /* quota/private mode — chat still works, just not persistent */
+    }
+  }
+  // Rebuild the AI context from the restored transcript (me→user, bot/op→assistant).
+  for (var hi = Math.max(0, savedMsgs.length - 10); hi < savedMsgs.length; hi++) {
+    var hm = savedMsgs[hi];
+    if (hm && (hm.c === "me" || hm.c === "bot" || hm.c === "op"))
+      history.push({ role: hm.c === "me" ? "user" : "assistant", content: hm.t });
+  }
   var handedOff = false; // a human took over → hide the AI framing
   var ws = null;
   var keepalive = null;
@@ -98,7 +126,7 @@
     "}" +
     "*{box-sizing:border-box;font-family:var(--k-font)}" +
     // ── Launcher button ──
-    ".btn{position:relative;width:76px;height:76px;border:0;background:transparent;cursor:pointer;padding:0;margin-bottom:env(safe-area-inset-bottom,0);display:flex;align-items:center;justify-content:center}" +
+    ".btn{position:relative;margin-left:auto;width:76px;height:76px;border:0;background:transparent;cursor:pointer;padding:0;margin-bottom:env(safe-area-inset-bottom,0);display:flex;align-items:center;justify-content:center}" +
     ".btn:active .bic{transform:scale(0.96)}" +
     ".btn .bic{width:72px;height:72px;object-fit:contain;flex:0 0 auto;pointer-events:none;filter:drop-shadow(0 6px 12px rgba(36,26,18,.28));transition:transform .18s cubic-bezier(.16,1,.3,1)}" +
     ".btn:hover .bic{transform:scale(1.08) rotate(-6deg)}" +
@@ -385,6 +413,12 @@
     if (th.position === "bl") {
       host.style.right = "auto";
       host.style.left = "20px";
+      // bottom-left: the launcher hugs the left edge under the open panel
+      var blBtn = root.querySelector(".btn");
+      if (blBtn) {
+        blBtn.style.marginLeft = "0";
+        blBtn.style.marginRight = "auto";
+      }
     }
     if (typeof th.headerTitle === "string" && th.headerTitle)
       $(".ttl").textContent = th.headerTitle;
@@ -547,6 +581,7 @@
     else d.textContent = text;
     log.appendChild(d);
     log.scrollTop = log.scrollHeight;
+    if (!restoring && (cls === "me" || cls === "bot" || cls === "op")) persistMsg(cls, text);
     return d;
   }
 
@@ -572,7 +607,16 @@
     if (!opened) {
       opened = true;
       add("sys", "You're chatting with an AI assistant. A human can jump in anytime.");
-      if (greeting) add("bot", greeting);
+      if (savedMsgs.length) {
+        restoring = true;
+        for (var ri = 0; ri < savedMsgs.length; ri++) {
+          var rm = savedMsgs[ri];
+          if (rm && rm.c && rm.t != null) add(rm.c, rm.t);
+        }
+        restoring = false;
+      } else if (greeting) {
+        add("bot", greeting);
+      }
       connectWs();
     }
     syncViewport();
