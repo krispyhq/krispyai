@@ -2010,7 +2010,10 @@ describe("GET /internal/usage (admin cost readout)", () => {
   test("fails closed when ADMIN_USAGE_SECRET is unset → 403, counters never read", async () => {
     const env = fakeEnv(); // no ADMIN_USAGE_SECRET
     await meterUsage(env, "t1", { promptTokens: 100, completionTokens: 10 });
-    const res = await worker.fetch(req("/internal/usage?t=t1", { "x-admin-usage-secret": "x" }), env);
+    const res = await worker.fetch(
+      req("/internal/usage?t=t1", { "x-admin-usage-secret": "x" }),
+      env,
+    );
     expect(res.status).toBe(403);
   });
 
@@ -2039,8 +2042,16 @@ describe("GET /internal/usage (admin cost readout)", () => {
       env,
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { usage: Record<string, Awaited<ReturnType<typeof getUsageDetail>>> };
-    expect(body.usage.a).toEqual({ ai: 5, handoff: 0, tokens: 1000, tokensIn: 900, tokensOut: 100 });
+    const body = (await res.json()) as {
+      usage: Record<string, Awaited<ReturnType<typeof getUsageDetail>>>;
+    };
+    expect(body.usage.a).toEqual({
+      ai: 5,
+      handoff: 0,
+      tokens: 1000,
+      tokensIn: 900,
+      tokensOut: 100,
+    });
     expect(body.usage.b).toEqual({ ai: 0, handoff: 0, tokens: 250, tokensIn: 200, tokensOut: 50 });
   });
 });
