@@ -6,7 +6,7 @@
 //   mirror the AI reply to the topic → answer the visitor. If the AI throws, we
 //   degrade to a human handoff rather than dropping the visitor.
 import type { ChatMessage } from "./ai";
-import { parseHandoff, parseForm } from "./system-prompt";
+import { parseHandoff, parseForm, detectPromptLeak } from "./system-prompt";
 import type { FormSpec } from "./types";
 
 export const FALLBACK_REPLY = "Thanks — a teammate will jump in here shortly.";
@@ -132,6 +132,18 @@ export async function chatFlow(deps: ChatDeps, input: ChatInput): Promise<ChatRe
   const { text, handoff } = parseHandoff(raw);
   // Orthogonal form marker — parsed off the already-handoff-stripped text.
   const { text: clean, formId } = parseForm(text);
+
+  // Output guardrail: a jailbroken model can leak its system prompt or re-emit control
+  // tokens despite SECURITY_INSTRUCTION. Deterministic, zero-latency catch on the
+  // already-stripped visitor text — on a hit, never show the leak: swallow the reply
+  // and pull in a human (a leak attempt means a hostile visitor worth an operator's eyes).
+  if (detectPromptLeak(clean, deps.systemPrompt)) {
+    console.warn("prompt_leak_suppressed");
+    await deps.meter("handoff");
+    await toTopic(threadId, "🛡️ Suppressed a suspected prompt-leak — bringing in a human.");
+    return { reply: FALLBACK_REPLY, handoff: true, handedOff: false };
+  }
+
   if (handoff) {
     await deps.meter("handoff");
     await toTopic(threadId, "🙋 AI asked for a human here.");

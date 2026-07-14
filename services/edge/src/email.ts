@@ -13,12 +13,16 @@ export interface LeadEmail {
 }
 
 // Minimal HTML escape — every value is visitor-controlled and lands in an email body.
+// Covers < > & " ' so a value is inert in both element-text and attribute contexts
+// (today all interpolations are text nodes, but escaping ' keeps it safe if a value
+// ever lands inside a quoted attribute).
 function esc(s: string): string {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 /**

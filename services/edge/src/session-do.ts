@@ -106,6 +106,10 @@ export class SessionDO {
    * Buttr thread sees the state flip). No-op when the bot already has the session. */
   private async handBack(opts: { note?: string } = {}): Promise<void> {
     await this.state.storage.deleteAlarm();
+    // Reset the handoff-announce guard so a genuinely new future escalation can alert
+    // again (see /handoff). Cleared regardless of handedOff — the flag can be set before
+    // any operator reply flips handedOff.
+    await this.state.storage.put("handoffAnnounced", false);
     if (!(await this.handedOff())) return;
     await this.state.storage.put("handedOff", false);
     if (opts.note) await this.appendRing([{ role: "ai", text: opts.note, ts: Date.now() }]);
@@ -251,8 +255,15 @@ export class SessionDO {
     }
 
     if (request.method === "POST" && url.pathname.endsWith("/handoff")) {
+      // Idempotency guard: a jailbroken bot can emit [!HANDOFF] on every turn. The
+      // widget-facing broadcast is harmless to repeat, but the Worker's LOUD side of a
+      // handoff (operator @mention + push) must fire ONCE per escalation, not per turn.
+      // `announced` tells the Worker whether this is the first time; handBack clears the
+      // flag so a later, genuine escalation can alert again. MAX_AI_TURNS bounds the rest.
+      const announced = (await this.state.storage.get<boolean>("handoffAnnounced")) === true;
+      if (!announced) await this.state.storage.put("handoffAnnounced", true);
       const n = broadcast(this.state.getWebSockets(), { type: "handoff" });
-      return Response.json({ ok: true, delivered: n });
+      return Response.json({ ok: true, delivered: n, announced: !announced });
     }
 
     return new Response("not found", { status: 404 });

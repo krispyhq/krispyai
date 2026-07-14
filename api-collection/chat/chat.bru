@@ -34,8 +34,11 @@ docs {
   Visitor message → AI reply, mirrored to the owner's Telegram topic. Before answering
   the Worker checks entitlement + plan limits: self-host (`"self"`) is always entitled and
   unmetered; a non-self tenant without a valid snapshot gets 402, over its cap gets 429.
-  Missing `sessionId`/`message` → 400. Response: `{ reply, handoff, handedOff, degraded?,
-  formId?, form? }` — `reply` is null when a human operator is driving.
+  Missing `sessionId`/`message` → 400. A `message` over ~32KB → 413 (message_too_large,
+  cost-DoS guard); a legit-but-long message under the cap is silently truncated to 4000
+  chars before the model (client `history` items are truncated the same way). Response:
+  `{ reply, handoff, handedOff, degraded?, formId?, form? }` — `reply` is null when a human
+  operator is driving.
 
   Memory: the AI's context comes from the session's server-side ring buffer (SessionDO),
   NOT from `history`. `history` is a seed/fallback only — used when the ring is empty

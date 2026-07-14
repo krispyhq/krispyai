@@ -81,6 +81,14 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "413":
+          description: >
+            message_too_large — the `message` exceeds the absurd-payload hard cap (~32KB),
+            rejected before any work (cost-DoS guard). A legit-but-long message under the cap
+            is NOT rejected — it is silently truncated to 4000 chars before the model.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "402":
           description: subscription_required — non-self tenant without a valid entitlement snapshot.
           content:
@@ -702,7 +710,14 @@ components:
       required: [sessionId, message]
       properties:
         sessionId: { type: string }
-        message: { type: string, minLength: 1 }
+        message:
+          type: string
+          minLength: 1
+          maxLength: 32768
+          description: >
+            Visitor text. Over ~32KB (32768) → 413 (cost-DoS guard). A message under the
+            cap but over 4000 chars is accepted and silently truncated to 4000 before the
+            model. Client history items are truncated the same way.
         tenantId: { type: string, default: self }
         history:
           type: array

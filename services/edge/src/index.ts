@@ -79,6 +79,32 @@ export function ringToHistory(
     .slice(-cap);
 }
 
+// ── visitor-text length caps (cost-DoS + prompt-stuffing guard at the entry) ──
+// Every place visitor text enters the model path is bounded here, BEFORE it reaches the
+// AI: the live message and the client-sent history seed (both spoofable). The DO ring is
+// covered transitively — the Worker only ever mirrors the already-clamped `message`.
+
+/** Truncate any single visitor-supplied text to this many chars before the model sees
+ * it. Friendly: a legit long paste is trimmed, not rejected. */
+export const MAX_MESSAGE_CHARS = 4000;
+/** Absurd-payload hard reject (413) — kills cost-DoS from a megabyte message; a real
+ * support message is never this long. ponytail: char length is a fine proxy for the
+ * ~32KB ceiling (multibyte only shrinks the char budget, still absurd). */
+export const MAX_MESSAGE_HARD = 32 * 1024;
+
+const clampText = (s: string): string =>
+  s.length > MAX_MESSAGE_CHARS ? s.slice(0, MAX_MESSAGE_CHARS) : s;
+
+/** Clamp each client-history item's content and bound the array length. The sliding
+ * window + turn-tax already cap what reaches the model, but the handoff ring-seed
+ * replays the WHOLE array (index.ts), so it's capped here too. */
+export function sanitizeHistory(h?: ChatMessage[]): ChatMessage[] | undefined {
+  if (!Array.isArray(h)) return undefined;
+  return h
+    .slice(-RING_HISTORY_MAX)
+    .map((m) => ({ role: m.role, content: clampText(String(m.content ?? "")) }));
+}
+
 /** Parse a positive-integer env knob; undefined (→ code default) when unset/invalid. */
 const numEnv = (v?: string): number | undefined => {
   const n = Number(v);
@@ -189,6 +215,15 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
   if (!body?.sessionId || !body.message?.trim()) {
     return json(env, { error: "sessionId and message required" }, 400);
   }
+  // Absurd-payload fast-reject (cost-DoS) BEFORE any work. Legit-but-long messages fall
+  // through to the friendly truncation below (clampText); only megabyte payloads 413.
+  if (body.message.length > MAX_MESSAGE_HARD) {
+    return json(env, { error: "message_too_large" }, 413);
+  }
+  // The single clamped copy of the visitor's text — used for the model input, the
+  // Telegram mirror, the ring, and the push (DRY: trim+truncate once, here).
+  const message = clampText(body.message.trim());
+  const clientHistory = sanitizeHistory(body.history);
   const tenantId = body.tenantId || DEFAULT_TENANT;
 
   // Entitlement gate — before serving any Cloud feature. Self-host is always
@@ -220,7 +255,7 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
   }
   // Client history is a SEED only: used when the ring is empty (first message of a
   // legacy session) or when the ring read failed (fallback path above).
-  const history = ctx?.messages.length ? ringToHistory(ctx.messages) : body.history;
+  const history = ctx?.messages.length ? ringToHistory(ctx.messages) : clientHistory;
 
   // Telegram is optional: no config → topic ops no-op, chat still answers.
   const result = await chatFlow(
@@ -253,7 +288,7 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
         if (tenant && threadId) await sendToTopic(tenant.botToken, tenant.chatId, threadId, text);
       },
     },
-    { sessionId: body.sessionId, message: body.message.trim() },
+    { sessionId: body.sessionId, message },
   );
 
   // Mirror the turn into the session's ring buffer (operator-app inbox preview +
@@ -262,13 +297,11 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
   // unless the ring is still empty), so pre-ring turns aren't lost.
   {
     const seed = result.handoff
-      ? (body.history ?? [])
+      ? (clientHistory ?? [])
           .filter((m) => (m.role === "user" || m.role === "assistant") && m.content)
           .map((m) => ({ role: m.role === "user" ? "visitor" : "ai", text: m.content }))
       : [];
-    const turn: { role: "visitor" | "ai"; text: string }[] = [
-      { role: "visitor", text: body.message.trim() },
-    ];
+    const turn: { role: "visitor" | "ai"; text: string }[] = [{ role: "visitor", text: message }];
     if (result.reply) turn.push({ role: "ai", text: result.reply });
     if (seed.length) {
       await doFetch(env, tenantId, body.sessionId, "https://do/log", {
@@ -287,24 +320,35 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
   // human's phone buzzes (routine mirrors above are all silent). No operators known yet →
   // the alert still posts, just without a mention (fallback path).
   if (result.handoff) {
-    await doFetch(env, tenantId, body.sessionId, "https://do/handoff", { method: "POST" });
-    // Wake the Buttr operator app — the push channel parallel to the Telegram alert.
-    // Deliberately OUTSIDE the tenant/Telegram guard (an app-only tenant has no
-    // Telegram config) and failure-tolerant by contract (push.ts never throws).
-    await pushToApp(env, tenantId, body.sessionId, body.message.trim());
-    if (tenant) {
-      const threadId = await getThreadForSession(env, tenantId, body.sessionId);
-      if (threadId) {
-        // 'app' operators get the push above — skip them here so they aren't
-        // double-pinged (push + Telegram @mention). Absent channel = telegram.
-        const operators = (await getOperators(env, tenantId)).filter((o) => o.channel !== "app");
-        await sendHandoffAlert(
-          tenant.botToken,
-          tenant.chatId,
-          threadId,
-          "🙋 A visitor needs a human here.\nReply in this topic to answer them · send /done when finished to hand back to the AI.",
-          operators,
-        ).catch((e) => console.error("telegram handoff alert failed (best-effort):", e));
+    // The DO's /handoff is idempotent per escalation: `announced` is true only the FIRST
+    // time, so a jailbroken bot re-emitting [!HANDOFF] every turn can't spam the loud
+    // operator alert + push. Fail-open (default announced) if the DO read fails — a real
+    // handoff must never be silently dropped. handBack resets the flag for a later one.
+    const hr = await doFetch(env, tenantId, body.sessionId, "https://do/handoff", {
+      method: "POST",
+    });
+    const { announced = true } = (await hr.json().catch(() => ({ announced: true }))) as {
+      announced?: boolean;
+    };
+    if (announced) {
+      // Wake the Buttr operator app — the push channel parallel to the Telegram alert.
+      // Deliberately OUTSIDE the tenant/Telegram guard (an app-only tenant has no
+      // Telegram config) and failure-tolerant by contract (push.ts never throws).
+      await pushToApp(env, tenantId, body.sessionId, message);
+      if (tenant) {
+        const threadId = await getThreadForSession(env, tenantId, body.sessionId);
+        if (threadId) {
+          // 'app' operators get the push above — skip them here so they aren't
+          // double-pinged (push + Telegram @mention). Absent channel = telegram.
+          const operators = (await getOperators(env, tenantId)).filter((o) => o.channel !== "app");
+          await sendHandoffAlert(
+            tenant.botToken,
+            tenant.chatId,
+            threadId,
+            "🙋 A visitor needs a human here.\nReply in this topic to answer them · send /done when finished to hand back to the AI.",
+            operators,
+          ).catch((e) => console.error("telegram handoff alert failed (best-effort):", e));
+        }
       }
     }
   }
@@ -313,10 +357,18 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
   // holds no tenant config — can render the form and its wa.me/instagram links.
   if (result.formId) {
     const spec = tenant?.forms?.find((f) => f.id === result.formId) ?? null;
-    // `ctas` rides on the wire form only (visitor-facing links); not part of FormSpec.
-    result.form = spec
-      ? ({ ...spec, ctas: ctaConnectors(tenant, spec) } as FormSpec & { ctas: Connector[] })
-      : null;
+    if (spec) {
+      // `ctas` rides on the wire form only (visitor-facing links); not part of FormSpec.
+      result.form = { ...spec, ctas: ctaConnectors(tenant, spec) } as FormSpec & {
+        ctas: Connector[];
+      };
+    } else {
+      // Unknown id for this tenant — a jailbroken/hallucinated [!FORM:<id>]. DROP it
+      // entirely (not just form:null) so the widget never raises an arbitrary/unexpected
+      // form the tenant didn't configure.
+      result.formId = null;
+      result.form = null;
+    }
   }
   return json(env, result);
 }
