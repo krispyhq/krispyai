@@ -107,6 +107,10 @@ export interface Env {
   AI_API_KEY?: string;
   /** Shared secret guarding POST /api/billing/entitlement (billing → gate push). */
   BILLING_SYNC_SECRET?: string;
+  /** Shared secret guarding GET /internal/usage (Krispy Cloud admin → per-tenant KV
+   *  usage counters for the founder cost view). Unset → the endpoint fails closed (403):
+   *  the counters carry no auth of their own, so they never read without this secret. */
+  ADMIN_USAGE_SECRET?: string;
   /** Shared secret guarding /api/tenant/config (dashboard → tenant-config sync).
    * ALSO accepted on /api/operator/* as the server-to-server credential
    * (x-tenant-sync-secret — see operator-auth.ts). */
