@@ -202,6 +202,33 @@ export async function getTokens(env: Env, t: string): Promise<number> {
   return Number((await env.KRISPY_KV.get(kUsage(t, "tokens", monthKey()))) ?? 0);
 }
 
+/** All five month-to-date counters for one tenant — the admin cost readout (in/out split
+ *  so Krispy Cloud can price input vs output separately). Missing keys read as 0. */
+export interface UsageDetail {
+  ai: number;
+  handoff: number;
+  tokens: number;
+  tokensIn: number;
+  tokensOut: number;
+}
+export async function getUsageDetail(env: Env, t: string): Promise<UsageDetail> {
+  const m = monthKey();
+  const [ai, handoff, tokens, tokensIn, tokensOut] = await Promise.all([
+    env.KRISPY_KV.get(kUsage(t, "ai", m)),
+    env.KRISPY_KV.get(kUsage(t, "handoff", m)),
+    env.KRISPY_KV.get(kUsage(t, "tokens", m)),
+    env.KRISPY_KV.get(kUsage(t, "tokens_in", m)),
+    env.KRISPY_KV.get(kUsage(t, "tokens_out", m)),
+  ]);
+  return {
+    ai: Number(ai ?? 0),
+    handoff: Number(handoff ?? 0),
+    tokens: Number(tokens ?? 0),
+    tokensIn: Number(tokensIn ?? 0),
+    tokensOut: Number(tokensOut ?? 0),
+  };
+}
+
 /** Record a turn's real (or estimated) token usage: total + input/output split. */
 export async function meterUsage(
   env: Env,

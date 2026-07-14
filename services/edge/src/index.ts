@@ -34,6 +34,7 @@ import {
   meterUsage,
   getUsage,
   getTokens,
+  getUsageDetail,
   getOperators,
   upsertOperator,
   entitled,
@@ -174,6 +175,8 @@ export default {
     if (request.method === "GET" && path === "/api/widget/config")
       return handleWidgetConfig(request, env);
     if (request.method === "GET" && path === "/api/usage") return handleUsage(request, env);
+    if (request.method === "GET" && path === "/internal/usage")
+      return handleAdminUsage(request, env);
 
     // GET /api/session/:sessionId/ws  → forward the upgrade to the session's DO.
     // The full request (query string included) is forwarded, so ?role=operator
@@ -740,6 +743,33 @@ async function handleWidgetConfig(request: Request, env: Env): Promise<Response>
   const t = new URL(request.url).searchParams.get("t") || DEFAULT_TENANT;
   const cfg = await readTenantConfig(env, t);
   return json(env, publicWidgetConfig(cfg));
+}
+
+// ── GET /internal/usage ──────────────────────────────────────────────────────
+// Secret-authed cross-tenant usage readout for the Krispy Cloud admin. workerd (the
+// cloud app) can't read the edge's KV directly, so the founder's cost view fetches the
+// per-tenant token counters (in/out split) over this one guarded call. Fail-closed:
+// no ADMIN_USAGE_SECRET configured, or a mismatched header → 403 (the counters have no
+// auth of their own — never leak them unauthenticated). `?t=` accepts one tenant id or a
+// comma-separated batch, so the admin fetches N tenants in one round-trip.
+//   GET /internal/usage?t=a,b  →  { usage: { a: {ai,handoff,tokens,tokensIn,tokensOut}, b: {…} } }
+async function handleAdminUsage(request: Request, env: Env): Promise<Response> {
+  if (
+    !env.ADMIN_USAGE_SECRET ||
+    request.headers.get("x-admin-usage-secret") !== env.ADMIN_USAGE_SECRET
+  ) {
+    return new Response("forbidden", { status: 403, headers: cors(env) });
+  }
+  const raw = new URL(request.url).searchParams.get("t");
+  const tenantIds = (raw ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (tenantIds.length === 0) return json(env, { error: "t required" }, 400);
+  const entries = await Promise.all(
+    tenantIds.map(async (t) => [t, await getUsageDetail(env, t)] as const),
+  );
+  return json(env, { usage: Object.fromEntries(entries) });
 }
 
 // ── GET /api/usage ─────────────────────────────────────────────────────────
