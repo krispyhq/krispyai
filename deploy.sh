@@ -44,6 +44,11 @@ case "$TARGET" in
   edge)
     echo "→ deploy edge ($ENV)"
     ( cd services/edge && "$BUN" x wrangler deploy --env "$ENV" )
+    # Re-assert the Worker's secrets from the Infisical-fed .env.local on every deploy
+    # (after deploy — the Worker must exist; before smoke — smoke tests WITH secrets).
+    # A new bundle reading a secret the Worker never received fails closed silently;
+    # syncing here means code + secrets can't drift apart.
+    node scripts/sync-edge-secrets.mjs "$ENV"
     SMOKE_KIND=edge
     ;;
   docs)
