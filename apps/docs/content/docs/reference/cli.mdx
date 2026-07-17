@@ -18,7 +18,7 @@ core, no arg-parser dependency.
 | `krispy logo <file>`      | remove a logo's background locally (no cloud) → print a paste-ready `theme.avatar` data URI.                       |
 | `krispy kb-suggestions`   | list the pending relearning suggestions — the approval inbox (`GET /api/tenant/kb-suggestions`).                   |
 | `krispy kb-approve <id>`  | approve a suggestion into `kbSources` + bump `kbVersion` (`POST /api/tenant/kb-approve`).                          |
-| `krispy kb-dismiss <id>`  | drop a suggestion, no KB change (`POST /api/tenant/kb-dismiss`).                                                    |
+| `krispy kb-dismiss <id>`  | drop a suggestion, no KB change (`POST /api/tenant/kb-dismiss`).                                                   |
 | `krispy dev`              | run the edge Worker locally — a thin wrapper over `wrangler dev` in `services/edge`.                               |
 
 the `kb-*` commands take an optional `--site <id>` flag (→ `?s=` / `siteId`) to scope a single
