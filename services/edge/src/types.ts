@@ -161,6 +161,13 @@ export interface TenantConfig {
   /** Feature B — bumped on any kbSources write; the retrieval cache key
    * (ram:${tenantId}:${kbVersion}) the size-gated Phase-6 design expects. */
   kbVersion?: number;
+  /** Knowledge retrieval — the per-tenant half of the SIZE GATE, off by default. Unset
+   * (or false) → the KB is small enough to inline, so kbSources rides the prompt exactly
+   * as today and no retrieval round trip happens. True → this tenant's KB lives in a
+   * knowledge pack: the digest becomes the prompt prefix and each turn pulls its own
+   * top-K (see knowledge.ts). Inert unless the Worker also has a provider configured
+   * (KNOWLEDGE_PROVIDER + IMMORTERM_MEMORY_URL). SERVER-ONLY: never projected. */
+  knowledgeEnabled?: boolean;
   /** Quiet-ops — operators to @mention on handoff. Auto-learned from topic replies
    * (see upsertOperator). SECRET-ADJACENT: never expose to the public widget config. */
   operators?: Operator[];
@@ -209,6 +216,26 @@ export interface Env {
   ALLOWED_ORIGIN?: string;
   /** BYO AI provider key (future adapter). */
   AI_API_KEY?: string;
+
+  // --- knowledge retrieval (optional; unset → the null adapter, zero network) ---
+  /** "none" (default) → the null adapter and today's bot exactly; "immorterm" → the
+   * ImmorTerm sidecar adapter. A provider is inert without IMMORTERM_MEMORY_URL too. */
+  KNOWLEDGE_PROVIDER?: "none" | "immorterm";
+  /** ImmorTerm memory sidecar base URL. Empty ⇒ null adapter regardless of provider.
+   * The sidecar ships NO auth — never expose it publicly (see knowledge.ts). */
+  IMMORTERM_MEMORY_URL?: string;
+  /** Cloudflare Access service-token creds the Worker sends to reach a tunneled sidecar.
+   * Secrets (`wrangler secret put`), not vars. Unset → no headers (private network). */
+  IMMORTERM_ACCESS_CLIENT_ID?: string;
+  IMMORTERM_ACCESS_CLIENT_SECRET?: string;
+  /** KV cache TTL for the RAM digest, default RAM_TTL_S (300s). */
+  KNOWLEDGE_RAM_TTL_S?: string;
+  /** Retrieved chunks per turn, default SEARCH_LIMIT (3). */
+  KNOWLEDGE_SEARCH_LIMIT?: string;
+  /** Hot-path budgets, defaults RAM_TIMEOUT_MS (400) / SEARCH_TIMEOUT_MS (600). Past
+   * these the turn proceeds with no context rather than waiting. */
+  KNOWLEDGE_RAM_TIMEOUT_MS?: string;
+  KNOWLEDGE_SEARCH_TIMEOUT_MS?: string;
   /** Shared secret guarding POST /api/billing/entitlement (billing → gate push). */
   BILLING_SYNC_SECRET?: string;
   /** Shared secret guarding GET /internal/usage (Krispy Cloud admin → per-tenant KV

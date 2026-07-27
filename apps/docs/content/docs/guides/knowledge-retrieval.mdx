@@ -1,0 +1,139 @@
+---
+title: knowledge retrieval
+description: give the bot a knowledge base bigger than the context window — optional, off by default, and it degrades to today's bot the moment anything goes wrong.
+---
+
+# knowledge retrieval
+
+your bot's knowledge base **is** its system prompt ([customize the bot prompt](/docs/guides/customize-the-prompt)),
+and for most businesses that's the right answer — a page of FAQ, hours, and refund policy
+fits in the prompt and costs nothing extra to keep there.
+
+it stops being the right answer when your docs are bigger than the model's context window.
+a full API reference or a few hundred help articles cannot be pasted into every turn, and
+you wouldn't want to: the prompt is re-sent and re-billed on **every single message**.
+
+this page is about that second case. it is **optional and off by default** — if you never
+turn it on, nothing about your bot changes.
+
+## should you turn this on?
+
+probably not yet. there's a size gate, and it matters:
+
+| your KB                 | what to do                                               | why                                                                                  |
+| ----------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| **small** (≲ 20K chars) | nothing. use `set-kbase` / `kbSources` and stop reading. | it already fits the prompt. a retrieval round trip every turn would buy you nothing. |
+| **large**               | turn this on.                                            | the KB can't fit, so the bot needs to fetch only the relevant part per question.     |
+
+<Callout>
+  the gate is real, not a formality. below it, retrieval makes your bot **slower** for no gain —
+  you'd be paying a network round trip to fetch knowledge that was already in the prompt.
+</Callout>
+
+## what happens per turn
+
+when it's on, each visitor message triggers two reads, **in parallel**, before the bot answers:
+
+1. **the digest** — a pre-baked ~20K-char summary of your whole KB, injected as a
+   `## Knowledge base summary` block. it's the same bytes every turn, so it's cached in KV
+   and only re-fetched when your KB actually changes.
+2. **the top-K** — the 3 chunks most relevant to _this_ question, injected as a
+   `## Relevant to this question` block.
+
+both are **additive**. your `systemPrompt` and your `kbSources` still go in exactly as they
+do today — a brand voice you wrote by hand is never evicted to make room for retrieved text.
+
+there is no tool-calling round trip here. the bot doesn't decide to search and then wait;
+the context is already in the prompt by the time the model runs. one model call per turn,
+same as today.
+
+## it degrades, always
+
+this is the load-bearing guarantee: **retrieval can only ever remove context — never break,
+block, or slow a turn.**
+
+| what goes wrong          | what the visitor sees                         |
+| ------------------------ | --------------------------------------------- |
+| provider is down         | a normal answer, from the system prompt alone |
+| provider is slow         | same — the read is abandoned at its budget    |
+| pack was never built     | same                                          |
+| KV cache read fails      | same                                          |
+| provider returns garbage | same                                          |
+
+a support bot that stalls because its knowledge store is cold is worse than one that knows
+less, so every failure path lands in the same place: answer anyway.
+
+## turning it on
+
+### 1. run a memory sidecar
+
+retrieval talks to an [ImmorTerm Memory](https://immorterm.com) sidecar over plain HTTP.
+Krispy doesn't ship an embedder or a vector database of its own — it talks to one.
+
+<Callout type="warn">
+  **the sidecar ships no authentication.** anything that can reach it can read — or delete — any
+  knowledge pack on it. never expose it to the internet. put it behind Cloudflare Tunnel + Access
+  and give the Worker a service token, or keep it on a private network only the Worker can reach.
+</Callout>
+
+### 2. point the Worker at it
+
+in `services/edge/wrangler.toml` (uncomment the block; **repeat it under `[env.preview.vars]`
+and `[env.production.vars]` too — named envs don't inherit vars**):
+
+```toml
+[vars]
+KNOWLEDGE_PROVIDER = "immorterm"
+IMMORTERM_MEMORY_URL = "https://memory.internal.example.com"
+```
+
+if you tunnelled it, add the service token as secrets — never in the file:
+
+```sh
+bunx wrangler secret put IMMORTERM_ACCESS_CLIENT_ID
+bunx wrangler secret put IMMORTERM_ACCESS_CLIENT_SECRET
+```
+
+leaving `KNOWLEDGE_PROVIDER` unset — or leaving `IMMORTERM_MEMORY_URL` empty — gets you the
+null adapter: no network, no dependency, today's bot exactly.
+
+### 3. switch it on for a tenant
+
+the Worker-level config only makes retrieval _possible_. each tenant opts in with
+`knowledgeEnabled` on its [tenant config](/docs/reference/tenant-config):
+
+```sh
+curl -X POST "$KRISPY_API/api/tenant/config" \
+  -H "content-type: application/json" \
+  -H "x-tenant-sync-secret: $TENANT_SYNC_SECRET" \
+  -d '{"tenantId":"self","config":{"knowledgeEnabled":true}}'
+```
+
+that second switch **is** the size gate — leave it off for tenants whose KB already fits.
+
+## tuning
+
+all optional; the defaults are tight on purpose.
+
+| var                           | default | what it does                                           |
+| ----------------------------- | ------- | ------------------------------------------------------ |
+| `KNOWLEDGE_SEARCH_LIMIT`      | `3`     | chunks retrieved per turn                              |
+| `KNOWLEDGE_RAM_TTL_S`         | `300`   | how long the digest stays cached in KV                 |
+| `KNOWLEDGE_RAM_TIMEOUT_MS`    | `400`   | give up on the digest after this and answer without it |
+| `KNOWLEDGE_SEARCH_TIMEOUT_MS` | `600`   | give up on the top-K after this and answer without it  |
+
+raise the timeouts if your sidecar is far from your Worker; lower them if you'd rather
+answer fast with less context.
+
+## your data stays yours
+
+Krispy depends on a small `Knowledge` interface, never on a vendor's client. the ImmorTerm
+adapter is the shipped default, the null adapter is the fallback, and a different backend
+is a drop-in — the chat path doesn't know which one it's talking to.
+
+## what isn't built yet
+
+this ships the **read** half. building and updating packs (a multi-minute, LLM-driven job
+that can't run inside a Worker) is not in the edge Worker and isn't wired here — you build a
+pack with ImmorTerm's own tooling and import it into your sidecar. cross-session visitor
+memory isn't wired either.

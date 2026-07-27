@@ -5,6 +5,7 @@
     "embed-and-theme",
     "connect-telegram",
     "lead-forms-and-connectors",
-    "customize-the-prompt"
+    "customize-the-prompt",
+    "knowledge-retrieval"
   ]
 }

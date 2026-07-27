@@ -61,6 +61,16 @@ response exposes no usage counts) under the `usage:<tenant>:<yyyymm>:tokens` KV 
 surfaced as `tokens` in `/api/usage`. Prompt caching is N/A on Workers AI (no
 `cache_control` knob); the BYO-key adapter seam in `ai.ts` is where it plugs in later.
 
+Those three bounds cap the **history** half of the input. A knowledge base is the other
+half, and inlining a big one would put the quadratic cost straight back — a 50K-char KB is
+~12.5K tokens re-billed on every message. That is what the optional retrieval path in
+`knowledge.ts` is for: a stable digest (KV-cached under `ram:<tenant>[:<site>]:<kbVersion>`,
+so a KB write invalidates it for free) plus a 3-chunk top-K per turn, instead of the whole
+KB every turn. Off unless `KNOWLEDGE_PROVIDER` + `IMMORTERM_MEMORY_URL` are set **and** the
+tenant sets `knowledgeEnabled` — the size gate, since below ~20K chars inlining already
+wins and a retrieval round trip buys nothing. Every failure degrades to no context, never a
+slow or failed turn.
+
 ### Tenant-config sync (the `krispy` CLI → gate)
 
 The `krispy` CLI (`packages/cli`) — or Krispy Cloud, or your own tooling — manages a

@@ -7,6 +7,7 @@
 // out, still shows the human-readable text to the visitor, and kicks off the
 // contact-capture / operator-ping flow.
 
+import type { RetrievedKnowledge } from "./knowledge";
 import type { KbSource, PersonaSpec } from "./types";
 
 export const HANDOFF_MARKER = "[!HANDOFF]";
@@ -72,14 +73,40 @@ function knowledgeBlock(kbSources?: KbSource[]): string {
   return `\n\n## Knowledge\n${body}`;
 }
 
+/** Retrieved knowledge, rendered as two reference blocks. Same posture as knowledgeBlock —
+ * reference material, not a control contract, so it sits before the forms/guardrail
+ * contracts and OUTSIDE the leak-guard scope (a bot quoting its own KB is correctness).
+ *
+ * The two halves are separate on purpose. `ram` is a pre-baked digest that does NOT change
+ * between turns of a conversation; `hits` are pulled fresh for each message. Splitting them
+ * means the stable half can one day be a cached prompt prefix. It buys nothing today —
+ * Workers AI exposes no cache_control knob (see ai.ts) — so for now the win is only that
+ * the model is told plainly which context is background and which is about THIS question.
+ *
+ * ponytail: the varying half sits here, before the forms/security contracts, to keep all
+ * reference material in one place — which caps any future cacheable prefix at the digest.
+ * When a BYO-key provider makes prompt caching real, move `hits` to the very end. */
+function retrievedBlock(k?: RetrievedKnowledge): string {
+  if (!k) return "";
+  const parts: string[] = [];
+  if (k.ram.trim()) parts.push(`## Knowledge base summary\n${k.ram.trim()}`);
+  if (k.hits.length) {
+    const body = k.hits.map((h, i) => `[${i + 1}] ${h.text}`).join("\n\n");
+    parts.push(`## Relevant to this question\n${body}`);
+  }
+  return parts.length ? `\n\n${parts.join("\n\n")}` : "";
+}
+
 /** Build the system prompt, letting a tenant override the whole thing. `kbSources` are
- * injected as a `## Knowledge` block; omit them to get the instruction-only prompt used
+ * injected as a `## Knowledge` block and `knowledge` (the retrieved digest + this turn's
+ * top-K) as its own reference blocks; omit BOTH to get the instruction-only prompt used
  * as the detectPromptLeak scope (so KB quotes never false-positive as a leak). */
 export function buildSystemPrompt(
   custom?: string,
   forms?: FormRef[],
   persona?: PersonaSpec,
   kbSources?: KbSource[],
+  knowledge?: RetrievedKnowledge,
 ): string {
   const base = custom?.trim() ? custom.trim() : DEFAULT_PROMPT;
   // Even a custom prompt must know the handoff contract, so always restate it.
@@ -90,7 +117,7 @@ export function buildSystemPrompt(
   // voice, still inside the leak-guard scope. SECURITY_INSTRUCTION + BREVITY are ALWAYS
   // appended, even over a custom prompt, so the guardrails and length cap can never be
   // dropped by a tenant overriding the base prompt.
-  return `${withHandoff}${personaBlock(persona)}${knowledgeBlock(kbSources)}${formsBlock(forms)}\n\n${SECURITY_INSTRUCTION}\n\n${BREVITY_INSTRUCTION}`;
+  return `${withHandoff}${personaBlock(persona)}${knowledgeBlock(kbSources)}${retrievedBlock(knowledge)}${formsBlock(forms)}\n\n${SECURITY_INSTRUCTION}\n\n${BREVITY_INSTRUCTION}`;
 }
 
 export interface ParsedReply {

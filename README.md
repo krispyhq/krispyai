@@ -163,6 +163,18 @@ TENANT_SYNC_SECRET=... \
 
 Config via env: `KRISPY_API` (Worker URL), `KRISPY_TENANT` (default `self`), `TENANT_SYNC_SECRET` (must match the Worker's). Details: [`packages/cli/README.md`](./packages/cli/README.md).
 
+### Knowledge too big for the prompt? (optional)
+
+A page of FAQ fits in the system prompt. A full API reference doesn't — and you wouldn't want it there, since the prompt is re-sent and re-billed on every message.
+
+For that case Krispy can **retrieve** instead of stuff: a stable pre-baked digest of your KB plus the handful of chunks relevant to the question actually asked, both fetched per turn and added on top of your prompt — never replacing it. It talks to an [ImmorTerm Memory](https://immorterm.com) sidecar over the small `Knowledge` interface; Krispy ships no embedder or vector DB of its own, and a different backend is a drop-in.
+
+**It is off by default and stays off until you set two env vars.** Unset, there is no network call, no dependency, and the bot behaves exactly as it does today. When it's on and the provider is slow or down, the turn answers anyway with less context — it can never block or break a reply.
+
+> **Buttr:** i only look things up when there's too much to memorise. and if the library's shut, i still answer — i just wing it like before.
+
+Setup, the size gate, and the failure table: [knowledge retrieval](https://docs.krispyai.com/docs/guides/knowledge-retrieval).
+
 ## Embed the widget
 
 Host the dependency-free `widget.js` anywhere static, then drop one tag on any page. It lives in a Shadow DOM, so your site's CSS can't leak in.
