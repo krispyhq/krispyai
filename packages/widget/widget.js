@@ -206,7 +206,7 @@
     // transition carries it — it needs no travel animation of its own. Lit only
     // while the pill is actually moving (.kmoving, set for one --kt in JS).
     ".btn.kpill::after{" +
-    "content:\'\';position:absolute;top:9px;bottom:9px;right:-1px;width:2px;border-radius:2px;" +
+    "content:'';position:absolute;top:9px;bottom:9px;right:-1px;width:2px;border-radius:2px;" +
     "background:var(--k-primary);opacity:0;pointer-events:none;transition:opacity 200ms ease" +
     "}" +
     ".btn.kpill.kmoving::after{opacity:1;box-shadow:0 0 10px var(--k-primary),0 0 28px var(--k-primary)}" +
