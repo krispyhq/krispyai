@@ -23,6 +23,48 @@ async function call<T = unknown>(
   return json.result as T;
 }
 
+/**
+ * Send an IMAGE into a visitor's topic — the visitor pasted a screenshot.
+ *
+ * multipart/form-data, not the JSON `call()` above: Telegram's sendPhoto takes the
+ * file itself, and routing bytes through JSON would mean base64 and a 33% inflation
+ * on every screenshot for no gain.
+ *
+ * `sendPhoto` and not `sendDocument` on purpose — Telegram renders a photo inline in
+ * the thread, which is the whole point: the operator sees the screenshot on their
+ * phone without tapping a download. The cost is Telegram's own recompression, which
+ * for a UI screenshot is a fair trade against a file that has to be opened.
+ *
+ * NOT silent. Every other mirror into a topic is `disable_notification` — routine
+ * traffic should not buzz anyone. A screenshot is not routine: nobody pastes one
+ * unless words have already failed them.
+ */
+export async function sendPhotoToTopic(
+  token: string,
+  chatId: string,
+  threadId: number,
+  photo: Blob,
+  filename: string,
+  caption: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<void> {
+  const form = new FormData();
+  form.set("chat_id", chatId);
+  form.set("message_thread_id", String(threadId));
+  // Telegram truncates captions at 1024 chars and rejects longer ones outright.
+  if (caption) form.set("caption", caption.slice(0, 1024));
+  form.set("photo", photo, filename);
+  // No content-type header — fetch sets it WITH the multipart boundary, and setting
+  // it by hand is the classic way to break a multipart body.
+  const res = await fetchImpl(`https://api.telegram.org/bot${token}/sendPhoto`, {
+    method: "POST",
+    body: form,
+    signal: AbortSignal.timeout(20_000), // longer than call(): this one carries a file
+  });
+  const json = (await res.json()) as { ok: boolean; description?: string };
+  if (!json.ok) throw new Error(`telegram sendPhoto failed: ${json.description ?? res.status}`);
+}
+
 /** Create a forum topic for a visitor; returns its message_thread_id. */
 export async function createForumTopic(
   token: string,

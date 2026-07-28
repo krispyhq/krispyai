@@ -10,6 +10,18 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+### Added
+
+- Widget + edge: **paste a screenshot into the chat.** Support is the one conversation where a picture _is_ the message — a broken layout, an error dialog, a line on a statement — and until now the visitor had to describe it in words, which is exactly what they were already failing to do when they reached for the chat. `Ctrl`/`Cmd`+`V` and drag-and-drop both work; the image lands in a tray above the composer with a thumbnail and a remove control, and is sent with the next message.
+
+  **New route: `POST /api/attachment`** (`multipart/form-data`: `file`, `sessionId`, optional `tenantId`/`siteId`/`caption`). It forwards the image to the visitor's existing Telegram topic via `sendPhoto`, so the operator sees the screenshot inline in the thread they are already reading. Not silent, unlike every other topic mirror: nobody pastes a screenshot unless words have already failed them.
+
+  **Telegram is the store, deliberately, rather than adding R2.** The Worker binds AI, Durable Objects and KV and nothing else; an object store would be a new binding every self-hoster must provision before the feature works at all. Telegram already keeps the file, already renders it in the thread, and is already required (`getTenant()` returns null without both Telegram secrets). So this ships to every existing deployment with no config change. The trade, stated plainly: the image is not in the visitor's transcript across a reload — the widget shows it from a local object URL for the life of the page — and the AI cannot see it. The visitor's message carries a note that a screenshot was attached, so the model knows something visual exists it cannot read and its existing handoff logic can act.
+
+  **Guards, because this is a public unauthenticated endpoint that forwards bytes to a third party:** rate limited per session on the same KV counter the lead form uses; a MIME allowlist checked against the file's **magic bytes** and not merely its declared content-type; a 5MB cap enforced server-side; and an **existing topic is required**, so a stranger cannot use it to open threads in someone's Telegram group. SVG is deliberately excluded — it is a document that can carry `<script>`, and an image only by MIME. Seven tests in `services/edge/test/attachment-guard.test.ts` hold that line.
+
+  Client-side the image is downscaled to a 1600px longest edge and re-encoded before upload, since none of a modern screenshot's 4–8MB survives Telegram's own recompression; the original is sent unchanged if anything in that path fails.
+
 ## [0.2.0] — 2026-07-28
 
 ### Changed

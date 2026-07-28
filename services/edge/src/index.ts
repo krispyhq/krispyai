@@ -6,6 +6,7 @@
 //
 //   POST /api/chat                     visitor msg → AI + mirror to Telegram topic
 //   POST /api/contact                  [!HANDOFF] contact-capture → owner's topic
+//   POST /api/attachment               visitor pastes a screenshot → owner's topic
 //   POST /api/telegram/webhook         owner replies in a topic → push to visitor
 //   POST /api/operator/reply           operator app reply → visitor (same DO spine)
 //   POST /api/operator/handoffs        operator app inbox (handed-off sessions)
@@ -20,7 +21,13 @@ import { workersAiRunner, DEFAULT_MODEL } from "./ai";
 import { chatFlow } from "./chat";
 import { SessionDO, type RingMsg } from "./session-do";
 import { buildSystemPrompt } from "./system-prompt";
-import { parseOwnerReply, createForumTopic, sendToTopic, sendHandoffAlert } from "./telegram";
+import {
+  parseOwnerReply,
+  createForumTopic,
+  sendToTopic,
+  sendHandoffAlert,
+  sendPhotoToTopic,
+} from "./telegram";
 import { authorizeOperator } from "./operator-auth";
 import { stampSeen, readSeen } from "./liveness";
 import { pushToApp } from "./push";
@@ -170,6 +177,8 @@ export default {
     if (request.method === "POST" && path === "/api/chat") return handleChat(request, env);
     if (request.method === "POST" && path === "/api/contact") return handleContact(request, env);
     if (request.method === "POST" && path === "/api/lead") return handleLead(request, env);
+    if (request.method === "POST" && path === "/api/attachment")
+      return handleAttachment(request, env);
     if (request.method === "POST" && path === "/api/telegram/webhook")
       return handleWebhook(request, env);
     if (request.method === "POST" && path === "/api/operator/reply")
@@ -433,6 +442,110 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
     }
   }
   return json(env, result);
+}
+
+/**
+ * A VISITOR PASTED A SCREENSHOT.
+ *
+ * Support is the one conversation where a picture is worth the whole exchange: a
+ * broken layout, an error dialog, a charge on a statement. Until now the visitor
+ * had to describe it in words, which is exactly what they were already failing to
+ * do when they reached for the chat.
+ *
+ * TELEGRAM IS THE STORE, and that is a deliberate choice over adding R2. Krispy's
+ * Worker binds AI, Durable Objects and KV and nothing else; an object store would
+ * be a new binding every self-hoster has to provision before the feature works at
+ * all. Telegram already keeps the file, already renders it in the operator's
+ * thread, and is already required — getTenant() returns null without both Telegram
+ * secrets. So the image goes where the person who needs to see it already is, and
+ * this ships to every existing deployment with no config change.
+ *
+ * The trade, stated plainly: the image is NOT in the visitor's transcript across a
+ * reload (the widget shows it from a local object URL for the life of the page),
+ * and the AI cannot see it. The visitor's message carries a note saying a
+ * screenshot was attached, so the model knows something visual exists that it
+ * cannot read and its existing handoff logic can act on that.
+ *
+ * GUARDS. This is a public, unauthenticated endpoint that forwards bytes to a
+ * third party, so the limits are the feature:
+ *   · rate limited per session, on the same KV counter the lead form uses;
+ *   · MIME allowlist, checked against the declared type AND the magic bytes,
+ *     because a declared content-type is a claim by the caller, not a fact;
+ *   · a hard byte cap enforced here rather than trusted from the client;
+ *   · requires an EXISTING topic — no conversation, no upload. A visitor cannot
+ *     use this to create threads in someone's Telegram group.
+ */
+export const ATTACH_MAX_BYTES = 5 * 1024 * 1024; // Telegram's sendPhoto ceiling is 10MB
+export const ATTACH_TYPES: Record<string, number[]> = {
+  // magic bytes, checked against the file's own first bytes
+  "image/png": [0x89, 0x50, 0x4e, 0x47],
+  "image/jpeg": [0xff, 0xd8, 0xff],
+  "image/webp": [0x52, 0x49, 0x46, 0x46], // "RIFF"; bytes 8-11 are "WEBP"
+  "image/gif": [0x47, 0x49, 0x46, 0x38],
+};
+
+export function looksLikeImage(type: string, head: Uint8Array): boolean {
+  const magic = ATTACH_TYPES[type];
+  if (!magic) return false;
+  if (!magic.every((b, i) => head[i] === b)) return false;
+  // "RIFF" is a container header — WAV and AVI start with it too. A real WEBP
+  // carries "WEBP" at bytes 8-11, so without this a RIFF-but-not-image declared
+  // image/webp would slip past the magic-byte guard. (Telegram would reject it,
+  // but the guard should mean what its comment says.)
+  if (type === "image/webp") {
+    const webp = [0x57, 0x45, 0x42, 0x50]; // "WEBP"
+    return webp.every((b, i) => head[i + 8] === b);
+  }
+  return true;
+}
+
+async function handleAttachment(request: Request, env: Env): Promise<Response> {
+  const form = await request.formData().catch(() => null);
+  if (!form) return json(env, { error: "multipart/form-data required" }, 400);
+
+  const sessionId = String(form.get("sessionId") ?? "");
+  const tenantId = String(form.get("tenantId") ?? "") || DEFAULT_TENANT;
+  const siteId = String(form.get("siteId") ?? "") || undefined;
+  const caption = String(form.get("caption") ?? "");
+  const file = form.get("file");
+  if (!sessionId) return json(env, { error: "sessionId required" }, 400);
+  if (!(file instanceof File)) return json(env, { error: "file required" }, 400);
+
+  // Rate limit BEFORE reading the body — the cheapest possible rejection.
+  if (!(await checkLeadRate(env, tenantId, sessionId)))
+    return json(env, { error: "rate_limited" }, 429);
+
+  if (file.size > ATTACH_MAX_BYTES)
+    return json(env, { error: "too_large", maxBytes: ATTACH_MAX_BYTES }, 413);
+
+  const head = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+  if (!looksLikeImage(file.type, head))
+    return json(env, { error: "unsupported_type", allowed: Object.keys(ATTACH_TYPES) }, 415);
+
+  const tenant = await getTenant(env, tenantId, siteId);
+  if (!tenant) return json(env, { error: "attachments_unavailable" }, 503);
+
+  // NO TOPIC, NO UPLOAD. The topic is created by the first chat message, so this
+  // can only ever add to a conversation the visitor already started — it cannot
+  // be used to open threads in a stranger's group.
+  const threadId = await getThreadForSession(env, tenantId, sessionId);
+  if (!threadId) return json(env, { error: "no_conversation" }, 409);
+
+  try {
+    await sendPhotoToTopic(
+      tenant.botToken,
+      tenant.chatId,
+      threadId,
+      file,
+      // The visitor names nothing; a stable name keeps the thread readable.
+      "screenshot.png",
+      caption.trim() || "The visitor sent a screenshot.",
+    );
+  } catch (e) {
+    console.error("telegram sendPhoto failed:", e);
+    return json(env, { error: "delivery_failed" }, 502);
+  }
+  return json(env, { ok: true });
 }
 
 /** The visitor-facing CTA connectors (whatsapp/instagram) for a form — email/telegram

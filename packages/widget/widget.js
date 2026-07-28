@@ -374,6 +374,21 @@
     ".typing span:nth-child(2){animation-delay:.2s}" +
     ".typing span:nth-child(3){animation-delay:.4s}" +
     "@media (prefers-reduced-motion:reduce){.typing span{animation:none;opacity:.6}}" +
+    // ── Pending attachment tray (.att) — a pasted screenshot, before it is sent ──
+    ".att{display:none;align-items:center;gap:10px;padding:8px 12px;" +
+    "border-top:1px solid var(--k-border);background:var(--k-card);flex-shrink:0}" +
+    ".att.on{display:flex}" +
+    ".att .attthumb{width:40px;height:40px;object-fit:cover;border-radius:6px;" +
+    "border:1px solid var(--k-border);flex:0 0 auto}" +
+    ".att .attname{flex:1;min-width:0;font-size:12px;color:var(--k-muted-fg);" +
+    "white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
+    ".att .attx{background:none;border:0;cursor:pointer;color:var(--k-muted-fg);" +
+    "font-size:20px;line-height:1;padding:2px 6px;border-radius:6px;flex:0 0 auto}" +
+    ".att .attx:hover{background:var(--k-muted);color:var(--k-espresso)}" +
+    // A sent screenshot, in the visitor's own bubble.
+    ".msg .shot{display:block;max-width:100%;border-radius:8px;margin:2px 0}" +
+    // Drop target — the whole panel, so a dragged file has a big landing zone.
+    ".panel.kdrop{outline:2px dashed var(--k-primary);outline-offset:-6px}" +
     // ── Composer (.ft) ──
     ".ft{" +
     "display:flex;border-top:1px solid var(--k-border);" +
@@ -508,6 +523,11 @@
     "</div>" +
     '<div class="log"></div>' +
     // Composer: text input + paper-plane send button
+    // Pending-attachment tray — empty and display:none until something is pasted.
+    '<div class="att"><img class="attthumb" alt="">' +
+    '<span class="attname"></span>' +
+    '<button type="button" class="attx" aria-label="Remove attachment">&times;</button>' +
+    "</div>" +
     '<form class="ft">' +
     '<textarea class="in" rows="1" placeholder="Type a message…" autocomplete="off"></textarea>' +
     '<button type="submit" aria-label="Send message">' +
@@ -1577,13 +1597,185 @@
     else sendForm.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
   });
 
+  // ── pasted screenshots ──────────────────────────────────────────────────────
+  // Support is the one conversation where a picture IS the message: a broken
+  // layout, an error dialog, a line on a statement. Ctrl/Cmd+V and drag-and-drop
+  // both land here.
+  //
+  // The image goes to the operator's Telegram topic (POST /api/attachment), which
+  // is where the person who can act on it already is. It is NOT stored by Krispy —
+  // see the handler for why that is a choice and not an omission — so the visitor
+  // sees their own screenshot from a local object URL for the life of the page.
+  var attEl = $(".att"),
+    attThumb = $(".attthumb"),
+    attName = $(".attname");
+  var pending = null; // { blob, url, name }
+  var ATT_MAX_EDGE = 1600; // longest edge after downscaling
+  var ATT_MAX_BYTES = 5 * 1024 * 1024; // must match the Worker's own cap
+
+  function clearPending() {
+    if (pending && pending.url) URL.revokeObjectURL(pending.url);
+    pending = null;
+    attEl.classList.remove("on");
+    attThumb.removeAttribute("src");
+    attName.textContent = "";
+  }
+  $(".attx").addEventListener("click", clearPending);
+
+  /**
+   * Shrink before sending. A modern screenshot is 4-8MB of PNG and none of that
+   * detail survives Telegram's own recompression, so sending the original costs
+   * the visitor's upload and buys nothing. Canvas re-encode to JPEG unless the
+   * source is small already.
+   *
+   * Falls back to the untouched file if anything here throws — a screenshot that
+   * arrives too large is better than one that does not arrive.
+   */
+  function shrink(file) {
+    return new Promise(function (resolve) {
+      if (file.size <= 400 * 1024) return resolve(file);
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var scale = Math.min(1, ATT_MAX_EDGE / Math.max(img.width, img.height));
+          var c = document.createElement("canvas");
+          c.width = Math.round(img.width * scale);
+          c.height = Math.round(img.height * scale);
+          c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+          c.toBlob(
+            function (blob) {
+              URL.revokeObjectURL(url);
+              resolve(blob && blob.size < file.size ? blob : file);
+            },
+            "image/jpeg",
+            0.85,
+          );
+        } catch {
+          URL.revokeObjectURL(url);
+          resolve(file);
+        }
+      };
+      img.onerror = function () {
+        URL.revokeObjectURL(url);
+        resolve(file);
+      };
+      img.src = url;
+    });
+  }
+
+  function attach(file) {
+    if (!file || file.type.indexOf("image/") !== 0) return;
+    // `void`: deliberately fire-and-forget. shrink() resolves on every path
+    // (including its own failures, which fall back to the untouched file), so
+    // there is no rejection to handle and nothing for the caller to await.
+    void shrink(file).then(function (blob) {
+      if (blob.size > ATT_MAX_BYTES) {
+        add("sys", "That image is too large to send. Try a screenshot of just the problem area.");
+        return;
+      }
+      clearPending();
+      pending = { blob: blob, url: URL.createObjectURL(blob), name: file.name || "screenshot" };
+      attThumb.src = pending.url;
+      attName.textContent = pending.name;
+      attEl.classList.add("on");
+      input.focus();
+    });
+  }
+
+  // PASTE. clipboardData.files is the modern surface; items is the fallback for
+  // browsers that only expose the entries.
+  input.addEventListener("paste", function (e) {
+    var dt = e.clipboardData;
+    if (!dt) return;
+    var file = dt.files && dt.files[0];
+    if (!file && dt.items) {
+      for (var i = 0; i < dt.items.length; i++)
+        if (dt.items[i].kind === "file" && dt.items[i].type.indexOf("image/") === 0) {
+          file = dt.items[i].getAsFile();
+          break;
+        }
+    }
+    if (!file) return; // a normal text paste — leave it alone
+    e.preventDefault();
+    attach(file);
+  });
+
+  // DROP, anywhere on the panel.
+  panel.addEventListener("dragover", function (e) {
+    if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types, "Files") > -1) {
+      e.preventDefault();
+      panel.classList.add("kdrop");
+    }
+  });
+  panel.addEventListener("dragleave", function (e) {
+    if (e.target === panel) panel.classList.remove("kdrop");
+  });
+  panel.addEventListener("drop", function (e) {
+    if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+    e.preventDefault();
+    panel.classList.remove("kdrop");
+    attach(e.dataTransfer.files[0]);
+  });
+
+  /** Put the sent screenshot in the visitor's own bubble, from the local blob. */
+  function addShot(url) {
+    var d = document.createElement("div");
+    d.className = "msg me";
+    var i = document.createElement("img");
+    i.className = "shot";
+    i.alt = "Screenshot you sent";
+    i.src = url;
+    d.appendChild(i);
+    log.appendChild(d);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function uploadPending(caption) {
+    var att = pending;
+    pending = null; // detach first: the tray clears immediately, the upload is in flight
+    attEl.classList.remove("on");
+    attThumb.removeAttribute("src");
+    attName.textContent = "";
+    var fd = new FormData();
+    fd.set("sessionId", sessionId);
+    fd.set("tenantId", cfg.tenant);
+    if (cfg.site) fd.set("siteId", cfg.site);
+    if (caption) fd.set("caption", caption);
+    fd.set("file", att.blob, "screenshot.jpg");
+    addShot(att.url);
+    return fetch(cfg.api + "/api/attachment", { method: "POST", body: fd })
+      .then(function (r) {
+        if (!r.ok) throw new Error(String(r.status));
+      })
+      .catch(function () {
+        add("sys", "That screenshot did not go through. You can describe it instead.");
+      });
+  }
+
   sendForm.addEventListener("submit", function (e) {
     e.preventDefault();
     var text = input.value.trim();
-    if (!text) return;
+    var hasShot = !!pending;
+    if (!text && !hasShot) return;
     input.value = "";
     // Back to one line, on the same transition that grew it.
     autosize();
+    if (hasShot) {
+      // `void`: the upload runs alongside the message rather than blocking it.
+      // uploadPending() owns its own failure — it tells the visitor in the log —
+      // so awaiting it here would only delay the text for no gain.
+      void uploadPending(text);
+      // The AI cannot see the image. Telling it one exists is what lets its own
+      // handoff logic do the right thing instead of answering a question it has
+      // not actually been asked.
+      sendMessage(
+        text
+          ? text + "\n\n(the visitor attached a screenshot)"
+          : "(the visitor attached a screenshot — no text)",
+      );
+      return;
+    }
     sendMessage(text);
   });
 })();
