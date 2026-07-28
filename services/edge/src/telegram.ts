@@ -39,6 +39,58 @@ export async function createForumTopic(
   return r.message_thread_id;
 }
 
+// ── topic lifecycle (close / reopen) ─────────────────────────────────────────
+// A topic is CLOSED, never deleted: it collapses out of the group's active list but
+// keeps every message, and reopens instantly. That's why the idle sweep closes rather
+// than deletes — the operator loses nothing, the group only shows what's live.
+//
+// Rights: both methods need `can_manage_topics` "unless it is the creator of the
+// topic". Our bot creates every topic it manages (createForumTopic itself requires the
+// right), so in practice a bot that could open a topic can close it — the rights path
+// only bites when an admin revokes the right AFTER the topics were created.
+
+/** Close a topic (collapses out of the active list; history + thread id survive). */
+export async function closeForumTopic(
+  token: string,
+  chatId: string,
+  threadId: number,
+  fetchImpl?: FetchLike,
+): Promise<void> {
+  await call(token, "closeForumTopic", { chat_id: chatId, message_thread_id: threadId }, fetchImpl);
+}
+
+/** Reopen a closed topic — the visitor came back, so the thread must come back too. */
+export async function reopenForumTopic(
+  token: string,
+  chatId: string,
+  threadId: number,
+  fetchImpl?: FetchLike,
+): Promise<void> {
+  await call(
+    token,
+    "reopenForumTopic",
+    { chat_id: chatId, message_thread_id: threadId },
+    fetchImpl,
+  );
+}
+
+/**
+ * Does this Telegram error mean "the bot isn't allowed to manage topics"? A self-host
+ * whose bot lost `can_manage_topics` must degrade (skip the sweep) rather than retry the
+ * same doomed call for every topic it owns — so the sweep asks this once and stops.
+ * Matched on the description text because the Bot API returns 400 for both a rights
+ * failure and an ordinary bad request; there is no distinct code to switch on.
+ */
+export function isTopicRightsError(e: unknown): boolean {
+  const msg = String(e instanceof Error ? e.message : e).toLowerCase();
+  return (
+    msg.includes("not enough rights") ||
+    msg.includes("chat_admin_required") ||
+    msg.includes("can_manage_topics") ||
+    msg.includes("need administrator rights")
+  );
+}
+
 /**
  * Send a message into a visitor's topic. SILENT by default (`disable_notification`):
  * routine mirrors (visitor msgs, bot replies) land in the thread without buzzing the

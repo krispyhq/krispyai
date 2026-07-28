@@ -59,6 +59,8 @@ visitor ──▶ AI answers (Cloudflare Workers AI) ──▶ visitor
 - Every message mirrors to **one Telegram forum topic per visitor** on your phone.
 - You reply from Telegram → it's pushed into the browser over a WebSocket, **live**.
 - The bot detects it's a human job and steps back — no double-answering.
+- Set `topicIdleHours` and idle topics **close themselves**, so the group only ever shows
+  what's live (closed ≠ deleted; a returning visitor reopens theirs). Off until you set it.
 
 Under the hood it's **one Cloudflare Worker** plus a **hibernatable Durable Object** (`SessionDO`) that holds the strongly-consistent "handed off" flag and keeps idle sockets free. That's the whole backend.
 

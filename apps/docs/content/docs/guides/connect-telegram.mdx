@@ -87,6 +87,42 @@ that **@mentions your operators** — so your phone rings exactly when a human i
   secret-adjacent, same tier as your bot token.
 </Callout>
 
+## topic lifecycle: keep the group to what's live
+
+every visitor gets a topic and nothing ever closed one, so after a few hundred
+conversations the group is a wall of finished chats and you can't see what needs you now.
+turn on the lifecycle and idle topics close themselves:
+
+```sh
+curl -X POST "$KRISPY_API/api/tenant/config" \
+  -H "x-tenant-sync-secret: $TENANT_SYNC_SECRET" \
+  -H "content-type: application/json" \
+  -d '{"tenantId":"self","config":{"topicIdleHours":24}}'
+```
+
+- **off until you set it.** no `topicIdleHours` (or `0`) means no topic ever closes —
+  exactly how every deploy behaved before this existed. `24` is the recommended value; the
+  accepted range is `1`–`8760` hours.
+- **an hourly sweep** closes any topic idle longer than your window. closed ≠ deleted: the
+  topic collapses out of the active list, keeps every message, and can be reopened.
+- **a visitor who comes back reopens their topic automatically**, so a returning
+  conversation lands back in the group instead of orphaning its thread.
+- **`/done` closes the topic on the spot** — a settled conversation isn't what's happening
+  right now. undoing the resolve in the operator app reopens it.
+- **a handoff you never resolved doesn't vanish.** if the topic closes while the session is
+  still handed off with no `/done`, the bot posts a closing note into the topic first — and
+  the conversation stays **unresolved** in the operator inbox
+  (`POST /api/operator/handoffs`), where it is still waiting for someone.
+- the sweep closes at most 10 topics per tenant per run, so a large backlog drains over a
+  day or two rather than hitting Telegram's rate limit.
+
+<Callout type="warn">
+  the bot needs the **Manage Topics** admin right to close and reopen. it already needs that right
+  to create topics, so a working install has it — but if it's revoked later the sweep logs `bot
+  lacks can_manage_topics` and skips that group instead of failing. everything else keeps working,
+  and it recovers by itself once the right is granted back.
+</Callout>
+
 <Callout>
   honest about the effort: BotFather, the supergroup-with-Topics, and admin rights are a real five
   minutes of clicking. there's no way around a bot token if you want replies on your phone.

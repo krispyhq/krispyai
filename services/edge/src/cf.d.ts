@@ -7,12 +7,27 @@ export {};
 declare global {
   interface KVNamespace {
     get(key: string): Promise<string | null>;
-    put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void>;
-    list(opts?: {
+    // `metadata` rides ALONGSIDE the value and — the load-bearing part — comes back in
+    // list() for free. That's what lets the topic sweep read every session's last
+    // activity in one paginated list instead of one read (or one DO call) per session.
+    // Cloudflare caps serialized metadata at 1024 bytes; ours is two small numbers.
+    put(
+      key: string,
+      value: string,
+      opts?: { expirationTtl?: number; metadata?: unknown },
+    ): Promise<void>;
+    getWithMetadata<M = unknown>(
+      key: string,
+    ): Promise<{ value: string | null; metadata: M | null }>;
+    list<M = unknown>(opts?: {
       prefix?: string;
       cursor?: string;
       limit?: number;
-    }): Promise<{ keys: { name: string }[]; list_complete: boolean; cursor?: string }>;
+    }): Promise<{
+      keys: { name: string; expiration?: number; metadata?: M }[];
+      list_complete: boolean;
+      cursor?: string;
+    }>;
   }
 
   interface DurableObjectId {
@@ -37,6 +52,15 @@ declare global {
     acceptWebSocket(ws: WebSocket, tags?: string[]): void;
     getWebSockets(tag?: string): WebSocket[];
     readonly storage: DurableObjectStorage;
+  }
+
+  // Cron Trigger entrypoint (`scheduled`) — the only thing that runs with no request.
+  interface ScheduledController {
+    readonly scheduledTime: number;
+    readonly cron: string;
+  }
+  interface ExecutionContext {
+    waitUntil(promise: Promise<unknown>): void;
   }
 
   // Workers AI binding.

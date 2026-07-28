@@ -117,6 +117,28 @@ export function doInternalSecret(env: Env): string {
   return env.DO_INTERNAL_SECRET || DO_INTERNAL_DEFAULT;
 }
 
+export function sessionStub(env: Env, tenantId: string, sessionId: string) {
+  return env.SESSION.get(env.SESSION.idFromName(`${tenantId}:${sessionId}`));
+}
+
+/** Internal Worker→DO fetch: attaches the shared secret the DO verifies (the DO's
+ * /state,/operator,/handoff are Worker-only). WS upgrades don't route through here.
+ * Lives beside the secret it carries so every caller — the routes in index.ts and the
+ * cron sweep in topics.ts — goes through one door instead of re-deriving the header. */
+export function doFetch(
+  env: Env,
+  tenantId: string,
+  sessionId: string,
+  path: string,
+  init: RequestInit = {},
+) {
+  const headers = {
+    ...(init.headers as Record<string, string>),
+    [DO_INTERNAL_HEADER]: doInternalSecret(env),
+  };
+  return sessionStub(env, tenantId, sessionId).fetch(path, { ...init, headers });
+}
+
 // ── multi-site namespacing ───────────────────────────────────────────────────
 // One account can run many sites, each with its OWN config blob (theme, persona,
 // connectors, forms, kbase) and liveness. A site is an OPTIONAL suffix on the
@@ -363,13 +385,43 @@ export async function approveSuggestion(
 }
 
 // ── topic <-> session map ────────────────────────────────────────────────────
+// The session→thread key carries KV METADATA describing the topic's lifecycle:
+// when the conversation was last active, and whether the sweep has closed the topic.
+// Metadata (not a second key, not the DO) because `list()` returns it for free — the
+// cron sweep reads 1000 sessions' idle state in ONE list call with zero per-session
+// reads. See topics.ts for the sweep that consumes it.
+export interface ThreadMeta {
+  /** Last activity (ms epoch) — refreshed on every visitor turn (touchThread). */
+  at: number;
+  /** True once the sweep closed the topic; cleared when a visitor reopens it. */
+  closed?: boolean;
+}
+
+export interface ThreadState extends ThreadMeta {
+  threadId: number;
+}
+
+/** Thread id + lifecycle metadata for a session, in ONE KV read. Metadata is absent
+ * for sessions created before this feature shipped — the sweep backfills `at` on
+ * first sight rather than guessing when they were last active. */
+export async function getThreadState(
+  env: Env,
+  t: string,
+  sessionId: string,
+): Promise<ThreadState | null> {
+  const { value, metadata } = await env.KRISPY_KV.getWithMetadata<ThreadMeta>(
+    kSessionToThread(t, sessionId),
+  );
+  if (!value) return null;
+  return { threadId: Number(value), at: metadata?.at ?? 0, closed: metadata?.closed === true };
+}
+
 export async function getThreadForSession(
   env: Env,
   t: string,
   sessionId: string,
 ): Promise<number | null> {
-  const v = await env.KRISPY_KV.get(kSessionToThread(t, sessionId));
-  return v ? Number(v) : null;
+  return (await getThreadState(env, t, sessionId))?.threadId ?? null;
 }
 
 export async function getSessionForThread(
@@ -388,8 +440,66 @@ export async function linkThreadSession(
 ): Promise<void> {
   await Promise.all([
     env.KRISPY_KV.put(kThreadToSession(t, threadId), sessionId),
-    env.KRISPY_KV.put(kSessionToThread(t, sessionId), String(threadId)),
+    // A fresh topic is active NOW — stamp it so the sweep never sees an unknown age.
+    env.KRISPY_KV.put(kSessionToThread(t, sessionId), String(threadId), {
+      metadata: { at: Date.now() } satisfies ThreadMeta,
+    }),
   ]);
+}
+
+/** Rewrite a session's lifecycle metadata (same value, fresh metadata) — KV has no
+ * metadata-only update, so the mapping is re-put. Called on every visitor turn, which
+ * is one more KV write on a path that already writes several usage counters.
+ * ponytail: unthrottled per-turn write. KV allows 1 write/sec to ONE key and a visitor
+ * can't out-type an AI round-trip, so the ceiling isn't reachable in the chat flow; if
+ * a burst path ever appears, only refresh when `at` is older than a slice of the window. */
+export async function touchThread(
+  env: Env,
+  t: string,
+  sessionId: string,
+  threadId: number,
+  meta: Partial<ThreadMeta> = {},
+): Promise<void> {
+  await env.KRISPY_KV.put(kSessionToThread(t, sessionId), String(threadId), {
+    metadata: { at: Date.now(), ...meta } satisfies ThreadMeta,
+  });
+}
+
+/** One page of a tenant's sessions with their lifecycle metadata — the sweep's input.
+ * Pass the returned cursor back until `list_complete`. */
+export async function listSessionThreads(
+  env: Env,
+  t: string,
+  cursor?: string,
+): Promise<{
+  sessions: { sessionId: string; threadId: number; meta: ThreadMeta | undefined }[];
+  cursor?: string;
+}> {
+  const prefix = `session:${t}:`;
+  const page = await env.KRISPY_KV.list<ThreadMeta>({ prefix, cursor });
+  return {
+    sessions: page.keys.map((k) => ({
+      sessionId: k.name.slice(prefix.length),
+      // The list gives the key + metadata but NOT the value, so the thread id is read
+      // lazily by the sweep only for the few sessions that actually cross the window.
+      threadId: 0,
+      meta: k.metadata,
+    })),
+    cursor: page.list_complete ? undefined : page.cursor,
+  };
+}
+
+/** Every tenant with a config blob — the sweep has no request to tell it who to sweep.
+ * Site-suffixed blobs (`tenant:<t>:<site>`) are skipped: conversations are keyed by
+ * tenantId alone, so the tenant-wide row is the only one that owns topics. A tenantId
+ * containing a ':' would be skipped too — fail-safe (a missed sweep, never a wrong one).
+ * ponytail: first KV page (1000 tenants), same bound handleOperatorHandoffs already
+ * takes; paginate here the day a deployment has more tenants than that. */
+export async function listTenantIds(env: Env): Promise<string[]> {
+  const page = await env.KRISPY_KV.list({ prefix: "tenant:" });
+  return page.keys
+    .map((k) => k.name.slice("tenant:".length))
+    .filter((id) => id.length > 0 && !id.includes(":"));
 }
 
 // ── metering ─────────────────────────────────────────────────────────────────

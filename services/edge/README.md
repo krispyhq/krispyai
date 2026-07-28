@@ -30,6 +30,14 @@ works with no public username). Operators are **auto-learned**: whoever replies 
 a managed topic is upserted (capped at 10). No operators yet → the alert still
 fires, just without a mention. See `docs → connect Telegram`.
 
+**Topic lifecycle.** Nothing used to close a topic, so the group grew forever. Set
+`topicIdleHours` on the tenant config and an hourly **Cron Trigger** closes topics
+idle past that window (closed ≠ deleted — history survives, and a returning visitor
+reopens theirs automatically). `/done` closes on the spot; an unresolved handoff gets
+a closing note in the topic and stays unresolved in the operator inbox. **Unset = OFF**,
+so an existing deploy behaves exactly as before until it opts in. Needs the bot's
+_Manage Topics_ right; without it the sweep logs and skips instead of failing.
+
 ## Endpoints
 
 | method | path                             | purpose                                                                                                  |

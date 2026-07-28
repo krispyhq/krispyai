@@ -633,8 +633,10 @@ paths:
           description: >
             Missing `tenantId` or `config`, or a malformed value — `avatar_scheme_invalid`
             (`theme.avatar` must be `buttr`, `https://…`, or
-            `data:image/(png|webp|jpeg);base64,…`) or `cta_url_not_https` (connector
-            `profileUrl`/`url` must be https).
+            `data:image/(png|webp|jpeg);base64,…`), `cta_url_not_https` (connector
+            `profileUrl`/`url` must be https), `topic_idle_hours_invalid`
+            (`topicIdleHours` is not a finite number), or `topic_idle_hours_out_of_range`
+            (outside 1–8760 hours; `0` is allowed and means off).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1127,3 +1129,12 @@ components:
           type: array
           description: "Handoff-mention operators (auto-learned, capped at 10). NEVER exposed to the public widget config."
           items: { $ref: "#/components/schemas/Operator" }
+        topicIdleHours:
+          type: number
+          minimum: 0
+          maximum: 8760
+          description: >
+            Hours a Telegram forum topic may sit idle before the hourly cron sweep closes
+            it. UNSET or 0 = OFF (nothing is ever closed — the behavior before this field
+            existed); 24 is the recommended value. Tenant-wide (read from the default
+            site's blob). NEVER exposed to the public widget config.
