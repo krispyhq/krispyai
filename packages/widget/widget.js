@@ -9,6 +9,12 @@
  *   <script src="https://YOUR-HOST/widget.js"
  *           data-api="https://krispy-edge.YOU.workers.dev"
  *           data-tenant="self" async></script>
+ *
+ * Bring your own launcher: add data-launcher="none" to suppress the built-in
+ * button, then drive the panel with window.krispy.open()/close()/toggle() and
+ * listen for krispy:open / krispy:close / krispy:unread on `document`. The host
+ * element carries class="krispy-widget". All of it is opt-in — set nothing and
+ * the widget behaves exactly as it always has.
  */
 (function () {
   "use strict";
@@ -22,6 +28,10 @@
     site: (script && script.getAttribute("data-site")) || "",
     title: (script && script.getAttribute("data-title")) || "Chat with us",
     accent: (script && script.getAttribute("data-accent")) || "#e39a2b",
+    // "none" → the built-in launcher never shows and the embedder drives the panel
+    // from their own mark via window.krispy (see "embedder API" at the bottom).
+    // Absent — the default — renders the launcher exactly as before.
+    launcher: (script && script.getAttribute("data-launcher")) || "",
   };
   if (!cfg.api) return console.error("[krispy] missing data-api on <script>");
 
@@ -110,8 +120,28 @@
   var wsBackoff = 3000; // reconnect delay, exponential up to WS_BACKOFF_MAX (with jitter)
   var WS_BACKOFF_MAX = 30000;
 
+  // ── outward state, for an embedder's own launcher ───────────────────────
+  // `krispy:open`, `krispy:close`, `krispy:unread` on `document`. State is pushed
+  // as events rather than polled off the global because a listener can be attached
+  // BEFORE this async script has run — which is exactly when a custom launcher is
+  // being wired up — and because the panel opens from paths the embedder never
+  // called (a teaser popup, autoOpenMs, the panel's own × button).
+  function emit(name, detail) {
+    try {
+      document.dispatchEvent(new CustomEvent("krispy:" + name, { detail: detail }));
+    } catch {
+      /* no CustomEvent — events are decorative, chat is not */
+    }
+  }
+
   // ── UI (Shadow DOM) ─────────────────────────────────────────────────────
   var host = document.createElement("div");
+  // A stable handle for the host page. Without it, the only thing identifying this
+  // element in the document is the z-index in its inline style, so integrators end
+  // up selecting `div[style*="2147483000"]` — a string match against a style
+  // attribute. The UI all lives in the shadow root, so the class exposes nothing
+  // but the anchor itself. Also reachable as `window.krispy.el`.
+  host.className = "krispy-widget";
   host.style.cssText = "position:fixed;bottom:20px;right:20px;left:auto;z-index:2147483000";
   document.body.appendChild(host);
   var root = host.attachShadow({ mode: "open" });
@@ -839,6 +869,7 @@
     if (panel.classList.contains("open")) return;
     playDing();
     launcher.classList.add("kunread");
+    emit("unread", { unread: true }); // a custom launcher shows its own dot
     launcher.classList.remove("knudge");
     void launcher.offsetWidth; // restart the animation if it's mid-flight
     launcher.classList.add("knudge");
@@ -1013,6 +1044,8 @@
     popupObservers = [];
     panel.classList.add("open");
     launcher.classList.remove("kunread", "knudge"); // clear unread on open
+    emit("open");
+    emit("unread", { unread: false }); // unconditional — a dot listener is idempotent
     if (!opened) {
       opened = true;
       add("sys", "You're chatting with an AI assistant. A human can jump in anytime.");
@@ -1040,12 +1073,42 @@
     panel.classList.remove("open");
     input.blur();
     host.style.bottom = "20px"; // reset the keyboard pin
+    emit("close");
   }
   $(".btn").addEventListener("click", function () {
     if (panel.classList.contains("open")) closePanel();
     else open();
   });
   $(".x").addEventListener("click", closePanel);
+
+  // ── embedder API: bring your own launcher ────────────────────────────────
+  // data-launcher="none" suppresses the built-in button. It stays in the DOM so
+  // every path that touches it (unread dot, nudge, glow, entrance) keeps working
+  // untouched; an inline display beats the stylesheet, so the delayed-entrance
+  // path removing .khidden can't reveal it again.
+  if (cfg.launcher === "none") launcher.style.display = "none";
+  // COMMANDS live on a global, not on an event, because a caller needs an answer
+  // back — "is it already open?", "is there an unread reply?" — and a dispatched
+  // event can't return one. State goes the other way, as events (see emit above).
+  // The widget is a singleton per page by construction (one host div, one session
+  // key per tenant), so a single global is the honest shape.
+  window.krispy = {
+    open: function () {
+      if (!panel.classList.contains("open")) open();
+    },
+    close: closePanel,
+    toggle: function () {
+      if (panel.classList.contains("open")) closePanel();
+      else open();
+    },
+    isOpen: function () {
+      return panel.classList.contains("open");
+    },
+    unread: function () {
+      return launcher.classList.contains("kunread");
+    },
+    el: host,
+  };
 
   // ── live channel (operator replies) ─────────────────────────────────────
   function connectWs() {
