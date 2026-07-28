@@ -47,6 +47,8 @@ the themeable fields (`WidgetTheme`):
 | --------------- | ---------------- | ---------------------------------------------------------------------- |
 | `primaryColor`  | `#e39a2b` (gold) | visitor bubble, send button, input focus ring                          |
 | `launcherColor` | transparent      | badge circle behind the launcher mascot                                |
+| `launcherStyle` | `"circle"`       | `"pill"` = labelled plate that collapses to the avatar while open      |
+| `launcherLabel` | the widget title | the word on the pill (≤24 chars); inert unless `launcherStyle:"pill"`  |
 | `glowColor`     | — (no glow)      | opt-in launcher glow tint (hex); unset = no glow layer at all          |
 | `position`      | `br`             | `br` (bottom-right) or `bl` (bottom-left)                              |
 | `avatar`        | —                | `"buttr"` (inline default), an `https://` URL, or a `data:image/…` URI |
