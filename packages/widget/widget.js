@@ -166,6 +166,60 @@
     // theme knob is set (kpop ← timing.launcherDelayMs, kglow ← theme.glowColor,
     // ksparkle ← theme.sparkle); an unthemed widget never gains any of them.
     ".btn.khidden{display:none}" +
+    // ── Opt-in PILL launcher (theme.launcherStyle:"pill") ─────────────────────
+    // A labelled plate that collapses to the avatar alone while the panel is
+    // open, so the launcher and the panel stop competing for one corner. Every
+    // selector below is gated on .kpill; an unthemed widget never sees any of it.
+    ".btn .brule,.btn .blabel{display:none}" +
+    ".btn.kpill{" +
+    "width:auto;height:48px;gap:10px;padding:0 14px 0 11px;" +
+    "border:1px solid var(--k-border);border-radius:var(--k-radius);" +
+    "background:var(--k-card);max-width:calc(100vw - 40px);" +
+    "box-shadow:0 14px 34px rgba(0,0,0,.18);" +
+    // --kt is the one clock the whole gesture runs on.
+    "--kt:560ms;--ke:cubic-bezier(.65,0,.12,1);" +
+    "transition:width var(--kt) var(--ke),padding var(--kt) var(--ke)," +
+    "background-color var(--kt) var(--ke),border-color var(--kt) var(--ke),box-shadow var(--kt) var(--ke)" +
+    "}" +
+    ".btn.kpill .bic{width:26px;height:26px;border-radius:var(--k-radius);filter:none}" +
+    ".btn.kpill:hover .bic{transform:scale(1.06) rotate(0)}" +
+    ".btn.kpill .online{bottom:8px;right:10px;width:8px;height:8px;border-color:var(--k-card)}" +
+    ".btn.kpill .dot{display:none!important}" + // the rule carries unread instead
+    ".btn.kpill .brule{" +
+    "display:block;flex:0 0 auto;width:1px;height:20px;border-radius:1px;" +
+    "background:var(--k-border);" +
+    "transition:width var(--kt) var(--ke),height var(--kt) var(--ke),background-color var(--kt) var(--ke)" +
+    "}" +
+    ".btn.kpill .blabel{" +
+    "display:block;overflow:hidden;white-space:nowrap;" +
+    "font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--k-muted-fg);" +
+    "transition:width var(--kt) var(--ke),margin-left var(--kt) var(--ke),color var(--kt) var(--ke)" +
+    "}" +
+    ".btn.kpill:hover .blabel{color:var(--k-espresso)}" +
+    // THE COLLAPSE. The label closes to nothing and the pill follows it down to a
+    // square, shedding its frame — the avatar is left floating in the corner.
+    ".btn.kpill.kshut{padding:0 11px;border-color:transparent;background:transparent;box-shadow:none}" +
+    ".btn.kpill.kshut .brule,.btn.kpill.kshut .blabel{width:0;margin-left:-10px}" +
+    ".btn.kpill.kshut .brule{opacity:0}" +
+    ".btn.kpill.kshut .blabel{opacity:0;transition:width var(--kt) var(--ke),margin-left var(--kt) var(--ke),opacity 220ms ease}" +
+    // THE LIT EDGE. Pinned to the pill's inside right edge, so the width
+    // transition carries it — it needs no travel animation of its own. Lit only
+    // while the pill is actually moving (.kmoving, set for one --kt in JS).
+    ".btn.kpill::after{" +
+    "content:\'\';position:absolute;top:9px;bottom:9px;right:-1px;width:2px;border-radius:2px;" +
+    "background:var(--k-primary);opacity:0;pointer-events:none;transition:opacity 200ms ease" +
+    "}" +
+    ".btn.kpill.kmoving::after{opacity:1;box-shadow:0 0 10px var(--k-primary),0 0 28px var(--k-primary)}" +
+    // UNREAD, on the pill: the separator itself lights and breathes. No badge is
+    // added — the thing already on the plate changes state.
+    ".btn.kpill.kunread .brule{width:2px;height:24px;background:var(--k-primary);animation:kattend 3.2s ease-in-out infinite}" +
+    "@keyframes kattend{0%{opacity:1}46%,62%{opacity:.42}100%{opacity:1}}" +
+    ".btn.kpill.kunread .blabel{color:var(--k-espresso)}" +
+    "@media (prefers-reduced-motion:reduce){" +
+    ".btn.kpill,.btn.kpill .brule,.btn.kpill .blabel{transition:none}" +
+    ".btn.kpill.kunread .brule{animation:none;opacity:1}" +
+    ".btn.kpill::after,.btn.kpill.kmoving::after{opacity:0;box-shadow:none}" +
+    "}" +
     // Entrance pop (field-proven 0.6s curve; plays once after launcherDelayMs)
     "@keyframes kpop{0%{transform:scale(0) rotate(-12deg)}60%{transform:scale(1.15) rotate(3deg)}80%{transform:scale(.95)}100%{transform:scale(1)}}" +
     ".btn.kpop .bic{animation:kpop .6s cubic-bezier(.22,1,.36,1) both}" +
@@ -462,6 +516,10 @@
     // Launcher button: real Buttr mascot (PNG from the widget CDN, data-URI fallback)
     '<button class="btn" aria-label="Open chat">' +
     '<img class="bic" alt="">' +
+    // Pill-launcher furniture. Present but display:none unless theme.launcherStyle
+    // is "pill", so the default launcher is byte-identical to before.
+    '<span class="brule"></span>' +
+    '<span class="blabel"></span>' +
     '<span class="dot"></span>' +
     '<span class="online"></span>' +
     "</button>";
@@ -541,6 +599,21 @@
     }
     var lc = clampColor(th.launcherColor);
     if (lc) host.style.setProperty("--k-launcher", lc);
+    // Pill launcher — opt-in. Anything other than the literal "pill" leaves the
+    // circle exactly as it is.
+    if (th.launcherStyle === "pill") {
+      var pillBtn = root.querySelector(".btn");
+      pillBtn.classList.add("kpill");
+      // textContent, never innerHTML — tenant-controlled string.
+      pillBtn.querySelector(".blabel").textContent =
+        typeof th.launcherLabel === "string" && th.launcherLabel.trim()
+          ? th.launcherLabel.trim().slice(0, 24)
+          : cfg.title;
+      // The label is decoration; the button is already named by its aria-label.
+      pillBtn.querySelector(".blabel").setAttribute("aria-hidden", "true");
+      if (panel.classList.contains("open")) pillBtn.classList.add("kshut");
+      restoreUnread();
+    }
     var r = clampRadius(th.radius);
     if (r != null) host.style.setProperty("--k-radius", r + "px");
     var f = clampFont(th.font);
@@ -682,6 +755,40 @@
   var hasInteracted = false; // autoplay policy: stay silent until first interaction
   var launcher = $(".btn"),
     muteBtn = $(".mute");
+
+  // ── unread, remembered ──────────────────────────────────────────────────────
+  // `kunread` is a class added on an inbound message and removed on open — it
+  // lives for exactly one page. So an answer that lands while the visitor is
+  // reading something else is forgotten the moment they navigate, and the
+  // launcher goes quiet on a question that is still waiting. One key, cleared by
+  // OPENING and by nothing else — the same contract the class has, made durable.
+  //
+  // Best-effort: localStorage throws in Safari private mode and under a blocked-
+  // cookies policy, and an unread badge is not worth a crash. Failing means the
+  // old behaviour, not a broken widget.
+  var UNREAD_KEY = "krispy_unread_" + cfg.tenant;
+  function rememberUnread() {
+    try {
+      localStorage.setItem(UNREAD_KEY, "1");
+    } catch {
+      /* storage optional */
+    }
+  }
+  function clearUnread() {
+    try {
+      localStorage.removeItem(UNREAD_KEY);
+    } catch {
+      /* storage optional */
+    }
+  }
+  function restoreUnread() {
+    try {
+      if (localStorage.getItem(UNREAD_KEY) === "1" && !panel.classList.contains("open"))
+        launcher.classList.add("kunread");
+    } catch {
+      /* storage optional */
+    }
+  }
 
   function renderMute() {
     muteBtn.textContent = muted ? "🔇" : "🔔";
@@ -839,6 +946,7 @@
     if (panel.classList.contains("open")) return;
     playDing();
     launcher.classList.add("kunread");
+    rememberUnread();
     launcher.classList.remove("knudge");
     void launcher.offsetWidth; // restart the animation if it's mid-flight
     launcher.classList.add("knudge");
@@ -857,6 +965,13 @@
     hasInteracted = true;
   }
   host.addEventListener("pointerdown", markInteracted);
+  // ...and anywhere else on the page. Audio is gated on user interaction, and
+  // gating OUR unlock on an interaction with the widget itself means the ding is
+  // silently dropped for anyone who has been using the page for ten minutes but
+  // has not yet touched the launcher — and permanently, for any operator running
+  // a custom launcher outside this host. `once` + capture: one listener, removed
+  // as soon as it has done its job.
+  document.addEventListener("pointerdown", markInteracted, { once: true, capture: true });
 
   // Minimal, SAFE markdown → DOM. Appends nodes to `el` via createElement/
   // textContent ONLY — NEVER innerHTML (the load-bearing XSS guard). Handles
@@ -1013,6 +1128,8 @@
     popupObservers = [];
     panel.classList.add("open");
     launcher.classList.remove("kunread", "knudge"); // clear unread on open
+    clearUnread();
+    setLauncherShut(true);
     if (!opened) {
       opened = true;
       add("sys", "You're chatting with an AI assistant. A human can jump in anytime.");
@@ -1040,6 +1157,23 @@
     panel.classList.remove("open");
     input.blur();
     host.style.bottom = "20px"; // reset the keyboard pin
+    setLauncherShut(false);
+  }
+
+  // The pill collapses to the avatar while the panel is open and builds itself
+  // back on the way out. `kmoving` lights the leading edge for exactly one
+  // transition — a CSS animation cannot be triggered by the REMOVAL of a class,
+  // and this has to read the same in both directions.
+  var moveTimer = null;
+  function setLauncherShut(shut) {
+    if (!launcher.classList.contains("kpill")) return;
+    launcher.classList.toggle("kshut", !!shut);
+    launcher.classList.add("kmoving");
+    if (moveTimer) clearTimeout(moveTimer);
+    moveTimer = setTimeout(function () {
+      launcher.classList.remove("kmoving");
+      moveTimer = null;
+    }, 560);
   }
   $(".btn").addEventListener("click", function () {
     if (panel.classList.contains("open")) closePanel();
