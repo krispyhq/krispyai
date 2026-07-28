@@ -10,6 +10,10 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+### Fixed
+
+- Widget: **the remembered unread flag never came back for the default launcher.** `restoreUnread()` shipped in v0.2.1 inside `applyTheme`'s `launcherStyle === "pill"` branch, so every tenant on the circle — which is every tenant that has not opted into the pill — wrote `krispy_unread_<tenant>` on an inbound message and never read it back. The notice still died on the next navigation, which is the one thing persisting it was for. It now runs at boot for every launcher, and outside `applyTheme` for a second reason: the flag has nothing to do with the theme, and `applyTheme` only runs when the boot config fetch succeeds — a visitor returning to a page whose config request failed should still be told somebody answered them.
+
 ## [0.2.1] — 2026-07-28
 
 ### Added
