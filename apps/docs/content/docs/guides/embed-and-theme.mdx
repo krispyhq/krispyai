@@ -27,13 +27,14 @@ drop one tag on any page, before `</body>`:
 these are the boot-time knobs read off the `<script>` tag. richer appearance is set via the
 theme (below), not attributes.
 
-| attribute     | required | default        | meaning                                                                                 |
-| ------------- | -------- | -------------- | --------------------------------------------------------------------------------------- |
-| `data-api`    | yes      | —              | your `@krispy/edge` Worker base URL                                                     |
-| `data-tenant` | no       | `self`         | tenant id (multi-tenant uses this)                                                      |
-| `data-site`   | no       | (default site) | site id for accounts running multiple websites — each has its own config/kbase/branding |
-| `data-title`  | no       | `Chat with us` | header text (theme `headerTitle` supersedes it)                                         |
-| `data-accent` | no       | `#e39a2b`      | brand color, used before the theme fetch lands                                          |
+| attribute       | required | default        | meaning                                                                                     |
+| --------------- | -------- | -------------- | ------------------------------------------------------------------------------------------- |
+| `data-api`      | yes      | —              | your `@krispy/edge` Worker base URL                                                         |
+| `data-tenant`   | no       | `self`         | tenant id (multi-tenant uses this)                                                          |
+| `data-site`     | no       | (default site) | site id for accounts running multiple websites — each has its own config/kbase/branding     |
+| `data-title`    | no       | `Chat with us` | header text (theme `headerTitle` supersedes it)                                             |
+| `data-accent`   | no       | `#e39a2b`      | brand color, used before the theme fetch lands                                              |
+| `data-launcher` | no       | (built-in)     | `none` suppresses the built-in launcher button — [bring your own](#bring-your-own-launcher) |
 
 ## theme (from KV, no redeploy)
 
@@ -88,6 +89,75 @@ theme values cross a CSS trust boundary. the widget **sanitizes** them: colors m
 `#hex` or `rgb(...)` (`glowColor` hex-only), radius is clamped 0–20, fonts reject `;{}<>`,
 timing is clamped, and avatars must be the literal `buttr`, an `https://` URL, or a
 `data:image/…` URI. anything else is dropped. see [security](/docs/security).
+</Callout>
+
+## bring your own launcher
+
+the theme restyles the built-in launcher — a circular `<img>` in the shadow root. that is
+enough for a color and a logo, and not enough for a brand with its own mark: an animated
+silhouette, a hover gesture, a word instead of an icon. so the launcher can be turned off
+and replaced with your own element.
+
+add `data-launcher="none"` to the script tag, then drive the panel yourself:
+
+```html
+<button id="support" type="button">support</button>
+
+<script>
+  var b = document.getElementById("support");
+  b.addEventListener("click", function () {
+    if (window.krispy) window.krispy.toggle(); // guard: the widget script is async
+  });
+  document.addEventListener("krispy:unread", function (e) {
+    b.dataset.unread = String(e.detail.unread); // your own dot when a reply lands
+  });
+</script>
+
+<script
+  src="https://YOUR-HOST/widget.js"
+  data-api="https://krispy-edge.YOU.workers.dev"
+  data-tenant="self"
+  data-launcher="none"
+  async
+></script>
+```
+
+### `window.krispy`
+
+commands, available once the script has run. it is a **singleton per page** — one host
+element, one session per tenant.
+
+| call              | returns   | meaning                                                 |
+| ----------------- | --------- | ------------------------------------------------------- |
+| `krispy.open()`   | —         | open the panel (no-op if already open)                  |
+| `krispy.close()`  | —         | close the panel                                         |
+| `krispy.toggle()` | —         | what the built-in launcher does                         |
+| `krispy.isOpen()` | `boolean` | is the panel open right now                             |
+| `krispy.unread()` | `boolean` | is there an unread inbound message                      |
+| `krispy.el`       | `Element` | the widget's host element (see the stable handle below) |
+
+### events on `document`
+
+state comes back as events rather than something you poll, because the panel also opens from
+paths you never called — a teaser popup, `autoOpenMs`, the panel's own `×` — and because a
+listener can be registered **before** the async script has run.
+
+| event           | `detail`              | fires when                                       |
+| --------------- | --------------------- | ------------------------------------------------ |
+| `krispy:open`   | —                     | the panel opened, from any path                  |
+| `krispy:close`  | —                     | the panel closed                                 |
+| `krispy:unread` | `{ unread: boolean }` | an inbound message landed while closed / cleared |
+
+### the host element
+
+`widget.js` appends one `<div class="krispy-widget">` to `<body>` and attaches an open shadow
+root to it. select it as `.krispy-widget` (or take `window.krispy.el`) — never on the z-index
+in its inline style, which is what integrators had to do before the class existed.
+
+<Callout>
+  every part of this is opt-in. leave `data-launcher` off and the built-in launcher renders exactly
+  as it always has; `window.krispy` and the events are added either way and are inert until
+  something calls or listens.
 </Callout>
 
 ## what the widget does

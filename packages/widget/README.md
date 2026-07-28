@@ -17,12 +17,40 @@ bucket) and drop one tag on any page:
 ></script>
 ```
 
-| attribute     | required | default        | meaning                                              |
-| ------------- | -------- | -------------- | ---------------------------------------------------- |
-| `data-api`    | yes      | —              | the `@krispy/edge` Worker base URL                   |
-| `data-tenant` | no       | `self`         | tenant id (multi-tenant SaaS uses this)              |
-| `data-title`  | no       | `Chat with us` | header text                                          |
-| `data-accent` | no       | `#e39a2b`      | brand color (used before the KV `theme` fetch lands) |
+| attribute       | required | default        | meaning                                              |
+| --------------- | -------- | -------------- | ---------------------------------------------------- |
+| `data-api`      | yes      | —              | the `@krispy/edge` Worker base URL                   |
+| `data-tenant`   | no       | `self`         | tenant id (multi-tenant SaaS uses this)              |
+| `data-title`    | no       | `Chat with us` | header text                                          |
+| `data-accent`   | no       | `#e39a2b`      | brand color (used before the KV `theme` fetch lands) |
+| `data-launcher` | no       | (built-in)     | `none` suppresses the built-in launcher button       |
+
+## Bring your own launcher
+
+The theme restyles the built-in launcher; it can't replace it. A brand with its own animated
+mark sets `data-launcher="none"` and drives the panel itself:
+
+```html
+<button id="support" type="button">support</button>
+<script>
+  document.getElementById("support").addEventListener("click", function () {
+    if (window.krispy) window.krispy.toggle(); // guard: widget.js is async
+  });
+</script>
+```
+
+- **`window.krispy`** — `open()`, `close()`, `toggle()`, `isOpen() → boolean`,
+  `unread() → boolean`, `el` (the host element). Commands live on a global because a caller
+  needs an answer back; a dispatched event can't return one.
+- **events on `document`** — `krispy:open`, `krispy:close`, and
+  `krispy:unread` (`detail: { unread: boolean }`, for your own dot when an operator replies).
+  State is pushed, not polled: the panel also opens from paths you never called (a teaser
+  popup, `autoOpenMs`, the panel's `×`), and a listener can be registered before this async
+  script has run.
+- **the host element** carries `class="krispy-widget"` — select that, not the z-index in its
+  inline style.
+
+All opt-in. Leave `data-launcher` off and the built-in launcher renders exactly as before.
 
 ## The loop
 
