@@ -87,6 +87,22 @@ nothing is delivered server-side for them, and they never leave the server as da
   like any other form. `/api/contact` remains as a back-compat shim for already-deployed
   widgets.
 
+## not a form: the pre-chat gate
+
+If what you want is an address **before** the conversation starts — so you can answer
+someone who leaves — that is not a form. A `FormSpec` is raised _mid-conversation_ by the
+model and fans out to your connectors; the gate is a door in front of the composer, and
+what it captures is not a lead (nothing is delivered anywhere; it rides with the
+conversation so an operator can reply).
+
+```json
+{ "identify": { "require": "email", "description": "So we can reply if you head off." } }
+```
+
+It reuses this same card renderer and field types, and nothing else. **Off by default.**
+See [reference → `IdentifySpec`](/docs/reference/tenant-config#identifyspec)
+and [security → what the gate stores](/docs/security#the-pre-chat-gate).
+
 ## write the config
 
 push it with the CLI (it merges — unset fields are preserved):

@@ -12,11 +12,11 @@ one Cloudflare Worker hosts all of these plus the `SessionDO`. CORS allow-origin
 
 | method | path                             | body / query → response                                                                                                           |
 | ------ | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `POST` | `/api/chat`                      | `{ sessionId, message, tenantId?, history? }` → `{ reply, handoff, handedOff, degraded?, formId?, form? }`                        |
+| `POST` | `/api/chat`                      | `{ sessionId, message, tenantId?, siteId?, history?, identity? }` → `{ reply, handoff, handedOff, degraded?, formId?, form? }`    |
 | `POST` | `/api/contact`                   | `{ sessionId, tenantId?, name?, contact?, message? }` → `{ ok: true }` — legacy contact-capture shim (maps onto the lead fan-out) |
 | `POST` | `/api/lead`                      | `{ tenantId?, sessionId, formId?, values, history }` → `{ ok: true }` — a form's captured values fan out to delivery connectors   |
 | `GET`  | `/api/session/:id/ws?t=<tenant>` | WebSocket upgrade → `SessionDO`. `426` if not an upgrade. the visitor's live channel                                              |
-| `GET`  | `/api/widget/config?t=<tenant>`  | → `{ theme, ctas, script, popups }` — the **public, secret-free** widget projection (whitelist only; no `persona`)                |
+| `GET`  | `/api/widget/config?t=<tenant>`  | → `{ theme, ctas, script, popups, identify? }` — the **public, secret-free** widget projection (whitelist only; no `persona`)     |
 | `GET`  | `/api/usage?t=<tenant>`          | → `{ tenantId, usage: { ai, handoff, tokens }, plan, entitled, status, limits, withinLimits }`                                    |
 | `GET`  | `/health`                        | → `{ status: "ok", service: "edge" }`                                                                                             |
 
@@ -26,6 +26,25 @@ before answering, the Worker checks entitlement + plan limits. self-host (`"self
 always entitled and unmetered. a non-self tenant with no valid snapshot gets
 `402 { error: "subscription_required" }`; over its cap it gets
 `429 { error: "usage_limit_reached" }`. missing `sessionId`/`message` → `400`.
+
+### `POST /api/chat` — the pre-chat identification gate
+
+**off unless the tenant sets it.** when `identify.require === "email"`
+([`IdentifySpec`](/docs/reference/tenant-config#identifyspec)), the route
+refuses a turn from a visitor it has no address for:
+`403 { error: "identity_required" }`, **before** the model runs.
+
+- `identity` on the request body is `{ email, name? }`. it is re-validated here on **every**
+  turn (trimmed, lowercased, ≤200 chars, must have a dotted domain) — a widget-side check is
+  a suggestion, so a malformed address counts as no address.
+- the widget re-sends the address it holds on every post, so the gate still passes if the
+  `SessionDO` read hiccups.
+- the first valid identity is persisted **write-once** on the session's `SessionDO` (riding
+  the `POST /context` body that already runs each turn — no extra subrequest), so later
+  turns pass without it. it also becomes the first message in the visitor's Telegram topic
+  and rides `POST /api/operator/handoffs` inbox rows.
+- with `identify` unset, none of the above executes and the request/response shapes are
+  exactly what they are today.
 
 ## secret-guarded routes
 
@@ -62,10 +81,12 @@ or wrong secret returns **401** (config routes) / **403** (webhook, billing) and
 
 the Worker forwards to a `SessionDO` per `(tenant, session)`; the browser never calls it
 directly. its surface: the WebSocket upgrade (visitor connects, receives
-`{ type: "ready", handedOff }`), `GET /state` (`{ handedOff }`), `POST /context { tenantId, siteId? }`
-(the chat flow's combined `{ handedOff, messages }` read — the body persists the tenant's
-identity into DO storage **write-once** so the relearning handback, which fires from an alarm
-with no request in flight, can build the per-site `suggestions:` key + meter the AI call),
+`{ type: "ready", handedOff }`), `GET /state` (`{ handedOff }`),
+`POST /context { tenantId, siteId?, identity? }`
+(the chat flow's combined `{ handedOff, messages, identity? }` read — the body persists the
+tenant's identity into DO storage **write-once** so the relearning handback, which fires from
+an alarm with no request in flight, can build the per-site `suggestions:` key + meter the AI
+call, and persists the visitor's pre-chat `identity` the same write-once way),
 `POST /operator {text}` (set `handedOff`, broadcast the operator reply), and `POST /handoff`
 (broadcast a handoff prompt). server → browser events: `ready`, `operator`, `handoff`, `resume`.
 

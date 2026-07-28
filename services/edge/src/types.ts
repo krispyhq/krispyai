@@ -79,6 +79,26 @@ export interface WidgetTiming {
   autoOpenMs?: number; // default 0 = never — auto-open panel after inbound msg while closed (field-proven: 2000)
 }
 
+// ── Pre-chat identification gate ──────────────────────────────────────────
+// A self-host that keeps the chat open to anonymous visitors but wants an address
+// BEFORE the conversation starts, so an answer can still reach someone who leaves.
+// OFF by default: `require` unset (or "none") = today's widget, byte for byte.
+// This is NOT the lead form — a FormSpec is raised mid-conversation by the model via
+// [!FORM:<id>] and fans out to connectors; this is a door in front of the composer.
+export interface IdentifySpec {
+  require?: "email" | "none"; // default "none" — the gate is off
+  title?: string; // card heading; widget default "Before we start"
+  description?: string; // small print under the heading (say WHY you're asking)
+  collectName?: boolean; // also ask for a name (optional field). Default false
+}
+
+/** What the visitor gave at the gate. Re-validated server-side on every chat turn —
+ * a client-only check is a suggestion. */
+export interface VisitorIdentity {
+  email: string; // normalized: trimmed + lowercased
+  name?: string;
+}
+
 // ── Persona + conversation script (Feature B) ─────────────────────────────
 // Two halves of "the bot sounds like OUR shop": how it SPEAKS (server-side, folded
 // into the system prompt, NEVER projected) and how a conversation STARTS (widget-side,
@@ -155,6 +175,9 @@ export interface TenantConfig {
   /** Feature B — proactive popup engine (timer + section-proximity); theme.popupText
    * is sugar for a single timer popup. */
   popups?: PopupSpec[];
+  /** Pre-chat identification gate. Unset ⇒ off — the widget and the chat route behave
+   * exactly as they do today. Projected to the public widget config ONLY when required. */
+  identify?: IdentifySpec;
   /** Feature B — per-doc knowledge registry, assembled into the system prompt at chat
    * time (buildSystemPrompt). Total text hard-capped at KB_SOURCES_MAX_CHARS on write. */
   kbSources?: KbSource[];

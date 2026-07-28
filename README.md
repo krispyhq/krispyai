@@ -185,6 +185,8 @@ Host the dependency-free `widget.js` anywhere static, then drop one tag on any p
 
 Richer appearance — avatar, greeting, position, corner radius, font, notification sound — is set from KV via the `theme` config, not attributes. See [**docs → embed + theme the widget**](./apps/docs/content/docs/guides/embed-and-theme.mdx).
 
+**Want an email before the first message?** Set `identify: { require: "email" }` in the tenant config and the widget locks its composer behind a small card until a visitor gives you an address — so you can still answer someone who leaves mid-conversation. **Off by default**, enforced on the edge (not just the widget), and it stores the address on the session + as the first message of that visitor's Telegram topic. See [**docs → `IdentifySpec`**](./apps/docs/content/docs/reference/tenant-config.mdx) and [**docs → security**](./apps/docs/content/docs/security.mdx) for exactly what is kept and where.
+
 Details: [`packages/widget/README.md`](./packages/widget/README.md).
 
 ## Documentation

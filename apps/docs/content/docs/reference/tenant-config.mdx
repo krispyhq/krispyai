@@ -23,6 +23,7 @@ interface TenantConfig {
   persona?: PersonaSpec; // bot voice + style rules — SERVER-ONLY, folded into the prompt, NEVER public
   script?: ConversationScript; // scripted opening sequence + starter chips (projected to the widget)
   popups?: PopupSpec[]; // proactive popup engine (theme.popupText is sugar for one timer popup)
+  identify?: IdentifySpec; // pre-chat email gate. UNSET = off (today's widget, unchanged)
   kbSources?: KbSource[]; // per-doc knowledge registry, assembled into the prompt at chat time
   kbVersion?: number; // bumped on any kbSources write (retrieval cache key)
   operators?: Operator[]; // humans to @mention on handoff (auto-learned; NEVER public)
@@ -139,8 +140,9 @@ interface WidgetTiming {
 every new knob defaults to unset/off — a tenant that configures nothing gets today's
 neutral widget, unchanged.
 
-only the `WidgetTheme` fields above (plus the `ctas`, `script`, and `popups` projections
-below) are exposed to the public `GET /api/widget/config`; the projection is a literal
+only the `WidgetTheme` fields above (plus the `ctas`, `script`, `popups`, and — when
+required — `identify` projections below) are exposed to the public
+`GET /api/widget/config`; the projection is a literal
 whitelist (never a spread of the config), so `botToken`/`chatId`/`systemPrompt`/`persona`
 are structurally excluded. see [security](/docs/security).
 
@@ -191,6 +193,53 @@ interface PopupSpec {
 one engine for both timed and section-proximity teaser popups. `theme.popupText` is sugar
 for a single `{ trigger: { kind: "timer" }, text }` entry (with `timing.popupDelayMs` /
 `popupCooldownHrs` as its defaults). No `popups` and no `popupText` → nothing ever shows.
+
+## `IdentifySpec`
+
+```ts
+interface IdentifySpec {
+  require?: "email" | "none"; // default "none" — the gate is OFF
+  title?: string; // card heading; widget default "Before we start"
+  description?: string; // small print under the heading — say WHY you're asking
+  collectName?: boolean; // also ask for a name (optional field). Default false
+}
+```
+
+The **pre-chat identification gate**. For a self-host that wants the chat open to anonymous visitors but needs a way to answer
+someone who leaves mid-conversation. With `require: "email"` the widget locks its composer
+and shows a small card instead; nothing can be sent until an address is given.
+
+**Off by default, and structurally so.** With `identify` unset — or `require: "none"` — the
+key is **absent from `GET /api/widget/config` entirely**, so an existing embed's boot JSON
+is byte-for-byte what it is today and `POST /api/chat` gates nothing.
+
+**It is a server gate, not a widget one.** The widget renders the card, but `POST /api/chat`
+is what refuses: no (or malformed) identity on a tenant that requires one →
+`403 { error: "identity_required" }`, before the model runs. The address is re-validated on
+the edge every turn — a client-side check is a suggestion. The edge check is deliberately
+stricter than `<input type="email">`, which accepts a dot-less host (`a@b`): an address that
+cannot receive a reply is worse than no address.
+
+**Not the lead form.** A [`FormSpec`](#formspec) is raised _mid-conversation_ by the model
+via `[!FORM:<id>]` and fans out to your connectors; this is a door in front of the composer,
+and what it captures is not a lead. It reuses the widget's form card and the same field
+types, and nothing else.
+
+**Where the address goes** — see [security → what the gate stores](/docs/security#the-pre-chat-gate):
+
+| destination                                | what lands there                                                                 |
+| ------------------------------------------ | -------------------------------------------------------------------------------- |
+| the session's `SessionDO` storage          | `{ email, name? }`, **write-once** (the first address a session gives wins)      |
+| the visitor's Telegram topic               | `✉️ <name · >email` as the topic's **first** message, where the operator replies |
+| `POST /api/operator/handoffs` (inbox rows) | the same object, so an operator app can show who is waiting                      |
+| the visitor's browser                      | `localStorage["krispy_identity_<tenant>"]` so a returning visitor isn't re-asked |
+
+It is **not** emailed anywhere, not sent to a connector, and not written to KV.
+
+**Requires the widget from this release or newer.** Turning the gate on while serving an
+older cached `widget.js` would leave visitors unable to send: the old widget never shows the
+card. (The current widget also recovers on its own — a `403 identity_required` raises the
+card even if the boot config said nothing.)
 
 ## `KbSource` + relearning
 
@@ -248,6 +297,8 @@ its KB.
 | more than 5 `script.opening` entries                                                 | `413 { error: "too_many_opening" }`         |
 | more than 4 `script.starters` entries                                                | `413 { error: "too_many_starters" }`        |
 | `persona` + `script` combined free text over 8K chars                                | `413 { error: "persona_script_too_large" }` |
+| `identify.require` not `"email"` / `"none"`                                          | `400 { error: "identify_require_invalid" }` |
+| `identify.title` or `identify.description` over 500 chars                            | `413 { error: "identify_text_too_large" }`  |
 
 ## KV keys
 

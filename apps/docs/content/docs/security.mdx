@@ -55,6 +55,40 @@ the DOM, so the widget sanitizes at the boundary:
   `javascript:` / `data:` schemes are rejected and rendered as literal text.
 - **visitor + system messages** stay literal text — a visitor can never inject markup.
 - **lead-email values** are HTML-escaped before landing in the email body.
+- **the pre-chat identity** is validated on the **edge** (not just the widget) on every
+  chat turn — trimmed, lowercased, ≤200 chars, dotted domain required. anything else is
+  treated as no identity at all, so a forged post can't slip past the gate or write an
+  unbounded string into a Telegram message. the first address a session gives is stored
+  **write-once**, so a later post can't overwrite what the operator already saw.
+
+## the pre-chat gate
+
+`identify.require: "email"` ([`IdentifySpec`](/docs/reference/tenant-config#identifyspec))
+is **off by default**. turning it on means you collect **personal data from every visitor
+before they have said anything** — so here, plainly, is where that address goes.
+
+| where                                        | what                                        | lifetime                                                                  |
+| -------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------- |
+| the session's `SessionDO` storage            | `{ email, name? }`, write-once              | as long as the Durable Object lives                                       |
+| the visitor's Telegram topic (if configured) | one message: `✉️ <name · >email`            | forever, in **your** Telegram group — it is a chat message like any other |
+| `POST /api/operator/handoffs` responses      | the same object on that session's inbox row | read-time only; nothing new is persisted                                  |
+| the visitor's own browser                    | `localStorage["krispy_identity_<tenant>"]`  | until they clear it — so a returning visitor isn't asked twice            |
+
+it is **not** written to KV, **not** emailed, and **not** sent to any connector or third
+party. it is not part of the AI's prompt.
+
+what this means for you as an operator:
+
+- **say why you're asking.** `identify.description` renders under the heading; use it.
+- **the Telegram copy is the one that outlives everything.** deleting a `SessionDO` (or
+  letting it expire) does not remove the message from your group — a deletion request means
+  deleting the topic too.
+- **it's your data, and your lawful basis to establish.** Krispy stores it in infrastructure
+  you own; a self-host is the controller. if you operate under GDPR/CCPA, the gate copy is
+  where notice belongs, and the `SessionDO` record plus the Telegram message are what a
+  deletion request has to reach (the browser copy is the visitor's own to clear).
+- leave it off unless you need it. an anonymous visitor who can just start typing is the
+  default for good reason.
 
 ## the bot's prompt guardrails — `SECURITY_INSTRUCTION`
 

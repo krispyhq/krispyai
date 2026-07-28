@@ -25,7 +25,7 @@ import { authorizeOperator } from "./operator-auth";
 import { stampSeen, readSeen } from "./liveness";
 import { pushToApp } from "./push";
 import { renderLeadEmail, sendLeadEmail } from "./email";
-import type { Connector, Env, FormSpec, TenantConfig } from "./types";
+import type { Connector, Env, FormSpec, TenantConfig, VisitorIdentity } from "./types";
 import {
   getTenant,
   resolveSiteId,
@@ -111,6 +111,30 @@ export function sanitizeHistory(h?: ChatMessage[]): ChatMessage[] | undefined {
   return h
     .slice(-RING_HISTORY_MAX)
     .map((m) => ({ role: m.role, content: clampText(String(m.content ?? "")) }));
+}
+
+// ── pre-chat identification (trust boundary) ─────────────────────────────────
+// The widget renders the gate, but the widget is the client — so the address is
+// re-validated here on every turn and the chat route refuses to answer without one
+// when the tenant requires it. Off unless `identify.require === "email"`.
+
+/** Cap on a captured email/name. Real addresses are well under this; the bound keeps a
+ * forged post from writing an unbounded string into DO storage + a Telegram message. */
+export const IDENTITY_MAX_CHARS = 200;
+// Deliberately stricter than `<input type="email">`, which accepts a dot-less host
+// ("a@b"). An address that can't receive a reply is worse than no address at all.
+const EMAIL_RE = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
+
+/** Validate + normalize a visitor identity. Returns null for anything that isn't a
+ * usable address — the caller treats null as "not identified". Pure; unit-tested. */
+export function normalizeIdentity(raw: unknown): VisitorIdentity | null {
+  if (!raw || typeof raw !== "object") return null;
+  const { email, name } = raw as { email?: unknown; name?: unknown };
+  if (typeof email !== "string") return null;
+  const e = email.trim().toLowerCase();
+  if (e.length > IDENTITY_MAX_CHARS || !EMAIL_RE.test(e)) return null;
+  const n = typeof name === "string" ? name.trim().slice(0, IDENTITY_MAX_CHARS) : "";
+  return n ? { email: e, name: n } : { email: e };
 }
 
 /** Parse a positive-integer env knob; undefined (→ code default) when unset/invalid. */
@@ -238,6 +262,7 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
     tenantId?: string;
     siteId?: string;
     history?: ChatMessage[];
+    identity?: unknown; // pre-chat gate — validated by normalizeIdentity, never trusted
   } | null;
   if (!body?.sessionId || !body.message?.trim()) {
     return json(env, { error: "sessionId and message required" }, 400);
@@ -254,6 +279,9 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
   const message = clampText(body.message.trim());
   const clientHistory = sanitizeHistory(body.history);
   const tenantId = body.tenantId || DEFAULT_TENANT;
+  // The widget re-sends the address it holds on EVERY turn (not just the first), so the
+  // gate still passes when the DO read below fails — a hiccup must not lock a visitor out.
+  const claimed = normalizeIdentity(body.identity);
 
   // Entitlement gate — before serving any Cloud feature. Self-host is always
   // entitled + unmetered; a Cloud tenant must have a valid (trial/active) sub and
@@ -275,19 +303,43 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
   // now comes from the server-side ring instead of the client's claim. GUARDED:
   // timeout + any failure falls back to the client-sent history exactly as before
   // (warn-logged so drift is observable); a slow DO never slows chat down.
-  let ctx: { handedOff: boolean; messages: RingMsg[] } | null = null;
+  let ctx: {
+    handedOff: boolean;
+    messages: RingMsg[];
+    identity?: VisitorIdentity;
+  } | null = null;
   try {
     // POST (not GET) so the DO can persist tenantId+siteId write-once — the relearning
     // handback fires from an alarm with no request in flight and the DO can't derive them
-    // from its own name. Still returns { handedOff, messages } — same single subrequest.
+    // from its own name. The pre-chat identity rides the SAME body (also write-once), so
+    // the gate costs no extra subrequest. Still one call, now returning `identity` too.
     const r = await doFetch(env, tenantId, body.sessionId, "https://do/context", {
       method: "POST",
-      body: JSON.stringify({ tenantId, siteId }),
+      body: JSON.stringify({ tenantId, siteId, identity: claimed ?? undefined }),
       signal: AbortSignal.timeout(RING_READ_TIMEOUT_MS),
     });
-    ctx = (await r.json()) as { handedOff: boolean; messages: RingMsg[] };
+    ctx = (await r.json()) as {
+      handedOff: boolean;
+      messages: RingMsg[];
+      identity?: VisitorIdentity;
+    };
   } catch (e) {
     console.warn("ring context read failed — falling back to client history:", e);
+  }
+
+  // ── the pre-chat gate (server side) ────────────────────────────────────────
+  // The widget shows the card; THIS is what makes it a gate. The config is read from the
+  // same place the widget's boot projection reads it: getTenant() returns null for a
+  // tenant with no Telegram creds (graceful degradation), which would leave the gate
+  // rendered but unenforced — so fall back to the raw config on that path only.
+  // ponytail: one extra KV read, and ONLY on the already-degraded no-Telegram path (a
+  // configured tenant reads `identify` off the config getTenant already loaded).
+  const identifyCfg = tenant
+    ? tenant.identify
+    : (await readTenantConfig(env, tenantId, siteId))?.identify;
+  const identity = ctx?.identity ?? claimed;
+  if (identifyCfg?.require === "email" && !identity) {
+    return json(env, { error: "identity_required" }, 403);
   }
   // Client history is a SEED only: used when the ring is empty (first message of a
   // legacy session) or when the ring read failed (fallback path above).
@@ -344,6 +396,18 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
         const name = `${firstMessage.slice(0, 40)} · ${sessionId.slice(0, 6)}`;
         const threadId = await createForumTopic(tenant.botToken, tenant.chatId, name);
         await linkThreadSession(env, tenantId, threadId, sessionId);
+        // A pre-chat identity becomes the FIRST message in the brand-new topic — the
+        // operator reads it exactly where they type their reply, with no app or lookup.
+        // ✉️, not the 👤 that prefixes visitor MESSAGES (chat.ts): this is a reply-to
+        // line, not something the visitor said. Silent + best-effort like every mirror.
+        if (identity) {
+          await sendToTopic(
+            tenant.botToken,
+            tenant.chatId,
+            threadId,
+            `✉️ ${identity.name ? `${identity.name} · ` : ""}${identity.email}`,
+          ).catch((e) => console.error("identity topic note failed (best-effort):", e));
+        }
         return threadId;
       },
       toTopic: async (threadId, text) => {
@@ -668,6 +732,7 @@ async function handleOperatorHandoffs(request: Request, env: Env): Promise<Respo
         resolved?: boolean;
         lastMessage: string | null;
         ts: number | null;
+        identity?: VisitorIdentity;
       };
       const resolved = s.resolved === true;
       // Default inbox = handed-off & unresolved. Resolving hands the session back to
@@ -675,7 +740,16 @@ async function handleOperatorHandoffs(request: Request, env: Env): Promise<Respo
       // flag instead — includeResolved keeps the app's history/undo-swipe view alive.
       const listed = resolved ? includeResolved : s.handedOff;
       return listed
-        ? { sessionId, lastMessage: s.lastMessage, handedOff: s.handedOff, ts: s.ts, resolved }
+        ? {
+            sessionId,
+            lastMessage: s.lastMessage,
+            handedOff: s.handedOff,
+            ts: s.ts,
+            resolved,
+            // Pre-chat identity when the tenant collects one — the operator app's row
+            // shows WHO is waiting. Absent (the default) on every un-gated session.
+            identity: s.identity,
+          }
         : null;
     }),
   );
@@ -848,6 +922,22 @@ function tenantConfigCapError(
       return { error: "too_many_opening", status: 413 };
     if ((script.starters?.length ?? 0) > STARTERS_MAX)
       return { error: "too_many_starters", status: 413 };
+  }
+  // The pre-chat gate's copy renders verbatim in the public boot config, same class as
+  // the theme free text. `require` decides whether a visitor is blocked, so an unknown
+  // value is rejected rather than silently treated as "off".
+  const identify = cfg.identify;
+  if (identify) {
+    if (
+      identify.require !== undefined &&
+      identify.require !== "email" &&
+      identify.require !== "none"
+    )
+      return { error: "identify_require_invalid", status: 400 };
+    for (const s of [identify.title, identify.description]) {
+      if (s !== undefined && s.length > THEME_TEXT_MAX_CHARS)
+        return { error: "identify_text_too_large", status: 413 };
+    }
   }
   const sumLen = (arr?: string[]) => (arr ?? []).reduce((n, s) => n + s.length, 0);
   const personaScriptChars =

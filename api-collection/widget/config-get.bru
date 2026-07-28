@@ -23,10 +23,13 @@ tests {
 
 docs {
   PUBLIC (CORS-*, no secret): the widget's boot-time read of its appearance. Returns ONLY the
-  whitelist projection `{ theme, ctas, script, popups }` — NEVER botToken/chatId/systemPrompt/
-  persona (persona is instruction text folded into the system prompt, never projected). `ctas`
-  are CTA-capable connectors (minus `cta:false` opt-outs) with server-built hrefs + default
-  labels; `popups` is the popup engine (or the `theme.popupText` sugar). Do NOT confuse with the
+  whitelist projection `{ theme, ctas, script, popups, identify? }` — NEVER botToken/chatId/
+  systemPrompt/persona (persona is instruction text folded into the system prompt, never
+  projected). `ctas` are CTA-capable connectors (minus `cta:false` opt-outs) with server-built
+  hrefs + default labels; `popups` is the popup engine (or the `theme.popupText` sugar).
+  `identify` is the pre-chat gate and appears ONLY when the tenant requires an address
+  (`identify.require === "email"`) — for every other tenant the key is absent, not null, so an
+  unconfigured boot response is byte-for-byte what it has always been. Do NOT confuse with the
   secret-guarded `GET /api/tenant/config`, which returns the full config incl. the bot token.
   See `openapi.yaml` and `reference/edge-routes.mdx`.
 }
