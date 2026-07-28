@@ -324,22 +324,31 @@
     ".ft{" +
     "display:flex;border-top:1px solid var(--k-border);" +
     "padding:10px 12px;padding-bottom:calc(10px + env(safe-area-inset-bottom,0));" +
-    "gap:8px;align-items:center;background:var(--k-card);flex-shrink:0" +
+    "gap:8px;align-items:flex-end;background:var(--k-card);flex-shrink:0" +
     "}" +
-    ".ft input{" +
+    ".ft .in{" +
     "flex:1;border:1.5px solid var(--k-border);" +
     "border-radius:22px;" +
     "padding:9px 14px;font-size:16px;outline:none;" +
     "background:var(--k-cream);color:var(--k-espresso);" +
-    "transition:border-color 0.15s,box-shadow 0.15s;" +
+    // `height` is animated, so it is a transition and not a jump. The field is
+    // measured and set in px by autosize() below; 0.18s is short enough that a
+    // fast typist never waits on it and long enough to read as growth.
+    "transition:border-color 0.15s,box-shadow 0.15s,height 0.18s cubic-bezier(.2,.7,.2,1);" +
+    // A textarea is a resizable, scrolling, monospace-defaulting box; all three
+    // have to be turned off for it to pass as the single-line field it starts as.
+    "resize:none;overflow-y:hidden;font-family:inherit;display:block;" +
     "line-height:1.4" +
     "}" +
-    ".ft input::placeholder{color:var(--k-muted-fg)}" +
-    ".ft input:focus{" +
+    // Only once it has actually grown does it scroll — MAX_ROWS in autosize().
+    ".ft .in.tall{overflow-y:auto}" +
+    ".ft .in::placeholder{color:var(--k-muted-fg)}" +
+    ".ft .in:focus{" +
     "border-color:var(--k-primary);" +
     "box-shadow:0 0 0 3px var(--k-ring,rgba(227,154,43,.15));" +
     "background:var(--k-card)" +
     "}" +
+    "@media (prefers-reduced-motion:reduce){.ft .in{transition:border-color 0.15s,box-shadow 0.15s}}" +
     // Send button — primary circle (brand gold by default) with paper-plane SVG
     ".ft button{" +
     "flex:0 0 auto;width:38px;height:38px;border:0;" +
@@ -446,7 +455,7 @@
     '<div class="log"></div>' +
     // Composer: text input + paper-plane send button
     '<form class="ft">' +
-    '<input class="in" placeholder="Type a message…" autocomplete="off">' +
+    '<textarea class="in" rows="1" placeholder="Type a message…" autocomplete="off"></textarea>' +
     '<button type="submit" aria-label="Send message">' +
     '<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">' +
     '<path d="M17 10L3 3l3.5 7L3 17l14-7z" fill="currentColor"/>' +
@@ -1399,11 +1408,48 @@
         input.focus();
       });
   }
+  // ── composer auto-grow ──────────────────────────────────────────────────────
+  // The composer starts as one line and grows with the message, up to MAX_ROWS,
+  // after which it scrolls. A textarea cannot size itself: the only way to know
+  // the content height is to collapse the box first and read scrollHeight back,
+  // so that is what this does, then writes the height as an animated px value.
+  var MAX_ROWS = 5;
+  function autosize() {
+    var cs = getComputedStyle(input);
+    var line = parseFloat(cs.lineHeight) || 22;
+    var pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    var border = parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+    var max = Math.round(line * MAX_ROWS + pad + border);
+    // Collapse before measuring — scrollHeight of an already-tall box only ever
+    // reports the height it is at, so without this the field can grow and never
+    // shrink back when the text is deleted.
+    input.style.height = "auto";
+    var next = Math.min(input.scrollHeight + border, max);
+    input.style.height = next + "px";
+    input.classList.toggle("tall", next >= max);
+  }
+  // `input` covers typing, paste, cut, undo and speech-to-text alike.
+  input.addEventListener("input", autosize);
+
+  // Enter sends, Shift+Enter (and Ctrl/Cmd+Enter) opens a line. A textarea would
+  // otherwise swallow Enter as a newline and the widget would lose its send key.
+  // IME-safe: `isComposing` is true mid-composition in Japanese/Chinese/Korean
+  // input, where Enter commits the candidate and must NOT send.
+  input.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.isComposing || e.keyCode === 229) return;
+    e.preventDefault();
+    if (typeof sendForm.requestSubmit === "function") sendForm.requestSubmit();
+    else sendForm.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+  });
+
   sendForm.addEventListener("submit", function (e) {
     e.preventDefault();
     var text = input.value.trim();
     if (!text) return;
     input.value = "";
+    // Back to one line, on the same transition that grew it.
+    autosize();
     sendMessage(text);
   });
 })();
