@@ -10,6 +10,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-07-28
+
 ### Changed
 
 - Widget: **the composer grows with the message.** The message field was an `<input>`, which can hold exactly one line no matter how long the message is — anyone reporting a real problem typed into a slot that showed them ~40 characters of what they had written. It is now a `<textarea class="in">` that starts at one line and animates its height as the content wraps, up to 5 rows, after which it scrolls (`.in.tall`). Height is animated (`0.18s`), and dropped under `prefers-reduced-motion`. **Enter still sends** and `Shift`/`Ctrl`/`Cmd`+`Enter` opens a new line; `isComposing` is honoured so Enter never sends mid-IME-composition in Japanese/Chinese/Korean input. The composer is `align-items:flex-end` so the send button stays on the last line rather than drifting to the middle of a paragraph. Sending resets the field to one line on the same transition.
