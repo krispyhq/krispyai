@@ -99,6 +99,14 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/EntitlementError" }
+        "403":
+          description: >
+            identity_required — the tenant sets `identify.require: "email"` and this turn
+            carried no usable visitor identity (and the session has none stored). Returned
+            BEFORE the model runs. Never returned when `identify` is unset (the default).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/contact:
     post:
@@ -166,9 +174,9 @@ paths:
       operationId: widgetConfig
       description: >
         The widget's boot-time read of its appearance/forms. Returns ONLY the whitelist
-        projection (`theme`, `ctas`, `script`, `popups`) — NEVER botToken/chatId/systemPrompt/
-        persona. Do not confuse with the secret-guarded `GET /api/tenant/config`, which
-        returns the full config.
+        projection (`theme`, `ctas`, `script`, `popups`, and `identify` when required) —
+        NEVER botToken/chatId/systemPrompt/persona. Do not confuse with the secret-guarded
+        `GET /api/tenant/config`, which returns the full config.
       security: [] # public — no auth
       parameters:
         - $ref: "#/components/parameters/Tenant"
@@ -197,6 +205,12 @@ paths:
                   popups:
                     type: array
                     items: { $ref: "#/components/schemas/PopupSpec" }
+                  identify:
+                    allOf: [{ $ref: "#/components/schemas/IdentifySpec" }]
+                    description: >
+                      Present ONLY when the tenant requires an address before the first
+                      message (`identify.require === "email"`). Absent — not null — for
+                      every other tenant, so an unconfigured boot response is unchanged.
 
   /api/usage:
     get:
@@ -810,6 +824,10 @@ components:
             cap but over 4000 chars is accepted and silently truncated to 4000 before the
             model. Client history items are truncated the same way.
         tenantId: { type: string, default: self }
+        siteId:
+          type: string
+          pattern: "^[a-z0-9_-]{1,40}$"
+          description: Optional site scope; absent → the account's default (unsuffixed) site.
         history:
           type: array
           items: { $ref: "#/components/schemas/ChatMessage" }
@@ -818,6 +836,59 @@ components:
             SessionDO ring; client history is used only when the ring is empty (first
             message of a legacy session) or when the ring read fails/times out
             (~1.5s guard). A non-empty ring always wins — spoofed history is ignored.
+        identity:
+          $ref: "#/components/schemas/VisitorIdentity"
+
+    VisitorIdentity:
+      type: object
+      required: [email]
+      description: >
+        The visitor's pre-chat identity, sent only when the tenant's `identify.require` is
+        "email". Re-validated on the edge on EVERY turn (a client-side check is a
+        suggestion); anything malformed counts as absent → 403 identity_required. The first
+        valid identity for a session is stored write-once on its SessionDO, so later turns
+        pass without re-sending it (the widget re-sends anyway, so a DO hiccup can't lock a
+        visitor out). Ignored entirely when the tenant has no gate configured.
+      properties:
+        email:
+          type: string
+          maxLength: 200
+          description: >
+            Trimmed + lowercased server-side. Must have a dotted domain — stricter than
+            `<input type="email">`, which accepts "a@b". An address that cannot receive a
+            reply is worse than none.
+        name:
+          type: string
+          maxLength: 200
+          description: Optional; collected when `identify.collectName` is true. Truncated, not rejected.
+
+    IdentifySpec:
+      type: object
+      description: >
+        The pre-chat identification gate. OFF by default: with this unset, or `require`
+        "none", the widget's boot config carries no `identify` key at all and POST /api/chat
+        gates nothing. When required, the widget locks its composer and shows a card until an
+        address is given, and the edge returns 403 identity_required for any turn without
+        one. This is NOT the lead form — a FormSpec is raised mid-conversation by the model
+        and fans out to connectors; this is a door in front of the composer.
+      properties:
+        require:
+          type: string
+          enum: [email, none]
+          default: none
+          description: "Anything else is rejected on write with 400 identify_require_invalid."
+        title:
+          type: string
+          maxLength: 500
+          description: 'Card heading. Widget default: "Before we start".'
+        description:
+          type: string
+          maxLength: 500
+          description: "Small print under the heading — say why you are asking."
+        collectName:
+          type: boolean
+          default: false
+          description: "Also ask for a name (an optional field alongside the required email)."
 
     ChatResult:
       type: object
@@ -1123,6 +1194,9 @@ components:
           type: array
           items: { $ref: "#/components/schemas/PopupSpec" }
           description: "Proactive popup engine; theme.popupText is sugar for one timer popup."
+        identify:
+          allOf: [{ $ref: "#/components/schemas/IdentifySpec" }]
+          description: "Pre-chat identification gate. Unset ⇒ off (the default for every tenant)."
         operators:
           type: array
           description: "Handoff-mention operators (auto-learned, capped at 10). NEVER exposed to the public widget config."

@@ -34,7 +34,7 @@ fires, just without a mention. See `docs → connect Telegram`.
 
 | method | path                             | purpose                                                                                                  |
 | ------ | -------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| POST   | `/api/chat`                      | `{sessionId, message, tenantId?, history?}` → `{reply, handoff, handedOff, degraded?}`                   |
+| POST   | `/api/chat`                      | `{sessionId, message, tenantId?, history?, identity?}` → `{reply, handoff, handedOff, degraded?}`        |
 | POST   | `/api/contact`                   | `[!HANDOFF]` contact-capture → owner's topic                                                             |
 | POST   | `/api/telegram/webhook`          | owner reply → push to visitor via DO                                                                     |
 | POST   | `/api/billing/entitlement`       | billing → gate: mirror an entitlement snapshot into KV _(secret-guarded)_                                |
@@ -73,6 +73,21 @@ fields are preserved), writing the exact KV shape `getTenant()` reads (key
 Secrets are separate on purpose: `TENANT_SYNC_SECRET` guards the config sync (the
 `krispy` CLI uses it); `BILLING_SYNC_SECRET` guards the optional billing→gate push
 (unused in single-tenant self-host). Set either with `bunx wrangler secret put <NAME>`.
+
+### Pre-chat identification (`identify`) — off by default
+
+A tenant that writes `identify: { require: "email" }` requires an address before the first
+message. `/api/chat` then answers `403 { error: "identity_required" }` for any turn with no
+usable identity, **before** the model runs — the widget renders the card, but this is the
+gate. The address is validated here every turn (a client check is a suggestion), stored
+**write-once** on the session's `SessionDO` (riding the `POST /context` body that already
+runs each turn — no extra subrequest), posted as the first message of the visitor's Telegram
+topic (`✉️ …`, where the operator replies), and surfaced on `/api/operator/handoffs` rows.
+It is never written to KV, emailed, or sent to a connector.
+
+With `identify` unset — every tenant today — none of that executes: the boot config has no
+`identify` key and the chat route is unchanged. Turning it on requires a `widget.js` from
+this release or newer. See `docs/reference/tenant-config.mdx` and `docs/security.mdx`.
 
 ## Architecture
 

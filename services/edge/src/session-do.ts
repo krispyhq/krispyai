@@ -9,9 +9,10 @@
 //   GET  (Upgrade: websocket)  → visitor connects; gets {type:"ready", handedOff}
 //                                (?role=operator tags the socket — Buttr app, §3d)
 //   GET  /state                → { handedOff }   (legacy read; chat's fallback path)
-//   GET  /context              → { handedOff, messages }  (one combined read — the chat
-//                                flow's authoritative memory + handoff flag per turn)
-//   GET  /summary              → { handedOff, resolved, lastMessage, ts }  (operator inbox row)
+//   GET  /context              → { handedOff, messages, identity? }  (one combined read —
+//                                the chat flow's authoritative memory + handoff flag per
+//                                turn; POST body may carry a pre-chat identity, stored once)
+//   GET  /summary              → { handedOff, resolved, lastMessage, ts, identity? }  (inbox row)
 //   GET  /log                  → { messages }    (the 20-msg ring — thread read)
 //   POST /log {messages,seed?} → append to the ring (seed: only if the ring is empty)
 //   POST /operator {text}      → set handedOff, broadcast + ring-append operator reply
@@ -26,7 +27,7 @@
 // Silence hand-back: a visitor message on a handed-off session arms the DO alarm
 // (HANDBACK_SILENCE_MINUTES, default 5). An operator reply disarms it. If it fires,
 // the session hands back to the AI so a returning visitor never faces a muted bot.
-import type { Env, ServerEvent } from "./types";
+import type { Env, ServerEvent, VisitorIdentity } from "./types";
 import { DO_INTERNAL_HEADER, doInternalSecret, readTenantConfig } from "./store";
 import { proposeKbSuggestion } from "./learn";
 
@@ -209,23 +210,38 @@ export class SessionDO {
         const body = (await request.json().catch(() => ({}))) as {
           tenantId?: string;
           siteId?: string;
+          identity?: VisitorIdentity;
         };
         if (body.tenantId && !(await this.state.storage.get<string>("tenantId"))) {
           await this.state.storage.put("tenantId", body.tenantId);
           if (body.siteId) await this.state.storage.put("siteId", body.siteId);
         }
+        // Pre-chat identity — WRITE-ONCE, same posture as tenantId above: the first
+        // address a session presents is the one the operator sees. A later post (a
+        // hijacked tab, a replayed request) cannot overwrite it. Already validated by
+        // the Worker; the DO only stores what it is handed.
+        if (body.identity && !(await this.state.storage.get<VisitorIdentity>("identity"))) {
+          await this.state.storage.put("identity", body.identity);
+        }
       }
-      const [handedOff, messages] = await Promise.all([this.handedOff(), this.ring()]);
-      return Response.json({ handedOff, messages });
+      const [handedOff, messages, identity] = await Promise.all([
+        this.handedOff(),
+        this.ring(),
+        this.state.storage.get<VisitorIdentity>("identity"),
+      ]);
+      return Response.json({ handedOff, messages, identity });
     }
 
     // One inbox-row read: handoff flag + the ring tail — halves the per-session
     // subrequests of the /api/operator/handoffs KV scan vs /state + /log.
     if (request.method === "GET" && url.pathname.endsWith("/summary")) {
-      const [handedOff, resolved, log] = await Promise.all([
+      const [handedOff, resolved, log, identity] = await Promise.all([
         this.handedOff(),
         this.resolved(),
         this.ring(),
+        // Pre-chat identity rides the inbox row so an operator app knows WHO the
+        // conversation is with (the Telegram side gets it as the topic's first message).
+        this.state.storage.get<VisitorIdentity>("identity"),
       ]);
       const last = log[log.length - 1];
       return Response.json({
@@ -233,6 +249,7 @@ export class SessionDO {
         resolved,
         lastMessage: last?.text ?? null,
         ts: last?.ts ?? null,
+        identity,
       });
     }
 

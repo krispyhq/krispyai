@@ -33,6 +33,22 @@ bucket) and drop one tag on any page:
 4. When the AI hits its limit it appends `[!HANDOFF]`; the widget then shows a
    small contact-capture form (`POST /api/contact`).
 
+## Optional: ask for an email first
+
+Off by default. When the tenant config sets `identify: { require: "email" }`, the boot
+config carries an `identify` block and the widget locks its composer behind a small card
+until the visitor gives an address. The address is kept in
+`localStorage["krispy_identity_<tenant>"]` (so a returning visitor isn't asked twice) and
+re-sent on every `POST /api/chat`.
+
+The widget is **not** the gate — the edge is. It re-validates the address on every turn and
+answers `403 { error: "identity_required" }` without one; the widget raises the card on that
+response even if its boot config said nothing, so the server always wins. With `identify`
+unset, none of this code path runs and the widget behaves exactly as it did before.
+
+See [docs → `IdentifySpec`](../../apps/docs/content/docs/reference/tenant-config.mdx) and
+[docs → security](../../apps/docs/content/docs/security.mdx).
+
 ## Local demo
 
 Run the edge Worker (`cd services/edge && bunx wrangler dev`, serves on `:8787`),

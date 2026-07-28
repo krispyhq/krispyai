@@ -103,6 +103,18 @@ export function publicWidgetConfig(cfg: Partial<TenantConfig> | null) {
     // Popup engine — explicit popups[] wins; otherwise theme.popupText desugars to one
     // timer popup (back-compat). No popups + no popupText = [] (nothing ever shows).
     popups: cfg?.popups ?? popupTextSugar(th),
+    // Pre-chat gate — projected ONLY when actually required, so an unconfigured tenant's
+    // boot JSON has no `identify` key at all (undefined is dropped by JSON.stringify).
+    // The widget needs the copy to render the card; the ENFORCEMENT lives on /api/chat.
+    identify:
+      cfg?.identify?.require === "email"
+        ? {
+            require: "email" as const,
+            title: cfg.identify.title,
+            description: cfg.identify.description,
+            collectName: cfg.identify.collectName,
+          }
+        : undefined,
   };
 }
 

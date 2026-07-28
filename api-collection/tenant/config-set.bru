@@ -52,5 +52,14 @@ docs {
   413 popup_text_too_large (popup text >500 chars), 413 popup_selector_too_large
   (a near-selector or cancelOnClick >200 chars), 413 too_many_opening (>5 script.opening),
   413 too_many_starters (>4 script.starters), 413 persona_script_too_large
-  (persona + script combined free text >8K chars).
+  (persona + script combined free text >8K chars), 400 identify_require_invalid
+  (identify.require must be "email" or "none" — an unknown value is rejected rather than
+  silently treated as off), 413 identify_text_too_large (identify.title/description
+  >500 chars).
+
+  Pre-chat gate: add `"identify": { "require": "email", "title": "Before we start",
+  "description": "So we can reply if you head off.", "collectName": true }` to `config` to
+  require an email before the first message. It is OFF unless written — omit it (or send
+  `"require": "none"`) and both the widget boot config and POST /api/chat are unchanged.
+  See docs → TenantConfig → IdentifySpec, and docs → security for what it stores.
 }

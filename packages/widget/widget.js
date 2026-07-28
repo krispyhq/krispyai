@@ -5,6 +5,9 @@
  *   WS   /api/session/:id/ws  → live operator replies (bot goes silent on handoff)
  *   POST /api/contact         → [!HANDOFF] contact capture
  *
+ * Optional, off by default: a tenant can require an email before the first message
+ * (`identify` in the boot config) — the composer stays locked until it's given.
+ *
  * Embed (one line):
  *   <script src="https://YOUR-HOST/widget.js"
  *           data-api="https://krispy-edge.YOU.workers.dev"
@@ -76,6 +79,20 @@
   }
 
   var history = []; // {role, content} — sent for context, capped server-side
+
+  // Pre-chat identification (tenant opt-in — see `identify` in the boot config). The
+  // address the visitor gave, kept per-tenant so a returning visitor isn't asked twice,
+  // and re-sent on every /api/chat post (the edge re-validates and is the real gate).
+  var IDENT_KEY = "krispy_identity_" + cfg.tenant;
+  var identity = null;
+  try {
+    identity = JSON.parse(localStorage.getItem(IDENT_KEY) || "null");
+  } catch {
+    identity = null;
+  }
+  // Stricter than <input type="email">, which accepts a dot-less host ("a@b"); mirrors
+  // the edge's own check so the visitor is told immediately, not after a round trip.
+  var EMAIL_RE = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
 
   // Transcript persistence (adimoyal HelpChat pattern): conversational bubbles
   // survive a page refresh. Stored per-tenant; capped; sys lines + typing dots
@@ -511,6 +528,7 @@
   var forms = []; // [{id,title,fields,afterReplyMs,successText}] — boot copy for the afterReplyMs fallback timer
   var opening = []; // script.opening — scripted bot bubbles on panel open (opening[0] supersedes greeting)
   var starters = []; // script.starters — suggested-question chips above the input (max 4)
+  var identifySpec = null; // identify — {require:"email",title,description,collectName}; null = gate OFF
   var openSource = ""; // popup "source" label — rides into the chat/lead session context when a popup opens the panel
   var ctaTimers = []; // per-CTA showAfterMs setTimeouts; cleared on operator takeover
   var formTimers = []; // FormSpec.afterReplyMs fallback timers; cleared on takeover / when any form shows
@@ -646,6 +664,12 @@
     // key-less config (an older edge that predates popups[]) falls back to the sugar.
     var popups = Array.isArray(c.popups) ? c.popups : popupTextSugar(c.theme);
     initPopups(popups);
+    // Pre-chat gate — the edge projects `identify` ONLY when it requires an address, so
+    // an unconfigured tenant never sees the key and nothing below ever runs.
+    if (c.identify && c.identify.require === "email") {
+      identifySpec = c.identify;
+      maybeGate();
+    }
   }
   // theme.popupText → a single timer popup (one engine, no parallel system).
   function popupTextSugar(th) {
@@ -958,11 +982,16 @@
   // opening[]: a proactive bot-message sequence on panel open — first bubble is
   // instant (= today's greeting), the rest are separated by the existing typing
   // indicator. opening[0] supersedes theme.greeting, so a lone greeting is unchanged.
-  function playOpening(seq) {
+  // `done` fires after the last bubble — the identification gate uses it so its card
+  // lands BELOW the whole opener instead of above bubbles still to come.
+  function playOpening(seq, done) {
     add("bot", seq[0]);
     var i = 1;
     (function next() {
-      if (i >= seq.length) return;
+      if (i >= seq.length) {
+        if (done) done();
+        return;
+      }
       var typing = add("bot", "…");
       setTimeout(function () {
         typing.remove();
@@ -1023,12 +1052,15 @@
           if (rm && rm.c && rm.t != null) add(rm.c, rm.t);
         }
         restoring = false;
+        maybeGate();
       } else if (opening.length) {
-        playOpening(opening); // scripted opener (opening[0] supersedes greeting)
-      } else if (greeting) {
-        add("bot", greeting); // today's single-greeting behavior, unchanged
+        playOpening(opening, maybeGate); // scripted opener (opening[0] supersedes greeting)
+      } else {
+        if (greeting) add("bot", greeting); // today's single-greeting behavior, unchanged
+        maybeGate();
       }
-      if (!savedMsgs.length) renderStarters(); // fresh conversation only
+      // fresh conversation only — and not while the gate is up (a chip sends a message)
+      if (!savedMsgs.length && !gateLocked()) renderStarters();
       connectWs();
     }
     syncViewport();
@@ -1137,6 +1169,60 @@
     ],
   };
 
+  // ── pre-chat identification gate (tenant opt-in) ─────────────────────────────
+  // OFF unless the edge sends identify.require === "email". When on and the visitor
+  // hasn't given an address, the composer is locked and the same card renderer as the
+  // lead form stands in its place — no second form engine. The address is NOT a lead:
+  // it unlocks the composer and rides with the conversation (see the edge's /api/chat).
+  var gateShown = false;
+  function gateLocked() {
+    return !!identifySpec && !identity;
+  }
+  function setComposerLocked(locked) {
+    input.disabled = locked;
+    sendBtn.disabled = locked;
+    input.placeholder = locked ? "Enter your email to start…" : "Type a message…";
+  }
+  function gateForm() {
+    var fields = [];
+    if (identifySpec.collectName) fields.push({ name: "name", label: "Your name", type: "text" });
+    // type:"email" + required → the browser's own validation, free (showForm honors both)
+    fields.push({ name: "email", label: "Your email", type: "email", required: true });
+    return {
+      id: "identify",
+      title: identifySpec.title || "Before we start",
+      description: identifySpec.description,
+      fields: fields,
+      successText: "Thanks — ask away.",
+    };
+  }
+  /** Lock the composer, and show the card once the panel is open. Deferred while another
+   * card holds the log (showForm is single-slot) — that card's submit re-calls this. */
+  function maybeGate() {
+    if (!gateLocked()) return;
+    setComposerLocked(true);
+    if (gateShown || formOpen || !panel.classList.contains("open")) return;
+    gateShown = true;
+    showForm(gateForm(), acceptIdentity);
+  }
+  function acceptIdentity(values) {
+    var email = (values.email || "").trim().toLowerCase();
+    if (!EMAIL_RE.test(email)) return false; // client half; the edge re-validates
+    identity = { email: email };
+    if (values.name) identity.name = values.name;
+    try {
+      localStorage.setItem(IDENT_KEY, JSON.stringify(identity));
+    } catch {
+      /* quota/private mode — the address still rides this session's posts */
+    }
+    setComposerLocked(false);
+    if (!savedMsgs.length) renderStarters(); // held back while the gate was up
+    setTimeout(function () {
+      input.focus();
+    }, 0);
+    return true;
+  }
+
   // ── CTA engine (§4) — social-connector cards inside .log ─────────────────────
   // Armed on the FIRST visitor message; each CTA renders once after its own
   // showAfterMs (staggered) into a lazily-created .ctarow card that scrolls with
@@ -1238,7 +1324,10 @@
   // Built entirely with createElement/textContent — NEVER innerHTML for any value
   // (form fields, options, CTA labels/urls are all tenant/visitor-controlled → XSS).
   var formOpen = false;
-  function showForm(form) {
+  // `onSubmit(values)` overrides the default /api/lead fan-out — the identification gate
+  // is the one caller that uses it (its values are not a lead; they unlock the composer).
+  // Return false from it to keep the card open (client-side validation failed).
+  function showForm(form, onSubmit) {
     if (formOpen || !form || !form.fields) return;
     formOpen = true;
     // any form showing cancels the afterReplyMs fallback (incl. a [!FORM] trigger)
@@ -1252,6 +1341,13 @@
       h.style.cssText = "font-weight:600;font-size:14px;color:#241a12";
       h.textContent = form.title;
       wrap.appendChild(h);
+    }
+    // Optional small print under the heading — where a tenant says WHY it's asking.
+    if (form.description) {
+      var d = document.createElement("div");
+      d.style.cssText = "font-size:12px;line-height:1.45;color:var(--k-muted-fg)";
+      d.textContent = form.description; // textContent, never innerHTML
+      wrap.appendChild(d);
     }
 
     var inputs = {}; // name → element
@@ -1310,24 +1406,29 @@
       Object.keys(inputs).forEach(function (name) {
         values[name] = inputs[name].value.trim();
       });
-      fetch(cfg.api + "/api/lead", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          tenantId: cfg.tenant,
-          siteId: cfg.site || undefined,
-          sessionId: sessionId,
-          formId: form.id,
-          values: values,
-          history: history.slice(-10),
-          source: openSource || undefined, // popup origin → lead meta (§3.5)
-        }),
-      }).catch(function () {});
+      if (onSubmit) {
+        if (onSubmit(values) === false) return; // rejected — leave the card open
+      } else {
+        fetch(cfg.api + "/api/lead", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            tenantId: cfg.tenant,
+            siteId: cfg.site || undefined,
+            sessionId: sessionId,
+            formId: form.id,
+            values: values,
+            history: history.slice(-10),
+            source: openSource || undefined, // popup origin → lead meta (§3.5)
+          }),
+        }).catch(function () {});
+      }
       // Collapse in place to a compact transcript record — the card stays in
       // the log as proof the details were sent (textContent clears the fields).
       wrap.textContent = form.successText || "Thanks — we'll be in touch.";
       wrap.classList.add("done");
       formOpen = false;
+      maybeGate(); // a gate deferred because THIS card was open can now render (no-op otherwise)
     });
 
     log.appendChild(wrap); // into the log — scrolls with the transcript, never a sticky band
@@ -1365,6 +1466,7 @@
         message: text,
         history: history.slice(-10),
         source: openSource || undefined, // popup origin → session context (§3.5)
+        identity: identity || undefined, // pre-chat gate; re-validated by the edge
       }),
     })
       .then(function (r) {
@@ -1372,6 +1474,21 @@
       })
       .then(function (res) {
         if (typing) typing.remove();
+        // The edge refused for want of an address (403). It is the authority on the
+        // gate, so trust it over the boot config — which may have failed to load, or
+        // been turned on since this page loaded — and raise the card.
+        if (res.error === "identity_required") {
+          identifySpec = identifySpec || { require: "email" };
+          identity = null;
+          try {
+            localStorage.removeItem(IDENT_KEY); // whatever was stored, the edge won't take it
+          } catch {
+            /* private mode */
+          }
+          gateShown = false;
+          maybeGate();
+          return;
+        }
         if (res.handedOff) {
           handedOff = true;
           markHuman();
@@ -1395,7 +1512,7 @@
       })
       .finally(function () {
         if (chatTimer) clearTimeout(chatTimer);
-        sendBtn.disabled = false;
+        sendBtn.disabled = gateLocked(); // the gate outranks the per-send lock
         input.focus();
       });
   }
