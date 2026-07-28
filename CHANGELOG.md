@@ -10,6 +10,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-07-28
+
 ### Added
 
 - Widget + edge: **paste a screenshot into the chat.** Support is the one conversation where a picture _is_ the message — a broken layout, an error dialog, a line on a statement — and until now the visitor had to describe it in words, which is exactly what they were already failing to do when they reached for the chat. `Ctrl`/`Cmd`+`V` and drag-and-drop both work; the image lands in a tray above the composer with a thumbnail and a remove control, and is sent with the next message.
