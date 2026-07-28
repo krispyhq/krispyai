@@ -72,6 +72,9 @@ function fakeEnv(extra: Partial<Env> = {}): Env {
   return {
     KRISPY_KV: {
       get: async (k: string) => kv.get(k) ?? null,
+      // Metadata-aware read (the topic lifecycle's thread state). This fake keeps values
+      // only — the metadata behaviour itself is covered in topic-lifecycle.test.ts.
+      getWithMetadata: async (k: string) => ({ value: kv.get(k) ?? null, metadata: null }),
       put: async (k: string, v: string) => void kv.set(k, v),
       list: async ({ prefix }: { prefix?: string } = {}) => ({
         keys: [...kv.keys()]

@@ -25,13 +25,24 @@ import { authorizeOperator } from "./operator-auth";
 import { stampSeen, readSeen } from "./liveness";
 import { pushToApp } from "./push";
 import { renderLeadEmail, sendLeadEmail } from "./email";
+import {
+  sweepTopics,
+  syncTopicToResolved,
+  touchTopicActivity,
+  idleWindowMs,
+  TOPIC_IDLE_HOURS_MAX,
+  TOPIC_IDLE_HOURS_MIN,
+} from "./topics";
 import type { Connector, Env, FormSpec, TenantConfig } from "./types";
 import {
   getTenant,
   resolveSiteId,
   getThreadForSession,
+  getThreadState,
   getSessionForThread,
   linkThreadSession,
+  sessionStub,
+  doFetch,
   meter,
   meterUsage,
   getUsage,
@@ -49,8 +60,6 @@ import {
   readSuggestions,
   approveSuggestion,
   removeSuggestion,
-  DO_INTERNAL_HEADER,
-  doInternalSecret,
   checkLeadRate,
   type EntitlementSnapshot,
 } from "./store";
@@ -138,27 +147,15 @@ function siteOr400(env: Env, raw: string | null | undefined): string | undefined
   return s === null ? json(env, { error: "invalid_site" }, 400) : s;
 }
 
-function sessionStub(env: Env, tenantId: string, sessionId: string) {
-  return env.SESSION.get(env.SESSION.idFromName(`${tenantId}:${sessionId}`));
-}
-
-/** Internal Worker→DO fetch: attaches the shared secret the DO verifies (the DO's
- * /state,/operator,/handoff are Worker-only). WS upgrades don't route through here. */
-function doFetch(
-  env: Env,
-  tenantId: string,
-  sessionId: string,
-  path: string,
-  init: RequestInit = {},
-) {
-  const headers = {
-    ...(init.headers as Record<string, string>),
-    [DO_INTERNAL_HEADER]: doInternalSecret(env),
-  };
-  return sessionStub(env, tenantId, sessionId).fetch(path, { ...init, headers });
-}
-
 export default {
+  // Cron Trigger (wrangler.toml [triggers]) — the topic-lifecycle sweep, the only work
+  // in this Worker with no request behind it. No-ops for every tenant that hasn't set
+  // topicIdleHours, so a self-host that never opts in pays one KV list per run.
+  async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+    const r = await sweepTopics(env);
+    if (r.closed || r.stamped || r.deniedTenants) console.log("topic_sweep", JSON.stringify(r));
+  },
+
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -339,8 +336,25 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
           },
       ensureTopic: async (sessionId, firstMessage) => {
         if (!tenant) return 0;
-        const existing = await getThreadForSession(env, tenantId, sessionId);
-        if (existing) return existing;
+        const existing = await getThreadState(env, tenantId, sessionId);
+        if (existing) {
+          // Every visitor turn lands here, so this is where the topic lifecycle is kept
+          // honest: stamp the activity the idle sweep measures, and reopen a topic the
+          // sweep closed — a returning visitor must never be talking into a dead thread.
+          // Off (no topicIdleHours) → skip entirely, so an unconfigured tenant keeps
+          // today's exact KV write pattern.
+          if (idleWindowMs(tenant) !== null) {
+            await touchTopicActivity(
+              env,
+              tenantId,
+              sessionId,
+              existing.threadId,
+              existing.closed === true,
+              tenant,
+            ).catch((e) => console.error("topic activity touch failed (best-effort):", e));
+          }
+          return existing.threadId;
+        }
         const name = `${firstMessage.slice(0, 40)} · ${sessionId.slice(0, 6)}`;
         const threadId = await createForumTopic(tenant.botToken, tenant.chatId, name);
         await linkThreadSession(env, tenantId, threadId, sessionId);
@@ -588,6 +602,11 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
           "✅ Resolved — the AI has this chat again. Reply here anytime to take back over.",
         ).catch((e) => console.error("telegram resolve ack failed (best-effort):", e));
       }
+      // A settled conversation isn't what's happening right now — close its topic
+      // immediately rather than waiting out the idle window. No-op unless the tenant
+      // enabled the lifecycle, so /done behaves exactly as before for everyone else.
+      // Posted AFTER the ack above so the operator reads the confirmation, not a wall.
+      await syncTopicToResolved(env, tenantId, sessionId, true);
       return new Response("ok");
     }
     await doFetch(env, tenantId, sessionId, "https://do/operator", {
@@ -719,6 +738,10 @@ async function handleOperatorResolve(request: Request, env: Env): Promise<Respon
   if (denied) return json(env, { error: denied.error }, denied.status);
   const r = await doFetch(env, b.tenantId, b.sessionId, "https://do/resolve", { method: "POST" });
   const { resolved } = (await r.json()) as { resolved: boolean };
+  // Mirror the toggle onto the Telegram topic (close on resolve, reopen on undo) so the
+  // group and the app never disagree about what's live. No-op unless the tenant enabled
+  // the lifecycle; never fails the operator's tap.
+  await syncTopicToResolved(env, b.tenantId, b.sessionId, resolved);
   return json(env, { ok: true, resolved });
 }
 
@@ -857,6 +880,16 @@ function tenantConfigCapError(
     sumLen(script?.starters);
   if (personaScriptChars > PERSONA_SCRIPT_MAX_CHARS)
     return { error: "persona_script_too_large", status: 413 };
+  // Topic lifecycle window. 0 (or unset) is the OFF switch and always allowed; any other
+  // value must land in the sane range, because this number decides when the Worker closes
+  // a real operator's topics. A fat-fingered 0.05 would sweep live conversations.
+  const idle = cfg.topicIdleHours;
+  if (idle !== undefined && idle !== 0) {
+    if (typeof idle !== "number" || !Number.isFinite(idle))
+      return { error: "topic_idle_hours_invalid", status: 400 };
+    if (idle < TOPIC_IDLE_HOURS_MIN || idle > TOPIC_IDLE_HOURS_MAX)
+      return { error: "topic_idle_hours_out_of_range", status: 400 };
+  }
   return null;
 }
 

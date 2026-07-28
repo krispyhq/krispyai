@@ -25,6 +25,14 @@ new_sqlite_classes = ["SessionDO"]
 binding = "KRISPY_KV"
 id = "120c1cccc84c455eab7b9e30ca346379" # `bunx wrangler kv namespace create KRISPY_KV`
 
+# ── topic-lifecycle sweep (src/topics.ts) ────────────────────────────────────
+# Closes forum topics idle past a tenant's `topicIdleHours`, so the operator's group
+# only shows what's live. Hourly — the window is measured in hours, so finer buys
+# nothing. INERT until a tenant sets topicIdleHours: for everyone else a run is one KV
+# list and a return. Repeated per named env below (envs do NOT inherit triggers either).
+[triggers]
+crons = ["0 * * * *"]
+
 # ── secrets (NOT here — set with `bunx wrangler secret put <NAME>`) ───────────
 #   TELEGRAM_BOT_TOKEN        BotFather token
 #   TELEGRAM_CHAT_ID          supergroup id with Topics enabled (e.g. -1001234567890)
@@ -58,6 +66,8 @@ new_sqlite_classes = ["SessionDO"]
 [[env.preview.kv_namespaces]]
 binding = "KRISPY_KV"
 id = "a018c2ee187c4617ac218f06b83efe97" # `bunx wrangler kv namespace create KRISPY_KV_preview`
+[env.preview.triggers]
+crons = ["0 * * * *"]
 [env.preview.vars]
 ALLOWED_ORIGIN = "*"
 # Set to the preview cloud API's URL (workers.dev URL differs per account —
@@ -77,6 +87,8 @@ new_sqlite_classes = ["SessionDO"]
 [[env.production.kv_namespaces]]
 binding = "KRISPY_KV"
 id = "727ff93f7785455ba71745b160dd4809" # `bunx wrangler kv namespace create KRISPY_KV_production`
+[env.production.triggers]
+crons = ["0 * * * *"]
 [env.production.vars]
 ALLOWED_ORIGIN = "*" # lock to your site origin in production
 API_ORIGIN = "https://api.krispyai.com" # prod cloud API (operator bearer verification)

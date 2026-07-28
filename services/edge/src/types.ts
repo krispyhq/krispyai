@@ -164,6 +164,12 @@ export interface TenantConfig {
   /** Quiet-ops — operators to @mention on handoff. Auto-learned from topic replies
    * (see upsertOperator). SECRET-ADJACENT: never expose to the public widget config. */
   operators?: Operator[];
+  /** Topic lifecycle — hours a forum topic may sit idle before the cron sweep closes it.
+   * UNSET (or 0) = OFF: no topic ever closes, which is exactly how every deploy behaved
+   * before this field existed. Setting it IS the opt-in; 24 is the recommended value.
+   * Clamped to TOPIC_IDLE_HOURS_MIN..MAX on the config write path. Tenant-wide (read
+   * from the DEFAULT site's blob) because conversations are keyed by tenantId alone. */
+  topicIdleHours?: number;
 }
 
 // ── Quiet ops (handoff mention) ───────────────────────────────────────────

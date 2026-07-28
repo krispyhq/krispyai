@@ -24,7 +24,8 @@ body:json {
       "model": "@cf/meta/llama-3.1-8b-instruct",
       "operators": [
         { "id": 777001, "name": "Shai", "username": "shaisnir" }
-      ]
+      ],
+      "topicIdleHours": 24
     }
   }
 }
@@ -52,5 +53,12 @@ docs {
   413 popup_text_too_large (popup text >500 chars), 413 popup_selector_too_large
   (a near-selector or cancelOnClick >200 chars), 413 too_many_opening (>5 script.opening),
   413 too_many_starters (>4 script.starters), 413 persona_script_too_large
-  (persona + script combined free text >8K chars).
+  (persona + script combined free text >8K chars), 400 topic_idle_hours_invalid
+  (topicIdleHours not a finite number), 400 topic_idle_hours_out_of_range
+  (outside 1-8760 hours).
+
+  topicIdleHours turns the Telegram topic lifecycle ON: an hourly cron sweep closes
+  topics idle past that many hours (closed, not deleted — a returning visitor reopens
+  theirs). UNSET or 0 = off, which is how every deploy behaved before this field
+  existed. 24 is the recommended value.
 }

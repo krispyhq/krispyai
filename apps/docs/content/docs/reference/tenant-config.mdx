@@ -26,11 +26,29 @@ interface TenantConfig {
   kbSources?: KbSource[]; // per-doc knowledge registry, assembled into the prompt at chat time
   kbVersion?: number; // bumped on any kbSources write (retrieval cache key)
   operators?: Operator[]; // humans to @mention on handoff (auto-learned; NEVER public)
+  topicIdleHours?: number; // close a Telegram topic after N idle hours. UNSET or 0 = OFF
 }
 ```
 
 `getTenant()` only treats a config as usable once **both** `botToken` and `chatId` are
 present; a partial config (e.g. a prompt saved before creds) still round-trips through KV.
+
+## `topicIdleHours` — the topic lifecycle switch
+
+hours a Telegram forum topic may sit idle before the hourly sweep closes it. **unset (or
+`0`) means off** — no topic ever closes, which is how every deploy behaved before this
+field existed. setting it is the opt-in; `24` is the recommended value.
+
+| value         | meaning                                                             |
+| ------------- | ------------------------------------------------------------------- |
+| unset / `0`   | off — pre-existing behavior, nothing is ever closed                 |
+| `1`–`8760`    | the idle window in hours (`24` recommended)                         |
+| anything else | rejected on write: `400 topic_idle_hours_invalid` / `_out_of_range` |
+
+it is **tenant-wide** — read from the account's default-site blob (`tenant:<t>`), because
+conversations are keyed by tenantId alone, so a per-site value is ignored. never projected
+to the public widget config. behavior, reopen rules, and what happens to an unresolved
+handoff: [connect Telegram → topic lifecycle](/docs/guides/connect-telegram).
 
 ## `FormSpec`
 
