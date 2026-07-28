@@ -18,6 +18,7 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Added
 
+- Release process — the repo now cuts **semver tags + GitHub Releases** via `node scripts/release.mjs <x.y.z>` (promotes `[Unreleased]` → a dated version section, bumps the `package.json` versions, tags `vX.Y.Z`, publishes the GitHub Release from the changelog section). **`deploy.sh production` refuses to ship a commit that isn't a `v*` tag** (break-glass: `ALLOW_UNTAGGED_DEPLOY=1`), so every production deploy is a real, changelog'd release. See [`RELEASING.md`](RELEASING.md).
 - Widget: **`theme.launcherStyle: "pill"`** — an opt-in labelled launcher, and the animated states that go with it. The pill carries the avatar, a hairline separator and a word (`theme.launcherLabel`, ≤24 chars, defaults to the widget title). **While the panel is open it collapses to the avatar alone and sheds its frame**, so the launcher and the panel stop competing for the same corner; closing builds it back on the same transition. The leading edge lights up in `primaryColor` for the duration of the move (`.kmoving`) — it is pinned to the pill's own right edge, so the width transition carries it with no second animation to keep in sync. **Unread lights the separator itself** and breathes it (`kattend`, 3.2s) rather than adding a badge. Everything is gated on `.kpill`: with no theme, or any value other than the literal `"pill"`, the launcher is byte-identical to today (asserted by a control run). Honours `prefers-reduced-motion` — the states survive, the motion does not.
 
 ### Fixed

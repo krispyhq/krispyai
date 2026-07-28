@@ -15,6 +15,24 @@ ENV="${2:-}"
 case "$TARGET" in edge | docs | widget) ;; *) echo "usage: ./deploy.sh <edge|docs|widget> <preview|production>" >&2; exit 2 ;; esac
 case "$ENV" in preview | production) ;; *) echo "usage: ./deploy.sh <edge|docs|widget> <preview|production>" >&2; exit 2 ;; esac
 
+# Production ships TAGGED RELEASES only. `git describe --exact-match` succeeds
+# only when HEAD is a `v*` tag, so a prod deploy is always a cut, changelog'd,
+# released version — never a bare commit. Cut one first:
+#   node scripts/release.mjs <x.y.z>        (see RELEASING.md)
+# Break-glass for a genuine hotfix: ALLOW_UNTAGGED_DEPLOY=1 ./deploy.sh … production
+if [ "$ENV" = production ]; then
+  if REL_TAG="$(git describe --exact-match --tags --match 'v*' HEAD 2>/dev/null)"; then
+    echo "→ releasing $REL_TAG to production"
+  elif [ "${ALLOW_UNTAGGED_DEPLOY:-}" = 1 ]; then
+    echo "⚠ ALLOW_UNTAGGED_DEPLOY=1 — shipping an UNTAGGED commit to production (break-glass)." >&2
+  else
+    echo "✘ production deploys ship a tagged release only — HEAD ($(git rev-parse --short HEAD)) is not a v* tag." >&2
+    echo "  Cut one first:  node scripts/release.mjs <x.y.z>   (see RELEASING.md)" >&2
+    echo "  Emergency hotfix:  ALLOW_UNTAGGED_DEPLOY=1 ./deploy.sh $TARGET production" >&2
+    exit 1
+  fi
+fi
+
 # Source Infisical-fed creds. `set -a` exports every var so wrangler + child scripts see them.
 set -a
 [ -f .env.local ] && . .env.local
