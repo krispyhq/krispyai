@@ -487,7 +487,16 @@ export const ATTACH_TYPES: Record<string, number[]> = {
 export function looksLikeImage(type: string, head: Uint8Array): boolean {
   const magic = ATTACH_TYPES[type];
   if (!magic) return false;
-  return magic.every((b, i) => head[i] === b);
+  if (!magic.every((b, i) => head[i] === b)) return false;
+  // "RIFF" is a container header — WAV and AVI start with it too. A real WEBP
+  // carries "WEBP" at bytes 8-11, so without this a RIFF-but-not-image declared
+  // image/webp would slip past the magic-byte guard. (Telegram would reject it,
+  // but the guard should mean what its comment says.)
+  if (type === "image/webp") {
+    const webp = [0x57, 0x45, 0x42, 0x50]; // "WEBP"
+    return webp.every((b, i) => head[i + 8] === b);
+  }
+  return true;
 }
 
 async function handleAttachment(request: Request, env: Env): Promise<Response> {

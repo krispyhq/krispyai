@@ -7,7 +7,9 @@ const head = (...bytes: number[]) => new Uint8Array([...bytes, ...Array(12).fill
 
 const PNG = head(0x89, 0x50, 0x4e, 0x47);
 const JPEG = head(0xff, 0xd8, 0xff);
-const WEBP = head(0x52, 0x49, 0x46, 0x46);
+// A real WEBP is "RIFF"…"WEBP" (bytes 8-11); "RIFF" alone also starts WAV/AVI.
+const WEBP = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]);
+const WAV = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x41, 0x56, 0x45]); // RIFF…WAVE
 const GIF = head(0x47, 0x49, 0x46, 0x38);
 
 describe("attachment type guard", () => {
@@ -16,6 +18,11 @@ describe("attachment type guard", () => {
     expect(looksLikeImage("image/jpeg", JPEG)).toBe(true);
     expect(looksLikeImage("image/webp", WEBP)).toBe(true);
     expect(looksLikeImage("image/gif", GIF)).toBe(true);
+  });
+
+  test("RIFF alone is not WEBP — a WAV declared image/webp is refused", () => {
+    // "RIFF" also starts WAV/AVI; a real WEBP carries "WEBP" at bytes 8-11.
+    expect(looksLikeImage("image/webp", WAV)).toBe(false);
   });
 
   test("a DECLARED content-type is not enough — the bytes must agree", () => {
