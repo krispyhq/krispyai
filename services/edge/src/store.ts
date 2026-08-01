@@ -145,6 +145,11 @@ export const kTenant = (t: string, siteId?: string) => `tenant:${ns(t, siteId)}`
 // Relearning suggestions live under their OWN per-site key — NOT the config blob — so a
 // machine-initiated background append (DO handback) can never race a human dashboard save.
 export const kSuggestions = (t: string, siteId?: string) => `suggestions:${ns(t, siteId)}`;
+// Cached knowledge-pack RAM digest, VERSIONED by kbVersion: a KB write bumps the version,
+// which invalidates for free — no purge call, so no purge race. Per-site like the config
+// blob it mirrors (see knowledge.ts cachedRam).
+export const kRam = (t: string, kbVersion: number, siteId?: string) =>
+  `ram:${ns(t, siteId)}:${kbVersion}`;
 /** Usage counter, bucketed by month so it doubles as a billing period. */
 export const kUsage = (t: string, kind: UsageKind, yyyymm: string) =>
   `usage:${t}:${yyyymm}:${kind}`;

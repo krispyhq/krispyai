@@ -25,6 +25,7 @@ interface TenantConfig {
   popups?: PopupSpec[]; // proactive popup engine (theme.popupText is sugar for one timer popup)
   kbSources?: KbSource[]; // per-doc knowledge registry, assembled into the prompt at chat time
   kbVersion?: number; // bumped on any kbSources write (retrieval cache key)
+  knowledgeEnabled?: boolean; // opt in to per-turn knowledge retrieval (default off)
   operators?: Operator[]; // humans to @mention on handoff (auto-learned; NEVER public)
 }
 ```
@@ -217,6 +218,22 @@ the `detectPromptLeak` scope**: a bot quoting its own KB verbatim is correctness
 Unset → the prompt is byte-for-byte what it is today. `kbVersion` bumps on any `kbSources`
 write (approve path) — the cache key the size-gated retrieval design expects.
 
+## `knowledgeEnabled` — retrieval for a KB that doesn't fit
+
+`kbSources` are inlined whole, so they're bounded by the prompt (and the 100K cap below).
+When a tenant's knowledge outgrows that, `knowledgeEnabled: true` switches them to
+**per-turn retrieval** instead: a stable pre-baked digest plus the top-K chunks for the
+current question, fetched from a knowledge provider and injected as `## Knowledge base
+summary` + `## Relevant to this question`. Both are **additive** — `systemPrompt` and
+`kbSources` still ride every turn exactly as they do today.
+
+This flag is the **per-tenant half of the size gate**, and it is inert on its own: the
+Worker also needs `KNOWLEDGE_PROVIDER` + `IMMORTERM_MEMORY_URL` set, or the null adapter is
+wired and nothing happens (no network, no dependency). Below the gate, leave it off —
+retrieval costs a round trip to fetch knowledge that already fits the prompt. Server-only:
+never projected to the public widget config. Full setup + the failure table:
+[knowledge retrieval](/docs/guides/knowledge-retrieval).
+
 **Relearning.** When a handed-off session hands back to the AI (operator resolves it, or the
 silence alarm fires) and it had ≥1 operator message, the `SessionDO` makes **one** Workers-AI
 call to extract at most one Q→A the human answered that the bot couldn't, and appends it as a
@@ -251,11 +268,12 @@ its KB.
 
 ## KV keys
 
-| key                              | value                                                                                       |
-| -------------------------------- | ------------------------------------------------------------------------------------------- |
-| `tenant:<id>`                    | the `TenantConfig` JSON blob                                                                |
-| `session:<tenant>:<sessionId>`   | the Telegram thread id for that session                                                     |
-| `thread:<tenant>:<threadId>`     | the session id for that thread                                                              |
-| `usage:<tenant>:<yyyymm>:<kind>` | monthly usage counter — `kind` ∈ `ai` \| `handoff` \| `tokens`                              |
-| `entitlement:<tenant>`           | optional billing snapshot (unused in self-host)                                             |
-| `suggestions:<ns(t,s)>`          | pending relearning `KbSuggestion[]` (per-site, cap 20 FIFO; own key, never the config blob) |
+| key                                 | value                                                                                       |
+| ----------------------------------- | ------------------------------------------------------------------------------------------- |
+| `tenant:<id>`                       | the `TenantConfig` JSON blob                                                                |
+| `session:<tenant>:<sessionId>`      | the Telegram thread id for that session                                                     |
+| `thread:<tenant>:<threadId>`        | the session id for that thread                                                              |
+| `usage:<tenant>:<yyyymm>:<kind>`    | monthly usage counter — `kind` ∈ `ai` \| `handoff` \| `tokens`                              |
+| `entitlement:<tenant>`              | optional billing snapshot (unused in self-host)                                             |
+| `ram:<tenant>[:<site>]:<kbVersion>` | cached knowledge digest — versioned, so a `kbVersion` bump invalidates it for free          |
+| `suggestions:<ns(t,s)>`             | pending relearning `KbSuggestion[]` (per-site, cap 20 FIFO; own key, never the config blob) |

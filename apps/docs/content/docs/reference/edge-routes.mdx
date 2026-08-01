@@ -27,6 +27,15 @@ always entitled and unmetered. a non-self tenant with no valid snapshot gets
 `402 { error: "subscription_required" }`; over its cap it gets
 `429 { error: "usage_limit_reached" }`. missing `sessionId`/`message` → `400`.
 
+### `POST /api/chat` knowledge injection (optional)
+
+the request and response shapes are unchanged. when a knowledge provider is configured
+**and** the tenant sets `knowledgeEnabled`, the Worker reads a KB digest + the top-K chunks
+for this message (in parallel, on their own timeouts) and adds them to the system prompt
+before the completion — still **one** model call, no tool-calling round trip. unconfigured,
+or on any provider failure, the turn proceeds with no injected context and the prompt is
+byte-for-byte what it is today. see [knowledge retrieval](/docs/guides/knowledge-retrieval).
+
 ## secret-guarded routes
 
 these carry a bot token or mutate config, so they require a shared-secret header. a missing

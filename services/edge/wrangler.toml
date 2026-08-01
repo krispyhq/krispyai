@@ -29,6 +29,8 @@ id = "120c1cccc84c455eab7b9e30ca346379" # `bunx wrangler kv namespace create KRI
 #   TELEGRAM_BOT_TOKEN        BotFather token
 #   TELEGRAM_CHAT_ID          supergroup id with Topics enabled (e.g. -1001234567890)
 #   TELEGRAM_WEBHOOK_SECRET   random string; also passed to setWebhook (secret_token)
+#   IMMORTERM_ACCESS_CLIENT_ID / _SECRET   CF Access service token, IF you put the
+#                             knowledge sidecar behind Cloudflare Tunnel + Access (do).
 # ── optional vars ─────────────────────────────────────────────────────────────
 [vars]
 ALLOWED_ORIGIN = "*" # lock to your site origin in production
@@ -39,6 +41,19 @@ ALLOWED_ORIGIN = "*" # lock to your site origin in production
 # bearer auth FAILS CLOSED (self-host without the Buttr app doesn't need it).
 # Local dev: point at your local cloud API (e.g. via portless). NEVER a secret.
 # API_ORIGIN = "http://api.krispy.localhost:1355"
+#
+# ── OPTIONAL: knowledge retrieval — a KB bigger than the context window ───────
+# Unset (the default) the bot answers from its system prompt exactly as it does today:
+# no adapter, no network, no dependency. Set BOTH to turn it on, then flip
+# `knowledgeEnabled` on the tenants whose KB is too big to inline (docs/guides/
+# knowledge-and-memory.mdx explains the size gate).
+# The sidecar ships NO AUTH of its own — never expose it to the internet. Put it behind
+# Cloudflare Tunnel + Access and give the Worker a service token (secrets, above).
+# KNOWLEDGE_PROVIDER = "immorterm"
+# IMMORTERM_MEMORY_URL = "https://memory.internal.example.com"
+# Tuning (all optional, defaults in knowledge.ts): KNOWLEDGE_SEARCH_LIMIT = "3",
+# KNOWLEDGE_RAM_TTL_S = "300", KNOWLEDGE_RAM_TIMEOUT_MS = "400",
+# KNOWLEDGE_SEARCH_TIMEOUT_MS = "600".
 
 # ── deploy environments ──────────────────────────────────────────────────────
 # Two isolated Workers, one per env — a deploy targets one with `wrangler deploy
@@ -60,6 +75,10 @@ binding = "KRISPY_KV"
 id = "a018c2ee187c4617ac218f06b83efe97" # `bunx wrangler kv namespace create KRISPY_KV_preview`
 [env.preview.vars]
 ALLOWED_ORIGIN = "*"
+# Optional knowledge retrieval — see the commented block above. Named envs do NOT inherit
+# vars, so it must be set here too or preview silently runs without it.
+# KNOWLEDGE_PROVIDER = "immorterm"
+# IMMORTERM_MEMORY_URL = "https://memory-preview.internal.example.com"
 # Set to the preview cloud API's URL (workers.dev URL differs per account —
 # same posture as EDGE_PREVIEW_URL in deploy.sh). Unset = bearer auth fails closed.
 # API_ORIGIN = "https://<your-preview-api>.workers.dev"
@@ -80,6 +99,10 @@ id = "727ff93f7785455ba71745b160dd4809" # `bunx wrangler kv namespace create KRI
 [env.production.vars]
 ALLOWED_ORIGIN = "*" # lock to your site origin in production
 API_ORIGIN = "https://api.krispyai.com" # prod cloud API (operator bearer verification)
+# Optional knowledge retrieval — see the commented block above. Named envs do NOT inherit
+# vars, so it must be set here too or production silently runs without it.
+# KNOWLEDGE_PROVIDER = "immorterm"
+# IMMORTERM_MEMORY_URL = "https://memory.internal.example.com"
 # Custom domain edge.krispyai.com is attached in the CF dashboard (Workers →
 # Settings → Domains) AFTER the first deploy — not here, since the krispyai.com
 # zone lands in CF only once the NS transfer completes. Once attached, uncomment:

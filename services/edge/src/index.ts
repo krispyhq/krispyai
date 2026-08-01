@@ -19,6 +19,7 @@
 import type { ChatMessage } from "./ai";
 import { workersAiRunner, DEFAULT_MODEL } from "./ai";
 import { chatFlow } from "./chat";
+import { retrieveKnowledge } from "./knowledge";
 import { SessionDO, type RingMsg } from "./session-do";
 import { buildSystemPrompt } from "./system-prompt";
 import {
@@ -279,6 +280,12 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
 
   const tenant = await getTenant(env, tenantId, siteId);
 
+  // Knowledge retrieval — OFF unless the Worker has a provider AND this tenant opted in.
+  // Started here, awaited just before the prompt is built, so the provider round trip
+  // OVERLAPS the DO ring read below instead of stacking on top of it. retrieveKnowledge
+  // never rejects (empty context on any failure), so this is safe to leave in flight.
+  const knowledgeP = retrieveKnowledge(env, tenantId, siteId, tenant, message);
+
   // Authoritative memory: one combined DO read (handoff flag + ring) replaces the
   // /state read the flow made anyway — same subrequest count, and the AI context
   // now comes from the server-side ring instead of the client's claim. GUARDED:
@@ -302,6 +309,11 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
   // legacy session) or when the ring read failed (fallback path above).
   const history = ctx?.messages.length ? ringToHistory(ctx.messages) : clientHistory;
 
+  // Empty digest + no hits when retrieval is off or came back cold — both blocks render
+  // to "" and the assembled prompt is byte-for-byte what it is without this feature.
+  const knowledge = await knowledgeP;
+  const retrieved = Boolean(knowledge.ram || knowledge.hits.length);
+
   // Telegram is optional: no config → topic ops no-op, chat still answers.
   const result = await chatFlow(
     {
@@ -310,14 +322,19 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
         tenant?.forms,
         tenant?.persona,
         tenant?.kbSources,
+        knowledge,
       ),
       // Leak-check scope = the INSTRUCTION portion only (same prompt WITHOUT the injected
       // knowledge block), so a bot quoting its own kbSources verbatim isn't flagged as a
-      // prompt leak. Undefined when there's no knowledge (chatFlow falls back to systemPrompt,
-      // which is then identical) — avoids the extra build on the common no-KB path.
-      leakScope: tenant?.kbSources?.length
-        ? buildSystemPrompt(tenant?.systemPrompt, tenant?.forms, tenant?.persona)
-        : undefined,
+      // prompt leak. Retrieved knowledge is the same kind of reference material and gets
+      // the same exemption — without it, a bot quoting a retrieved chunk would be
+      // false-flagged as a leak and force-handed-off to a human. Undefined when there's no
+      // knowledge at all (chatFlow falls back to systemPrompt, which is then identical) —
+      // avoids the extra build on the common no-KB path.
+      leakScope:
+        tenant?.kbSources?.length || retrieved
+          ? buildSystemPrompt(tenant?.systemPrompt, tenant?.forms, tenant?.persona)
+          : undefined,
       // Ring-derived (or seed) history in; chatFlow applies the sliding window +
       // counts turns (chokepoint).
       history,
