@@ -126,12 +126,44 @@ const numEnv = (v?: string): number | undefined => {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 };
 
+/** ALLOWED_ORIGIN parsed: [] means "*" (unset/blank). A single entry keeps the
+ * historical behavior; two or more entries switch cors() to a placeholder that
+ * finalizeCors() rewrites per request at the fetch boundary — the CORS header
+ * can only ever carry ONE origin, so a list must be matched against the
+ * request's own Origin and echoed back, never joined. */
+export function allowedOrigins(env: Env): string[] {
+  return (env.ALLOWED_ORIGIN || "")
+    .split(",")
+    .map((s) => s.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+}
+
 function cors(env: Env): Record<string, string> {
+  const list = allowedOrigins(env);
   return {
-    "access-control-allow-origin": env.ALLOWED_ORIGIN || "*",
+    // With a list, the first entry stands in until finalizeCors() sees the
+    // request — a valid header at every call site, never a joined "a,b".
+    "access-control-allow-origin": list[0] || "*",
     "access-control-allow-methods": "GET,POST,OPTIONS",
     "access-control-allow-headers": "content-type,authorization",
   };
+}
+
+/** Rewrites the allow-origin header to echo the request's Origin when it is in
+ * the configured list. One boundary, zero changes at the 55 json()/cors() call
+ * sites. Skips WebSocket upgrades (101 has no CORS and its Response cannot be
+ * re-headered) and responses that never carried the header (e.g. 426/404 from
+ * the WS path). Adds `Vary: Origin` so caches never serve one origin's header
+ * to another. */
+export function finalizeCors(request: Request, res: Response, env: Env): Response {
+  const list = allowedOrigins(env);
+  if (list.length < 2 || res.status === 101 || !res.headers.has("access-control-allow-origin"))
+    return res;
+  const origin = (request.headers.get("Origin") || "").replace(/\/$/, "");
+  const out = new Response(res.body, res);
+  if (list.includes(origin)) out.headers.set("access-control-allow-origin", origin);
+  out.headers.append("vary", "Origin");
+  return out;
 }
 
 const json = (env: Env, data: unknown, status = 200) =>
@@ -167,6 +199,12 @@ function doFetch(
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    return finalizeCors(request, await route(request, env), env);
+  },
+};
+
+async function route(request: Request, env: Env): Promise<Response> {
+  {
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -236,8 +274,8 @@ export default {
     }
 
     return new Response("not found", { status: 404, headers: cors(env) });
-  },
-};
+  }
+}
 
 // ── POST /api/chat ───────────────────────────────────────────────────────────
 async function handleChat(request: Request, env: Env): Promise<Response> {

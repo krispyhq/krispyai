@@ -205,7 +205,10 @@ export interface Env {
   HANDBACK_SILENCE_MINUTES?: string;
 
   // --- misc ---
-  /** CORS allow-origin for the widget. Default "*". */
+  /** CORS allow-origin for the widget. Default "*". Accepts a comma-separated
+   * list ("https://app.example.com,https://example.com"): the request's own
+   * Origin is echoed back when it matches an entry (the CORS header can only
+   * carry one origin), the first entry otherwise. */
   ALLOWED_ORIGIN?: string;
   /** BYO AI provider key (future adapter). */
   AI_API_KEY?: string;
