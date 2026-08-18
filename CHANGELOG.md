@@ -10,6 +10,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-08-18
+
 ### Changed
 
 - Edge: **`ALLOWED_ORIGIN` accepts a comma-separated origin list.** The CORS header can only
