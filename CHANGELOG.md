@@ -10,6 +10,14 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+### Changed
+
+- Edge: **`ALLOWED_ORIGIN` accepts a comma-separated origin list.** The CORS header can only
+  carry one origin, so the list is matched against the request's own `Origin` and echoed back at
+  a single fetch boundary (`finalizeCors`); `Vary: Origin` rides along so a cache never serves
+  one origin's header to another. Single-origin and wildcard (`*`) behavior are unchanged, and
+  the 55 `json()`/`cors()` call sites are untouched. (PR #58.)
+
 ## [0.2.1] — 2026-07-28
 
 ### Added
