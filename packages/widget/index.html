@@ -47,7 +47,15 @@
     <p>
       Attributes: <code>data-api</code> (required, the edge Worker URL),
       <code>data-tenant</code> (default <code>self</code>), <code>data-title</code>,
-      <code>data-accent</code>.
+      <code>data-accent</code>, <code>data-launcher</code>.
+    </p>
+
+    <h3>Bring your own launcher</h3>
+    <p>
+      Add <code>data-launcher="none"</code> to suppress the bubble, then drive the panel from your
+      own button with <code>window.krispy.toggle()</code> and listen for <code>krispy:open</code> /
+      <code>krispy:close</code> / <code>krispy:unread</code> on <code>document</code>. The host
+      element carries <code>class="krispy-widget"</code>.
     </p>
 
     <!-- Local demo: point at wrangler dev. Change data-api to your Worker. -->

@@ -176,14 +176,17 @@ Host the dependency-free `widget.js` anywhere static, then drop one tag on any p
 ></script>
 ```
 
-| attribute     | required | default        | meaning                                         |
-| ------------- | -------- | -------------- | ----------------------------------------------- |
-| `data-api`    | yes      | —              | your `@krispy/edge` Worker base URL             |
-| `data-tenant` | no       | `self`         | tenant id (multi-tenant uses this)              |
-| `data-title`  | no       | `Chat with us` | header text (theme `headerTitle` supersedes it) |
-| `data-accent` | no       | `#e39a2b`      | brand color (used before the theme fetch lands) |
+| attribute       | required | default        | meaning                                         |
+| --------------- | -------- | -------------- | ----------------------------------------------- |
+| `data-api`      | yes      | —              | your `@krispy/edge` Worker base URL             |
+| `data-tenant`   | no       | `self`         | tenant id (multi-tenant uses this)              |
+| `data-title`    | no       | `Chat with us` | header text (theme `headerTitle` supersedes it) |
+| `data-accent`   | no       | `#e39a2b`      | brand color (used before the theme fetch lands) |
+| `data-launcher` | no       | (built-in)     | `none` suppresses the built-in launcher button  |
 
 Richer appearance — avatar, greeting, position, corner radius, font, notification sound — is set from KV via the `theme` config, not attributes. See [**docs → embed + theme the widget**](./apps/docs/content/docs/guides/embed-and-theme.mdx).
+
+**Bring your own launcher.** The theme restyles Krispy's launcher; it can't replace it. Set `data-launcher="none"` and drive the panel from your own mark with `window.krispy` (`open` · `close` · `toggle` · `isOpen` · `unread` · `el`), listening for `krispy:open` / `krispy:close` / `krispy:unread` on `document`. The host element carries `class="krispy-widget"`. All opt-in — leave it off and nothing changes. See [**docs → bring your own launcher**](./apps/docs/content/docs/guides/embed-and-theme.mdx#bring-your-own-launcher).
 
 Details: [`packages/widget/README.md`](./packages/widget/README.md).
 
