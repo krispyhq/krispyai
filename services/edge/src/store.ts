@@ -64,6 +64,8 @@ export function publicWidgetConfig(cfg: Partial<TenantConfig> | null) {
   const th = cfg?.theme ?? {};
   return {
     theme: {
+      launcherStyle: th.launcherStyle,
+      launcherLabel: th.launcherLabel,
       primaryColor: th.primaryColor,
       launcherColor: th.launcherColor,
       position: th.position,

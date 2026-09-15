@@ -914,6 +914,13 @@ components:
       type: object
       description: Public widget appearance projection (all fields optional).
       properties:
+        launcherStyle:
+          { type: string, enum: [circle, pill], description: "Launcher shape. Default circle." }
+        launcherLabel:
+          {
+            type: string,
+            description: "Pill label; displayed trimmed to 24 characters. Defaults to the widget title.",
+          }
         primaryColor:
           {
             type: string,

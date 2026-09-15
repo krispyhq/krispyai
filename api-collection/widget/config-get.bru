@@ -28,5 +28,7 @@ docs {
   are CTA-capable connectors (minus `cta:false` opt-outs) with server-built hrefs + default
   labels; `popups` is the popup engine (or the `theme.popupText` sugar). Do NOT confuse with the
   secret-guarded `GET /api/tenant/config`, which returns the full config incl. the bot token.
+  The theme includes launcherStyle (circle/pill) and launcherLabel when configured.
+  The widget trims pill labels to 24 characters; unset fields keep the circular default.
   See `openapi.yaml` and `reference/edge-routes.mdx`.
 }

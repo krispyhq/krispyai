@@ -126,3 +126,9 @@ simulated KV.
 
 That's it — a visitor message now opens a topic on your phone, and your reply from
 Telegram appears live in their browser with the AI silenced.
+
+### Public launcher configuration
+
+The secret-free widget config projection includes `theme.launcherStyle` (`circle` or
+`pill`) and `theme.launcherLabel`. Set these with the authenticated tenant-config route;
+no widget embed change is required. The widget limits the displayed label to 24 characters.
