@@ -49,6 +49,8 @@ export interface Connector extends CtaFields {
 
 // ── Widget theme (Feature B) ──────────────────────────────────────────────
 export interface WidgetTheme {
+  launcherStyle?: "circle" | "pill"; // default circle; pill shows a short label while closed
+  launcherLabel?: string; // pill text; widget trims to 24 characters, defaults to header title
   primaryColor?: string; // header + visitor bubble + send button. Default gold #e39a2b
   launcherColor?: string; // FAB only (defaults to primaryColor)
   glowColor?: string; // hex → drives glow/sparkle/pulse rgba stops. UNSET = no glow

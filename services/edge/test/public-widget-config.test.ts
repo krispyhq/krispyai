@@ -158,3 +158,14 @@ describe("publicWidgetConfig", () => {
     expect(publicWidgetConfig({ botToken: "x" }).popups).toEqual([]);
   });
 });
+
+test("pill launcher settings survive the public configuration projection", () => {
+  const out = publicWidgetConfig({
+    botToken: "private-token",
+    theme: { launcherStyle: "pill", launcherLabel: "Ask us" },
+  });
+  expect(out.theme.launcherStyle).toBe("pill");
+  expect(out.theme.launcherLabel).toBe("Ask us");
+  expect(JSON.stringify(out)).not.toContain("private-token");
+  expect(publicWidgetConfig(null).theme.launcherStyle).toBeUndefined();
+});

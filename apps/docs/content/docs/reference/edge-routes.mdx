@@ -82,3 +82,10 @@ swallowed (never break resolve). The bot never self-modifies its KB — approval
 
 the repo mirrors routes into a Bruno collection (`api-collection/`). when you add or change
 a route, update the matching `.bru` request in the same change (per `CONTRIBUTING.md`).
+
+### Launcher appearance in public config
+
+`GET /api/widget/config` includes `theme.launcherStyle` (`circle` or `pill`) and
+`theme.launcherLabel` when configured. The widget displays up to 24 label characters;
+unset fields retain the circular launcher. These fields contain public display text,
+not credentials. Configure them through the authenticated tenant-config endpoint.

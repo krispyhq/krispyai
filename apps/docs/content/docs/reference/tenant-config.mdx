@@ -109,6 +109,8 @@ alert still fires, just without a mention.
 
 ```ts
 interface WidgetTheme {
+  launcherStyle?: "circle" | "pill"; // default circle; pill shows a label while closed
+  launcherLabel?: string; // pill text, displayed up to 24 chars; defaults to the widget title
   primaryColor?: string; // header + visitor bubble + send button. Default gold #e39a2b
   launcherColor?: string; // launcher only (defaults to primaryColor)
   glowColor?: string; // hex → launcher glow/sparkle/pulse tint. Unset = no glow layer at all
