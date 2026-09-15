@@ -258,6 +258,7 @@ its KB.
 | `tenant:<id>`                    | the `TenantConfig` JSON blob                                                                |
 | `session:<tenant>:<sessionId>`   | the Telegram thread id for that session                                                     |
 | `thread:<tenant>:<threadId>`     | the session id for that thread                                                              |
+| `handoff:<tenant>:<sessionId>`   | Telegram-independent operator-inbox discovery; the SessionDO owns live handoff state        |
 | `usage:<tenant>:<yyyymm>:<kind>` | monthly usage counter — `kind` ∈ `ai` \| `handoff` \| `tokens`                              |
 | `entitlement:<tenant>`           | optional billing snapshot (unused in self-host)                                             |
 | `suggestions:<ns(t,s)>`          | pending relearning `KbSuggestion[]` (per-site, cap 20 FIFO; own key, never the config blob) |

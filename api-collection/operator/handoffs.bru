@@ -36,12 +36,15 @@ docs {
   equal `tenantId`, else 403) OR the server-to-server `x-tenant-sync-secret`. No/invalid
   credentials → 401. Verified bearers are cached in-isolate for 60s.
 
-  The operator app's inbox: every handed-off session for the tenant, newest activity
-  first, each with a `lastMessage` preview from the session's ring buffer. No dedicated
-  handoff index exists — the Worker scans the session→thread KV map (first page, 1000
-  sessions) and asks each SessionDO for a one-shot summary. Missing `tenantId` → 400.
+  The operator app's inbox: every pending or operator-owned session for the tenant, newest activity
+  first, each with a `lastMessage` preview from the session's ring buffer. New handoffs use a
+  Telegram-independent `handoff:<tenant>:<session>` KV index. The Worker unions its first page
+  with the legacy session→thread index, de-duplicates ids, and asks each SessionDO for a one-shot
+  summary. Telegram is optional, and later topic linking cannot overwrite discovery state.
+  Missing `tenantId` → 400.
   Resolved sessions are EXCLUDED by default; pass `includeResolved: true` to list them
-  too (rows carry `resolved: true` and `handedOff: false` — resolving hands the session
-  back to the AI).
-  Response: `{ conversations: [{ sessionId, lastMessage, handedOff, ts, resolved }] }`.
+  too (rows carry `resolved: true`, `handoffState: "ai"` and `handedOff: false` — resolving
+  hands the session back to the AI). `handedOff` is a compatibility boolean that is false
+  while waiting and true after the operator's first reply.
+  Response: `{ conversations: [{ sessionId, lastMessage, handoffState, handedOff, ts, resolved }] }`.
 }

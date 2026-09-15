@@ -114,7 +114,10 @@
     if (hm && (hm.c === "me" || hm.c === "bot" || hm.c === "op"))
       history.push({ role: hm.c === "me" ? "user" : "assistant", content: hm.t });
   }
-  var handedOff = false; // a human took over → hide the AI framing
+  // `pending` starts with the first escalation; `operator` starts with the first
+  // human reply. Both silence AI, but only operator may say somebody joined.
+  var handoffState = "ai";
+  var handedOff = false; // internal silence gate: pending OR operator
   var ws = null;
   var keepalive = null;
   var wsBackoff = 3000; // reconnect delay, exponential up to WS_BACKOFF_MAX (with jitter)
@@ -1292,19 +1295,27 @@
           return;
         }
         if (ev.type === "ready") {
-          handedOff = !!ev.handedOff;
-          if (handedOff) markHuman();
+          handoffState = ev.handoffState || (ev.handedOff ? "operator" : "ai");
+          handedOff = handoffState !== "ai";
+          if (handoffState === "operator") markHuman();
+          else if (handoffState === "pending") markWaiting();
         } else if (ev.type === "operator") {
+          handoffState = "operator";
           handedOff = true;
           markHuman();
           add("op", ev.text);
           notifyInbound();
         } else if (ev.type === "handoff") {
-          showForm(DEFAULT_CONTACT_FORM);
+          handoffState = ev.handoffState || "pending";
+          handedOff = true;
+          clearFallbacks();
+          if (handoffState === "operator") markHuman();
         } else if (ev.type === "resume") {
           // The AI took the session back (operator resolved it or went quiet).
-          // Reset the human framing so a later takeover announces itself again.
+          // Reset both waiting/human framing so a later escalation can announce again.
+          handoffState = "ai";
           handedOff = false;
+          waitingMarked = false;
           humanMarked = false;
           add("sys", "You're back with the AI assistant. A human can rejoin anytime.");
         }
@@ -1331,6 +1342,14 @@
     } catch {
       /* WS optional; POST still works */
     }
+  }
+
+  var waitingMarked = false;
+  function markWaiting() {
+    if (waitingMarked) return;
+    waitingMarked = true;
+    add("sys", "A team member has been notified and will reply here.");
+    clearFallbacks();
   }
 
   var humanMarked = false;
@@ -1598,11 +1617,21 @@
       })
       .then(function (res) {
         if (typing) typing.remove();
-        if (res.handedOff) {
+        var responseState = res.handoffState || (res.handedOff ? "operator" : "ai");
+        if (responseState === "operator") {
+          handoffState = "operator";
           handedOff = true;
           markHuman();
           return;
         } // human owns it — stay silent
+        if (responseState === "pending") {
+          handoffState = "pending";
+          handedOff = true;
+          clearFallbacks();
+        } else {
+          handoffState = "ai";
+          handedOff = false;
+        }
         if (res.reply) {
           add(res.degraded ? "op" : "bot", res.reply);
           history.push({ role: "assistant", content: res.reply });
@@ -1614,6 +1643,12 @@
         }
         if (res.form) showForm(res.form);
         else if (res.handoff) showForm(DEFAULT_CONTACT_FORM);
+        if (responseState === "pending") {
+          // The first handoff reply already tells the visitor a teammate is coming.
+          // Later silent turns/reconnects need one truthful waiting line of their own.
+          if (res.handoff) waitingMarked = true;
+          else markWaiting();
+        }
       })
       .catch(function () {
         if (typing) typing.remove();

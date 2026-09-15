@@ -1,32 +1,31 @@
 // SessionDO — one Durable Object per (tenant, session). Two jobs:
 //   1. Hibernatable WebSocket fan-out (state.acceptWebSocket) → pushes operator
 //      replies to the visitor's browser with ZERO idle billing.
-//   2. The strongly-consistent `handedOff` flag — the single source of truth for
-//      "a human took over, bot goes silent" (KV would be too eventually-consistent
-//      for a switch that must flip instantly).
+//   2. The strongly-consistent handoff state — `pending` as soon as a human is
+//      requested, `operator` after their first reply, and `ai` after handback.
 //
 // Internal HTTP surface (called by the Worker, never the browser directly):
-//   GET  (Upgrade: websocket)  → visitor connects; gets {type:"ready", handedOff}
+//   GET  (Upgrade: websocket)  → visitor connects; gets {type:"ready", handoffState, handedOff}
 //                                (?role=operator tags the socket — Buttr app, §3d)
-//   GET  /state                → { handedOff }   (legacy read; chat's fallback path)
-//   GET  /context              → { handedOff, messages }  (one combined read — the chat
+//   GET  /state                → { handoffState, handedOff }   (chat's fallback path)
+//   GET  /context              → { handoffState, handedOff, messages }  (one combined read — the chat
 //                                flow's authoritative memory + handoff flag per turn)
-//   GET  /summary              → { handedOff, resolved, lastMessage, ts }  (operator inbox row)
+//   GET  /summary              → { handoffState, handedOff, resolved, lastMessage, ts }
 //   GET  /log                  → { messages }    (the 20-msg ring — thread read)
 //   POST /log {messages,seed?} → append to the ring (seed: only if the ring is empty)
-//   POST /operator {text}      → set handedOff, broadcast + ring-append operator reply
+//   POST /operator {text}      → set operator state, broadcast + ring-append operator reply
 //                                (also cancels the silence hand-back alarm)
 //   POST /handoff              → broadcast a handoff prompt (AI escalation)
 //   POST /resolve {resolved?}  → toggle (or force-set) the `resolved` flag (operator
 //                                inbox hygiene); resolving ALSO hands the session back
-//                                to the AI (handedOff=false + {type:"resume"} broadcast).
+//                                to the AI (`ai` + {type:"resume"} broadcast).
 //                                A new LIVE visitor message un-resolves automatically
 //                                but does NOT re-hand-off (the bot answers).
 //
-// Silence hand-back: a visitor message on a handed-off session arms the DO alarm
+// Silence hand-back: a visitor message while pending/operator-owned arms the DO alarm
 // (HANDBACK_SILENCE_MINUTES, default 5). An operator reply disarms it. If it fires,
 // the session hands back to the AI so a returning visitor never faces a muted bot.
-import type { Env, ServerEvent } from "./types";
+import type { Env, HandoffState, ServerEvent } from "./types";
 import { DO_INTERNAL_HEADER, doInternalSecret, readTenantConfig } from "./store";
 import { proposeKbSuggestion } from "./learn";
 
@@ -77,8 +76,21 @@ export class SessionDO {
     this.env = env;
   }
 
-  private async handedOff(): Promise<boolean> {
-    return (await this.state.storage.get<boolean>("handedOff")) === true;
+  /** Read the new enum, with a no-migration interpretation of the two legacy flags. */
+  private async handoffState(): Promise<HandoffState> {
+    const stored = await this.state.storage.get<HandoffState>("handoffState");
+    if (stored === "ai" || stored === "pending" || stored === "operator") return stored;
+    if ((await this.state.storage.get<boolean>("handedOff")) === true) return "operator";
+    if ((await this.state.storage.get<boolean>("handoffAnnounced")) === true) return "pending";
+    return "ai";
+  }
+
+  /** Keep handedOff as the backwards-compatible "operator replied" boolean. */
+  private async setHandoffState(next: HandoffState): Promise<void> {
+    await Promise.all([
+      this.state.storage.put("handoffState", next),
+      this.state.storage.put("handedOff", next === "operator"),
+    ]);
   }
 
   private async resolved(): Promise<boolean> {
@@ -102,19 +114,18 @@ export class SessionDO {
     return (Number.isFinite(mins) && mins > 0 ? mins : HANDBACK_SILENCE_MINUTES) * 60_000;
   }
 
-  /** Hand the session back to the AI: clear handedOff, disarm the silence alarm,
+  /** Hand the session back to the AI: clear pending/operator state, disarm the silence alarm,
    * broadcast {type:"resume"} to every socket (widget un-mutes its framing; the
    * Buttr thread sees the state flip). No-op when the bot already has the session. */
   private async handBack(opts: { note?: string } = {}): Promise<void> {
     await this.state.storage.deleteAlarm();
     // Reset the handoff-announce guard so a genuinely new future escalation can alert
-    // again (see /handoff). Cleared regardless of handedOff — the flag can be set before
-    // any operator reply flips handedOff.
+    // again (see /handoff). Cleared for both pending and operator-owned sessions.
     await this.state.storage.put("handoffAnnounced", false);
-    if (!(await this.handedOff())) return;
-    await this.state.storage.put("handedOff", false);
+    if ((await this.handoffState()) === "ai") return;
+    await this.setHandoffState("ai");
     if (opts.note) await this.appendRing([{ role: "ai", text: opts.note, ts: Date.now() }]);
-    broadcast(this.state.getWebSockets(), { type: "resume" });
+    broadcast(this.state.getWebSockets(), { type: "resume", handoffState: "ai" });
     await this.maybeLearn();
   }
 
@@ -183,7 +194,12 @@ export class SessionDO {
       // the full union today; the tag is what lets operator-only events exist later.
       const operator = url.searchParams.get("role") === "operator";
       this.state.acceptWebSocket(server, operator ? ["operator"] : undefined); // hibernatable — no idle billing
-      const event: ServerEvent = { type: "ready", handedOff: await this.handedOff() };
+      const handoffState = await this.handoffState();
+      const event: ServerEvent = {
+        type: "ready",
+        handoffState,
+        handedOff: handoffState === "operator",
+      };
       try {
         server.send(JSON.stringify(event));
       } catch {
@@ -196,7 +212,8 @@ export class SessionDO {
     if (!this.internalAuthed(request)) return new Response("forbidden", { status: 403 });
 
     if (request.method === "GET" && url.pathname.endsWith("/state")) {
-      return Response.json({ handedOff: await this.handedOff() });
+      const handoffState = await this.handoffState();
+      return Response.json({ handoffState, handedOff: handoffState === "operator" });
     }
 
     // One combined read for the chat flow: the handoff flag + the ring, so the
@@ -215,21 +232,26 @@ export class SessionDO {
           if (body.siteId) await this.state.storage.put("siteId", body.siteId);
         }
       }
-      const [handedOff, messages] = await Promise.all([this.handedOff(), this.ring()]);
-      return Response.json({ handedOff, messages });
+      const [handoffState, messages] = await Promise.all([this.handoffState(), this.ring()]);
+      return Response.json({
+        handoffState,
+        handedOff: handoffState === "operator",
+        messages,
+      });
     }
 
     // One inbox-row read: handoff flag + the ring tail — halves the per-session
     // subrequests of the /api/operator/handoffs KV scan vs /state + /log.
     if (request.method === "GET" && url.pathname.endsWith("/summary")) {
-      const [handedOff, resolved, log] = await Promise.all([
-        this.handedOff(),
+      const [handoffState, resolved, log] = await Promise.all([
+        this.handoffState(),
         this.resolved(),
         this.ring(),
       ]);
       const last = log[log.length - 1];
       return Response.json({
-        handedOff,
+        handoffState,
+        handedOff: handoffState === "operator",
         resolved,
         lastMessage: last?.text ?? null,
         ts: last?.ts ?? null,
@@ -264,9 +286,9 @@ export class SessionDO {
       // the bot answers, and the visitor can re-request a human normally.
       if (!seed && appended.some((m) => m.role === "visitor")) {
         if (await this.resolved()) await this.state.storage.put("resolved", false);
-        // Handed-off + visitor waiting → arm (or reset) the silence hand-back alarm.
+        // Pending/operator + visitor waiting → arm (or reset) silence hand-back.
         // Any operator reply disarms it (see /operator).
-        if (await this.handedOff()) {
+        if ((await this.handoffState()) !== "ai") {
           await this.state.storage.setAlarm(Date.now() + this.silenceMs());
         }
       }
@@ -286,10 +308,14 @@ export class SessionDO {
 
     if (request.method === "POST" && url.pathname.endsWith("/operator")) {
       const { text } = (await request.json()) as { text: string };
-      await this.state.storage.put("handedOff", true);
+      await this.setHandoffState("operator");
       await this.state.storage.deleteAlarm(); // the operator replied — disarm the silence hand-back
       await this.appendRing([{ role: "operator", text, ts: Date.now() }]);
-      const n = broadcast(this.state.getWebSockets(), { type: "operator", text });
+      const n = broadcast(this.state.getWebSockets(), {
+        type: "operator",
+        handoffState: "operator",
+        text,
+      });
       return Response.json({ ok: true, delivered: n });
     }
 
@@ -312,10 +338,15 @@ export class SessionDO {
       // handoff (operator @mention + push) must fire ONCE per escalation, not per turn.
       // `announced` tells the Worker whether this is the first time; handBack clears the
       // flag so a later, genuine escalation can alert again. MAX_AI_TURNS bounds the rest.
-      const announced = (await this.state.storage.get<boolean>("handoffAnnounced")) === true;
+      const [announced, current] = await Promise.all([
+        this.state.storage.get<boolean>("handoffAnnounced").then((value) => value === true),
+        this.handoffState(),
+      ]);
       if (!announced) await this.state.storage.put("handoffAnnounced", true);
-      const n = broadcast(this.state.getWebSockets(), { type: "handoff" });
-      return Response.json({ ok: true, delivered: n, announced: !announced });
+      const handoffState = current === "operator" ? "operator" : "pending";
+      if (current === "ai") await this.setHandoffState("pending");
+      const n = broadcast(this.state.getWebSockets(), { type: "handoff", handoffState });
+      return Response.json({ ok: true, delivered: n, announced: !announced, handoffState });
     }
 
     return new Response("not found", { status: 404 });

@@ -14,12 +14,13 @@ The live-chat + human-handoff backend. **One Cloudflare Worker** hosts both the
 
 ```
 visitor ──POST /api/chat──▶ Worker ──▶ Workers AI ──▶ reply ──▶ visitor
-                              │
+                              │                │
+                              │                └─ escalation → pending; AI goes silent
                               └─▶ Telegram: one forum TOPIC per visitor (owner's phone)
 owner replies in topic ──POST /api/telegram/webhook──▶ Worker
                               │
                               └─▶ SessionDO ──WebSocket──▶ visitor's browser (live)
-                                             + set handedOff=true → AI goes silent
+                                             + pending → operator
 ```
 
 **Quiet ops.** Routine mirrors (visitor msgs, AI replies) post to the topic
@@ -34,7 +35,7 @@ fires, just without a mention. See `docs → connect Telegram`.
 
 | method | path                             | purpose                                                                                                  |
 | ------ | -------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| POST   | `/api/chat`                      | `{sessionId, message, tenantId?, history?}` → `{reply, handoff, handedOff, degraded?}`                   |
+| POST   | `/api/chat`                      | `{sessionId, message, tenantId?, history?}` → `{reply, handoff, handoffState, handedOff, degraded?}`     |
 | POST   | `/api/contact`                   | `[!HANDOFF]` contact-capture → owner's topic                                                             |
 | POST   | `/api/telegram/webhook`          | owner reply → push to visitor via DO                                                                     |
 | POST   | `/api/billing/entitlement`       | billing → gate: mirror an entitlement snapshot into KV _(secret-guarded)_                                |
@@ -78,9 +79,13 @@ Secrets are separate on purpose: `TENANT_SYNC_SECRET` guards the config sync (th
 
 - **`SessionDO`** — one per `(tenantId, sessionId)`. Uses `state.acceptWebSocket()`
   (hibernation) so idle sockets cost **nothing**. Holds the strongly-consistent
-  `handedOff` flag (KV is too eventually-consistent for an instant bot-silence switch).
-- **KV (`KRISPY_KV`)** — topic↔session map (`thread:`/`session:`), tenant config
-  (`tenant:`), usage counters (`usage:<tenant>:<yyyymm>:<kind>`).
+  handoff state: `ai` → `pending` as soon as a human is requested → `operator` on the
+  first human reply. Both human states silence AI; resolve/silence handback restores `ai`.
+  The legacy `handedOff` response flag remains true only for `operator`.
+- **KV (`KRISPY_KV`)** — topic↔session map (`thread:`/`session:`), Telegram-independent
+  Buttr discovery (`handoff:<tenant>:<sessionId>`), tenant config (`tenant:`), and usage
+  counters (`usage:<tenant>:<yyyymm>:<kind>`). The inbox unions new handoff keys with legacy
+  topic mappings, so existing sessions remain visible.
 - **`tenantId`** — default `"self"` (single-tenant self-host, config from secrets);
   any other id reads config from KV. Same code path both ways.
 - **Metering** — every AI call + handoff increments a KV counter; `planFor()` /

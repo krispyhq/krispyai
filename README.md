@@ -52,15 +52,18 @@ visitor ──▶ AI answers (Cloudflare Workers AI) ──▶ visitor
               │
    you reply in the topic ──▶ shows up LIVE in the widget
               │
-              └──▶ bot goes silent — the human owns the conversation
+              └──▶ pending becomes joined — the bot was already silent
 ```
 
 - Visitor types → instant AI reply.
 - Every message mirrors to **one Telegram forum topic per visitor** on your phone.
 - You reply from Telegram → it's pushed into the browser over a WebSocket, **live**.
-- The bot detects it's a human job and steps back — no double-answering.
+- The bot detects it's a human job and steps back immediately. Messages sent while you are
+  on the way still reach the same topic; the bot stays quiet until you resolve the handoff.
 
-Under the hood it's **one Cloudflare Worker** plus a **hibernatable Durable Object** (`SessionDO`) that holds the strongly-consistent "handed off" flag and keeps idle sockets free. That's the whole backend.
+Under the hood it's **one Cloudflare Worker** plus a **hibernatable Durable Object** (`SessionDO`)
+that holds the strongly-consistent `ai` / `pending` / `operator` state and keeps idle sockets
+free. That's the whole backend.
 
 ## Quickstart — self-host in ~10 minutes
 
@@ -242,7 +245,7 @@ Want _just_ the chat? `cd services/edge`, deploy, embed `packages/widget`. That'
 
 - **Cloudflare Workers** + **Durable Objects** (hibernatable `SessionDO`) — the whole backend, one deploy.
 - **Workers AI** — the built-in bot (BYO-key seam is there if you want another model).
-- **Cloudflare KV** — tenant config, topic↔session map, usage counters.
+- **Cloudflare KV** — tenant config, handoff discovery, topic↔session map, usage counters.
 - **Telegram Bot API** — the handoff channel (one forum topic per visitor).
 - **Bun** + **wrangler** — package manager, runtime, deploy.
 - Widget is vanilla JS in a Shadow DOM — zero framework, zero dependencies.

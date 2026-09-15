@@ -10,7 +10,7 @@ Object, one deploy, one `wrangler.toml`. deploy it from `services/edge`.
 
 ## 1. KV namespace
 
-the Worker uses one KV namespace (`KRISPY_KV`) for tenant config, the topic↔session map,
+the Worker uses one KV namespace (`KRISPY_KV`) for tenant config, handoff discovery, the topic↔session map,
 and usage counters. create it and paste the id into `services/edge/wrangler.toml`
 (replacing `REPLACE_WITH_KV_ID`):
 
