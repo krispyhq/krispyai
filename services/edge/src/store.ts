@@ -142,6 +142,7 @@ export function resolveSiteId(raw: string | null | undefined): string | undefine
 // ── key builders (pure) ──────────────────────────────────────────────────────
 export const kThreadToSession = (t: string, threadId: number) => `thread:${t}:${threadId}`;
 export const kSessionToThread = (t: string, sessionId: string) => `session:${t}:${sessionId}`;
+export const kHandoffSession = (t: string, sessionId: string) => `handoff:${t}:${sessionId}`;
 // Config blob is per-site: an unsuffixed tenant keeps `tenant:<t>` exactly.
 export const kTenant = (t: string, siteId?: string) => `tenant:${ns(t, siteId)}`;
 // Relearning suggestions live under their OWN per-site key — NOT the config blob — so a
@@ -372,6 +373,16 @@ export async function getThreadForSession(
 ): Promise<number | null> {
   const v = await env.KRISPY_KV.get(kSessionToThread(t, sessionId));
   return v ? Number(v) : null;
+}
+
+/**
+ * Index a handoff independently of the optional Telegram topic map. This write is
+ * idempotent and can safely happen before the DO transition: a failed transition
+ * leaves an `ai` summary that the inbox filters out, while a failed index write can
+ * never leave a pending session undiscoverable.
+ */
+export async function indexHandoffSession(env: Env, t: string, sessionId: string): Promise<void> {
+  await env.KRISPY_KV.put(kHandoffSession(t, sessionId), "1");
 }
 
 export async function getSessionForThread(

@@ -38,6 +38,7 @@ import {
 import {
   kThreadToSession,
   kSessionToThread,
+  kHandoffSession,
   kUsage,
   monthKey,
   meter,
@@ -46,6 +47,8 @@ import {
   getUsageDetail,
   getTokens,
   getThreadForSession,
+  getSessionForThread,
+  indexHandoffSession,
   linkThreadSession,
   getTenant,
   withinPlan,
@@ -82,6 +85,17 @@ function fakeEnv(extra: Partial<Env> = {}): Env {
     },
     ...extra,
   } as unknown as Env;
+}
+
+async function rejection(promise: Promise<unknown>): Promise<Error> {
+  let caught: unknown;
+  try {
+    await promise;
+  } catch (error) {
+    caught = error;
+  }
+  if (!(caught instanceof Error)) throw new Error("Expected the promise to reject");
+  return caught;
 }
 
 // ── a Map-backed fake DurableObjectState (storage only; sockets are no-ops) ──
@@ -300,6 +314,7 @@ describe("store", () => {
   test("key builders are stable", () => {
     expect(kThreadToSession("self", 7)).toBe("thread:self:7");
     expect(kSessionToThread("self", "s1")).toBe("session:self:s1");
+    expect(kHandoffSession("self", "s1")).toBe("handoff:self:s1");
     expect(kUsage("self", "ai", "202607")).toBe("usage:self:202607:ai");
     expect(monthKey(new Date(Date.UTC(2026, 6, 3)))).toBe("202607");
   });
@@ -307,6 +322,19 @@ describe("store", () => {
     const env = fakeEnv();
     await linkThreadSession(env, "self", 99, "sess-abc");
     expect(await getThreadForSession(env, "self", "sess-abc")).toBe(99);
+  });
+  test("handoff discovery stays independent from a later Telegram topic link", async () => {
+    const env = fakeEnv();
+    await indexHandoffSession(env, "self", "sess-app");
+    expect(await env.KRISPY_KV.get(kHandoffSession("self", "sess-app"))).toBe("1");
+    expect(await env.KRISPY_KV.get(kSessionToThread("self", "sess-app"))).toBeNull();
+    expect(await getThreadForSession(env, "self", "sess-app")).toBeNull();
+
+    await linkThreadSession(env, "self", 99, "sess-app");
+    await indexHandoffSession(env, "self", "sess-app");
+    expect(await env.KRISPY_KV.get(kHandoffSession("self", "sess-app"))).toBe("1");
+    expect(await getThreadForSession(env, "self", "sess-app")).toBe(99);
+    expect(await getSessionForThread(env, "self", 99)).toBe("sess-app");
   });
   test("meter increments per kind, getUsage reads back", async () => {
     const env = fakeEnv();
@@ -686,9 +714,17 @@ describe("broadcast", () => {
         throw new Error("closed");
       },
     };
-    const n = broadcast([live, dead, live], { type: "operator", text: "hi" });
+    const n = broadcast([live, dead, live], {
+      type: "operator",
+      handoffState: "operator",
+      text: "hi",
+    });
     expect(n).toBe(2);
-    expect(JSON.parse(seen[0]!)).toEqual({ type: "operator", text: "hi" });
+    expect(JSON.parse(seen[0]!)).toEqual({
+      type: "operator",
+      handoffState: "operator",
+      text: "hi",
+    });
   });
 });
 
@@ -701,7 +737,7 @@ describe("chatFlow", () => {
       systemPrompt: "sys",
       ensureTopic: async () => 5,
       toTopic: async (_t, text) => void topic.push(text),
-      isHandedOff: async () => false,
+      getHandoffState: async () => "ai",
       ai: async () => ({ text: "Sure, 9am." }),
       meter: async (k) => void metered.push(k),
       ...over,
@@ -713,7 +749,13 @@ describe("chatFlow", () => {
     const { base, topic, metered } = deps();
     const r = await chatFlow(base, { sessionId: "s", message: "hours?" });
     // formId rides along (null — no [!FORM:] in this reply); U3 added it to ChatResult.
-    expect(r).toEqual({ reply: "Sure, 9am.", handoff: false, handedOff: false, formId: null });
+    expect(r).toEqual({
+      reply: "Sure, 9am.",
+      handoff: false,
+      handedOff: false,
+      handoffState: "ai",
+      formId: null,
+    });
     expect(topic).toContain("👤 hours?");
     expect(topic).toContain("🤖 Sure, 9am.");
     expect(metered).toEqual(["ai"]);
@@ -722,7 +764,7 @@ describe("chatFlow", () => {
   test("handed off: bot stays silent, still mirrors visitor msg, no AI/meter", async () => {
     let aiCalled = false;
     const { base, topic, metered } = deps({
-      isHandedOff: async () => true,
+      getHandoffState: async () => "operator",
       ai: async () => {
         aiCalled = true;
         return { text: "x" };
@@ -730,10 +772,32 @@ describe("chatFlow", () => {
     });
     const r = await chatFlow(base, { sessionId: "s", message: "still there?" });
     expect(r.handedOff).toBe(true);
+    expect(r.handoffState).toBe("operator");
     expect(r.reply).toBeNull();
     expect(aiCalled).toBe(false);
     expect(metered).toEqual([]);
     expect(topic).toContain("👤 still there?");
+  });
+
+  test("handoff pending: bot stays silent before an operator replies", async () => {
+    let aiCalled = false;
+    const { base, topic, metered } = deps({
+      getHandoffState: async () => "pending",
+      ai: async () => {
+        aiCalled = true;
+        return { text: "x" };
+      },
+    });
+    const result = await chatFlow(base, { sessionId: "s", message: "are they coming?" });
+    expect(result).toEqual({
+      reply: null,
+      handoff: false,
+      handedOff: false,
+      handoffState: "pending",
+    });
+    expect(aiCalled).toBe(false);
+    expect(metered).toEqual([]);
+    expect(topic).toContain("👤 are they coming?");
   });
 
   test("[!HANDOFF] in reply → handoff true, handoff metered", async () => {
@@ -825,7 +889,7 @@ describe("chatFlow turn-tax bounds", () => {
       systemPrompt: "sys",
       ensureTopic: async () => 5,
       toTopic: async () => {},
-      isHandedOff: async () => false,
+      getHandoffState: async () => "ai",
       ai: async (msgs) => {
         sawMessages = msgs;
         return { text: "ok" };
@@ -945,7 +1009,7 @@ describe("token telemetry — real usage vs estimate fallback", () => {
       systemPrompt: "sys",
       ensureTopic: async () => 0,
       toTopic: async () => {},
-      isHandedOff: async () => false,
+      getHandoffState: async () => "ai",
       ai: async () => ({ text: "ok" }),
       meter: async () => {},
       meterTokens: async (u) => void (seen = u),
@@ -1220,7 +1284,7 @@ describe("SessionDO internal auth", () => {
       new Request("https://do/state", { headers: { [DO_INTERNAL_HEADER]: secret } }),
     );
     expect(ok.status).toBe(200);
-    expect(await ok.json()).toEqual({ handedOff: false });
+    expect(await ok.json()).toEqual({ handoffState: "ai", handedOff: false });
   });
 });
 
@@ -1273,7 +1337,54 @@ describe("SessionDO ring buffer", () => {
     const do_ = new SessionDO(fakeDOState(), env);
     await post(do_, "/operator", { text: "on my way" });
     expect(await msgs(do_)).toMatchObject([{ role: "operator", text: "on my way" }]);
-    expect(await (await get(do_, "/state")).json()).toEqual({ handedOff: true });
+    expect(await (await get(do_, "/state")).json()).toEqual({
+      handoffState: "operator",
+      handedOff: true,
+    });
+  });
+
+  test("handoff lifecycle distinguishes waiting, operator takeover, resolve, and reopen", async () => {
+    const do_ = new SessionDO(fakeDOState(), env);
+
+    expect(await (await post(do_, "/handoff", {})).json()).toMatchObject({
+      ok: true,
+      announced: true,
+      handoffState: "pending",
+    });
+    expect(await (await get(do_, "/state")).json()).toEqual({
+      handoffState: "pending",
+      handedOff: false,
+    });
+    expect(await (await post(do_, "/context", { tenantId: "self" })).json()).toMatchObject({
+      handoffState: "pending",
+      handedOff: false,
+    });
+
+    await post(do_, "/operator", { text: "I’m here" });
+    expect(await (await get(do_, "/state")).json()).toEqual({
+      handoffState: "operator",
+      handedOff: true,
+    });
+
+    await post(do_, "/resolve", { resolved: true });
+    expect(await (await get(do_, "/state")).json()).toEqual({
+      handoffState: "ai",
+      handedOff: false,
+    });
+
+    expect((await (await post(do_, "/handoff", {})).json()).announced).toBe(true);
+    expect(await (await get(do_, "/state")).json()).toMatchObject({ handoffState: "pending" });
+  });
+
+  test("legacy announced state upgrades to pending without a storage migration", async () => {
+    const state = fakeDOState();
+    await state.storage.put("handoffAnnounced", true);
+    const do_ = new SessionDO(state, env);
+
+    expect(await (await get(do_, "/state")).json()).toEqual({
+      handoffState: "pending",
+      handedOff: false,
+    });
   });
 
   test("seed only fills an EMPTY ring (per-turn appends beat it)", async () => {
@@ -1291,6 +1402,7 @@ describe("SessionDO ring buffer", () => {
   test("/summary = handoff flag + resolved + ring tail (empty ring → nulls)", async () => {
     const do_ = new SessionDO(fakeDOState(), env);
     expect(await (await get(do_, "/summary")).json()).toEqual({
+      handoffState: "ai",
       handedOff: false,
       resolved: false,
       lastMessage: null,
@@ -1474,6 +1586,18 @@ describe("SessionDO hand-back", () => {
 
     await post(do_, "/operator", { text: "sorry, here now" });
     expect(await state.storage.getAlarm()).toBeNull();
+  });
+
+  test("visitor waiting on a pending handoff arms handback; the alarm restores AI", async () => {
+    const { do_, state, frames } = socketDO();
+    await post(do_, "/handoff", {});
+    await post(do_, "/log", { messages: [{ role: "visitor", text: "still waiting" }] });
+    expect(await state.storage.getAlarm()).not.toBeNull();
+
+    await do_.alarm();
+    expect(await handedOff(do_)).toBe(false);
+    expect(await (await get(do_, "/state")).json()).toMatchObject({ handoffState: "ai" });
+    expect(resumes(frames)).toHaveLength(1);
   });
 
   test("HANDBACK_SILENCE_MINUTES env knob tunes the alarm", async () => {
@@ -1662,10 +1786,12 @@ describe("operator app routes", () => {
 
   test("POST /api/operator/handoffs lists ONLY handed-off sessions of the tenant, with preview", async () => {
     const env = opEnv();
-    // three known sessions (the session→thread KV map is the index)
+    // Three legacy topic-mapped sessions; also index s-live in the new handoff
+    // prefix to prove the union de-duplicates it before querying the DO.
     await linkThreadSession(env, "acme", 1, "s-live");
     await linkThreadSession(env, "acme", 2, "s-quiet");
     await linkThreadSession(env, "other", 3, "s-foreign");
+    await indexHandoffSession(env, "acme", "s-live");
     // hand one off via the reply route
     await worker.fetch(
       post("/api/operator/reply", { tenantId: "acme", sessionId: "s-live", text: "hello there" }),
@@ -1686,7 +1812,9 @@ describe("operator app routes", () => {
   });
 
   test("resolve drops a session from the default inbox; includeResolved returns it; a new visitor message revives it", async () => {
-    const env = opEnv();
+    const env = opEnv({
+      AI: { run: async () => ({ response: "Welcome back." }) } as unknown as Ai,
+    });
     await linkThreadSession(env, "self", 1, "s-live");
     await worker.fetch(
       post("/api/operator/reply", { tenantId: "self", sessionId: "s-live", text: "done!" }),
@@ -2095,6 +2223,177 @@ describe("handoff → push + mention skip (integration)", () => {
       ["visitor", "I need a human"],
       ["ai", "One sec."],
     ]);
+  });
+});
+
+describe("pending handoff suppresses AI until handback", () => {
+  const handoffRequest = (sessionId: string) =>
+    new Request("https://edge.test/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ sessionId, tenantId: "self", message: "I need a person" }),
+    });
+
+  function transitionEnv(response: () => Response): { env: Env; handoffCalls: () => number } {
+    let calls = 0;
+    const env = fakeEnv({
+      AI: { run: async () => ({ response: `One sec. ${HANDOFF_MARKER}` }) } as unknown as Ai,
+      SESSION: {
+        idFromName: (name: string) => name,
+        get: () => ({
+          fetch: async (input: RequestInfo | URL) => {
+            const url = input instanceof Request ? input.url : String(input);
+            if (url.endsWith("/context")) {
+              return Response.json({ handoffState: "ai", handedOff: false, messages: [] });
+            }
+            if (url.endsWith("/handoff")) {
+              calls += 1;
+              return response();
+            }
+            return Response.json({ ok: true }); // ring seed/log
+          },
+        }),
+      } as unknown as DurableObjectNamespace,
+    });
+    return { env, handoffCalls: () => calls };
+  }
+
+  test("discovery write failure aborts before the DO transition or push", async () => {
+    const { env, handoffCalls } = transitionEnv(() =>
+      Response.json({ ok: true, announced: true, handoffState: "pending" }),
+    );
+    const originalPut = env.KRISPY_KV.put.bind(env.KRISPY_KV);
+    env.KRISPY_KV.put = async (key, value, options) => {
+      if (key === kHandoffSession("self", "s-kv-fail")) throw new Error("KV unavailable");
+      await originalPut(key, value, options);
+    };
+    let externalCalls = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      externalCalls += 1;
+      return Response.json({ tokens: [] });
+    }) as unknown as typeof fetch;
+    (env as { PUSH_TOKENS_URL?: string }).PUSH_TOKENS_URL = "https://push.test/tokens";
+    try {
+      expect((await rejection(worker.fetch(handoffRequest("s-kv-fail"), env))).message).toContain(
+        "KV unavailable",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(handoffCalls()).toBe(0);
+    expect(externalCalls).toBe(0);
+  });
+
+  test("DO transition failure leaves discovery for retry but never pushes", async () => {
+    const { env, handoffCalls } = transitionEnv(() =>
+      Response.json({ error: "transition unavailable" }, { status: 503 }),
+    );
+    let externalCalls = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      externalCalls += 1;
+      return Response.json({ tokens: [] });
+    }) as unknown as typeof fetch;
+    (env as { PUSH_TOKENS_URL?: string }).PUSH_TOKENS_URL = "https://push.test/tokens";
+    try {
+      expect((await rejection(worker.fetch(handoffRequest("s-do-fail"), env))).message).toBe(
+        "handoff state transition failed (503)",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(await env.KRISPY_KV.get(kHandoffSession("self", "s-do-fail"))).toBe("1");
+    expect(handoffCalls()).toBe(1);
+    expect(externalCalls).toBe(0);
+  });
+
+  test("repeated visitor messages stay in the ring; resolve reopens AI", async () => {
+    let aiCalls = 0;
+    const env = wireSessionNS(
+      fakeEnv({
+        TENANT_SYNC_SECRET: OP_SECRET,
+        AI: {
+          run: async () => ({
+            response: ++aiCalls === 1 ? `One sec. ${HANDOFF_MARKER}` : "The AI is available again.",
+          }),
+        } as unknown as Ai,
+      }),
+    );
+    const chat = (message: string) =>
+      worker.fetch(
+        new Request("https://edge.test/api/chat", {
+          method: "POST",
+          body: JSON.stringify({ sessionId: "s-pending", tenantId: "self", message }),
+        }),
+        env,
+      );
+    const operator = (path: string, body: unknown) =>
+      worker.fetch(
+        new Request(`https://edge.test${path}`, {
+          method: "POST",
+          headers: { "x-tenant-sync-secret": OP_SECRET },
+          body: JSON.stringify(body),
+        }),
+        env,
+      );
+
+    const first = (await (await chat("I need a person")).json()) as Record<string, unknown>;
+    expect(first).toMatchObject({ handoff: true, handedOff: false, handoffState: "pending" });
+    expect(await env.KRISPY_KV.get(kHandoffSession("self", "s-pending"))).toBe("1");
+    expect(await getThreadForSession(env, "self", "s-pending")).toBeNull();
+
+    const inbox = await operator("/api/operator/handoffs", { tenantId: "self" });
+    expect(await inbox.json()).toMatchObject({
+      conversations: [
+        {
+          sessionId: "s-pending",
+          handoffState: "pending",
+          handedOff: false,
+          resolved: false,
+        },
+      ],
+    });
+
+    const waiting = (await (await chat("Are they coming?")).json()) as Record<string, unknown>;
+    expect(waiting).toMatchObject({
+      reply: null,
+      handoff: false,
+      handedOff: false,
+      handoffState: "pending",
+    });
+    expect(aiCalls).toBe(1);
+
+    const thread = await operator("/api/operator/thread", {
+      tenantId: "self",
+      sessionId: "s-pending",
+    });
+    const waitingMessages = ((await thread.json()) as { messages: RingMsg[] }).messages;
+    expect(waitingMessages.map((message) => [message.role, message.text])).toEqual([
+      ["visitor", "I need a person"],
+      ["ai", "One sec."],
+      ["visitor", "Are they coming?"],
+    ]);
+
+    expect(
+      await (
+        await operator("/api/operator/resolve", {
+          tenantId: "self",
+          sessionId: "s-pending",
+        })
+      ).json(),
+    ).toEqual({ ok: true, resolved: true });
+
+    const reopened = (await (await chat("Can the assistant help now?")).json()) as Record<
+      string,
+      unknown
+    >;
+    expect(reopened).toMatchObject({
+      reply: "The AI is available again.",
+      handoff: false,
+      handedOff: false,
+      handoffState: "ai",
+    });
+    expect(aiCalls).toBe(2);
   });
 });
 

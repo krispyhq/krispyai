@@ -32,12 +32,13 @@ import { authorizeOperator } from "./operator-auth";
 import { stampSeen, readSeen } from "./liveness";
 import { pushToApp } from "./push";
 import { renderLeadEmail, sendLeadEmail } from "./email";
-import type { Connector, Env, FormSpec, TenantConfig } from "./types";
+import type { Connector, Env, FormSpec, HandoffState, TenantConfig } from "./types";
 import {
   getTenant,
   resolveSiteId,
   getThreadForSession,
   getSessionForThread,
+  indexHandoffSession,
   linkThreadSession,
   meter,
   meterUsage,
@@ -322,17 +323,26 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
   // now comes from the server-side ring instead of the client's claim. GUARDED:
   // timeout + any failure falls back to the client-sent history exactly as before
   // (warn-logged so drift is observable); a slow DO never slows chat down.
-  let ctx: { handedOff: boolean; messages: RingMsg[] } | null = null;
+  let ctx: { handoffState: HandoffState; handedOff: boolean; messages: RingMsg[] } | null = null;
   try {
     // POST (not GET) so the DO can persist tenantId+siteId write-once — the relearning
     // handback fires from an alarm with no request in flight and the DO can't derive them
-    // from its own name. Still returns { handedOff, messages } — same single subrequest.
+    // from its own name. Returns state + messages in the same single subrequest.
     const r = await doFetch(env, tenantId, body.sessionId, "https://do/context", {
       method: "POST",
       body: JSON.stringify({ tenantId, siteId }),
       signal: AbortSignal.timeout(RING_READ_TIMEOUT_MS),
     });
-    ctx = (await r.json()) as { handedOff: boolean; messages: RingMsg[] };
+    const raw = (await r.json()) as {
+      handoffState?: HandoffState;
+      handedOff: boolean;
+      messages: RingMsg[];
+    };
+    ctx = {
+      ...raw,
+      // Rolling-upgrade compatibility for a response from the old DO shape.
+      handoffState: raw.handoffState ?? (raw.handedOff ? "operator" : "ai"),
+    };
   } catch (e) {
     console.warn("ring context read failed — falling back to client history:", e);
   }
@@ -378,11 +388,15 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
           }),
         );
       },
-      isHandedOff: ctx
-        ? async () => ctx.handedOff // already read in the combined /context fetch
+      getHandoffState: ctx
+        ? async () => ctx.handoffState // already read in the combined /context fetch
         : async (sessionId) => {
             const r = await doFetch(env, tenantId, sessionId, "https://do/state");
-            return ((await r.json()) as { handedOff: boolean }).handedOff;
+            const state = (await r.json()) as {
+              handoffState?: HandoffState;
+              handedOff: boolean;
+            };
+            return state.handoffState ?? (state.handedOff ? "operator" : "ai");
           },
       ensureTopic: async (sessionId, firstMessage) => {
         if (!tenant) return 0;
@@ -429,16 +443,30 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
   // human's phone buzzes (routine mirrors above are all silent). No operators known yet →
   // the alert still posts, just without a mention (fallback path).
   if (result.handoff) {
+    // Discovery must exist before the strongly-consistent state can become pending.
+    // This key is independent of Telegram, so a later topic link cannot race it.
+    await indexHandoffSession(env, tenantId, body.sessionId);
     // The DO's /handoff is idempotent per escalation: `announced` is true only the FIRST
     // time, so a jailbroken bot re-emitting [!HANDOFF] every turn can't spam the loud
-    // operator alert + push. Fail-open (default announced) if the DO read fails — a real
-    // handoff must never be silently dropped. handBack resets the flag for a later one.
+    // operator alert + push. The transition is required: never claim notification when
+    // the DO rejected it or returned a malformed acknowledgement.
     const hr = await doFetch(env, tenantId, body.sessionId, "https://do/handoff", {
       method: "POST",
     });
-    const { announced = true } = (await hr.json().catch(() => ({ announced: true }))) as {
+    if (!hr.ok) throw new Error(`handoff state transition failed (${hr.status})`);
+    const handoffAck = (await hr.json().catch(() => null)) as {
+      ok?: boolean;
       announced?: boolean;
-    };
+      handoffState?: HandoffState;
+    } | null;
+    if (
+      handoffAck?.ok !== true ||
+      typeof handoffAck.announced !== "boolean" ||
+      (handoffAck.handoffState !== "pending" && handoffAck.handoffState !== "operator")
+    ) {
+      throw new Error("handoff state transition returned an invalid acknowledgement");
+    }
+    const { announced } = handoffAck;
     if (announced) {
       // Wake the Buttr operator app — the push channel parallel to the Telegram alert.
       // Deliberately OUTSIDE the tenant/Telegram guard (an app-only tenant has no
@@ -721,8 +749,8 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
       });
     }
     // "/done" (or "resolved") in the topic = the operator is finished → resolve the
-    // session AND hand it back to the AI (the DO clears handedOff + broadcasts
-    // {type:"resume"}). Force-set (not toggle) so a repeat /done can't un-resolve.
+    // session AND hand it back to the AI (the DO restores ai + broadcasts resume).
+    // Force-set (not toggle) so a repeat /done can't un-resolve.
     // The command is documented in the handoff alert (see sendHandoffAlert call).
     const cmd = reply.text.toLowerCase();
     if (cmd === "/done" || cmd === "resolved") {
@@ -764,7 +792,8 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
 const APP_OPERATOR_ID = 0;
 
 // POST /api/operator/reply { tenantId, sessionId, text, operatorName? }
-// → visitor's widget receives { type: "operator", text } over its existing WS.
+// → visitor's widget receives { type: "operator", handoffState: "operator", text }
+// over its existing WS.
 async function handleOperatorReply(request: Request, env: Env): Promise<Response> {
   const b = (await request.json().catch(() => null)) as {
     tenantId?: string;
@@ -794,10 +823,11 @@ async function handleOperatorReply(request: Request, env: Env): Promise<Response
 // POST /api/operator/handoffs { tenantId, includeResolved? } → the operator app's
 // inbox. Resolved sessions are EXCLUDED by default (inbox hygiene); pass
 // { includeResolved: true } to list them too (each row carries `resolved`).
-// No dedicated handoff index exists — the session→thread KV map doubles as the
-// session index; each session's DO answers one /summary (handoff flag + ring tail).
-// ponytail: first KV page only (1000 sessions) + one DO subrequest per session —
-// fine for an operator inbox; add a real handoff index if a tenant outgrows it.
+// New handoffs use their own Telegram-independent KV index. Union the legacy
+// session→thread keys so already-deployed conversations remain visible, then ask
+// each distinct session's DO for one /summary (handoff state + ring tail).
+// ponytail: first KV page for each prefix (up to 2000 distinct sessions) + one DO
+// subrequest per session — move to a paginated index if a tenant outgrows it.
 async function handleOperatorHandoffs(request: Request, env: Env): Promise<Response> {
   const b = (await request.json().catch(() => null)) as {
     tenantId?: string;
@@ -808,25 +838,43 @@ async function handleOperatorHandoffs(request: Request, env: Env): Promise<Respo
   if (denied) return json(env, { error: denied.error }, denied.status);
   const tenantId = b.tenantId;
   const includeResolved = b.includeResolved === true;
-  const prefix = `session:${tenantId}:`;
-  const list = await env.KRISPY_KV.list({ prefix });
+  const handoffPrefix = `handoff:${tenantId}:`;
+  const legacyPrefix = `session:${tenantId}:`;
+  const [handoffList, legacyList] = await Promise.all([
+    env.KRISPY_KV.list({ prefix: handoffPrefix }),
+    env.KRISPY_KV.list({ prefix: legacyPrefix }),
+  ]);
+  const sessionIds = [
+    ...new Set([
+      ...handoffList.keys.map(({ name }) => name.slice(handoffPrefix.length)),
+      ...legacyList.keys.map(({ name }) => name.slice(legacyPrefix.length)),
+    ]),
+  ];
   const rows = await Promise.all(
-    list.keys.map(async ({ name }) => {
-      const sessionId = name.slice(prefix.length);
+    sessionIds.map(async (sessionId) => {
       const r = await doFetch(env, tenantId, sessionId, "https://do/summary");
       const s = (await r.json()) as {
+        handoffState?: HandoffState;
         handedOff: boolean;
         resolved?: boolean;
         lastMessage: string | null;
         ts: number | null;
       };
+      const handoffState = s.handoffState ?? (s.handedOff ? "operator" : "ai");
       const resolved = s.resolved === true;
-      // Default inbox = handed-off & unresolved. Resolving hands the session back to
-      // the AI (handedOff flips false), so resolved rows are listed by their resolved
+      // Default inbox = waiting/operator & unresolved. Resolving hands the session back to
+      // the AI, so resolved rows are listed by their resolved
       // flag instead — includeResolved keeps the app's history/undo-swipe view alive.
-      const listed = resolved ? includeResolved : s.handedOff;
+      const listed = resolved ? includeResolved : handoffState !== "ai";
       return listed
-        ? { sessionId, lastMessage: s.lastMessage, handedOff: s.handedOff, ts: s.ts, resolved }
+        ? {
+            sessionId,
+            lastMessage: s.lastMessage,
+            handoffState,
+            handedOff: s.handedOff,
+            ts: s.ts,
+            resolved,
+          }
         : null;
     }),
   );
@@ -855,7 +903,7 @@ async function handleOperatorThread(request: Request, env: Env): Promise<Respons
 
 // POST /api/operator/resolve { tenantId, sessionId } → toggle the session's
 // resolved flag in its DO. Resolving ALSO hands the session back to the AI
-// (handedOff=false + {type:"resume"} — the DO owns that). Resolved sessions drop
+// (`handoffState=ai` + resume — the DO owns that). Resolved sessions drop
 // out of the default inbox; a new live visitor message un-resolves them WITHOUT
 // re-handing-off (the DO handles both on ring-append).
 async function handleOperatorResolve(request: Request, env: Env): Promise<Response> {

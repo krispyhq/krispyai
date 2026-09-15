@@ -27,6 +27,7 @@ tests {
     const b = res.getBody();
     expect(b).to.have.property("handoff");
     expect(b).to.have.property("handedOff");
+    expect(["ai", "pending", "operator"]).to.include(b.handoffState);
   });
 }
 
@@ -37,8 +38,10 @@ docs {
   Missing `sessionId`/`message` → 400. A `message` over ~32KB → 413 (message_too_large,
   cost-DoS guard); a legit-but-long message under the cap is silently truncated to 4000
   chars before the model (client `history` items are truncated the same way). Response:
-  `{ reply, handoff, handedOff, degraded?, formId?, form? }` — `reply` is null when a human
-  operator is driving.
+  `{ reply, handoff, handedOff, handoffState, degraded?, formId?, form? }`.
+  `handoffState` is `ai`, `pending` (human notified, no reply yet), or `operator` (human
+  replied). Pending/operator messages still mirror to the operator and ring, but return a null
+  reply without another AI call or form. `handedOff` remains true only for `operator`.
 
   Memory: the AI's context comes from the session's server-side ring buffer (SessionDO),
   NOT from `history`. `history` is a seed/fallback only — used when the ring is empty

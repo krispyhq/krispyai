@@ -14,14 +14,16 @@ a visitor message goes to `POST /api/chat`. the Worker:
 
 1. ensures a **Telegram forum topic** exists for that session (one topic per visitor) and
    mirrors the visitor's message into it.
-2. if a human already took over this session, stays silent — the operator drives.
+2. if a human was requested (`pending`) or already replied (`operator`), stays silent while
+   still mirroring the visitor to the same topic.
 3. otherwise asks the AI (Workers AI by default), parses the control markers, mirrors the
    AI reply into the topic, and returns the reply to the widget.
 
-the strongly-consistent "a human took over" flag lives in a **Durable Object**
+the strongly-consistent `ai` / `pending` / `operator` state lives in a **Durable Object**
 (`SessionDO`), not KV — KV is too eventually-consistent for a switch that must flip
-instantly. operator replies are pushed to the visitor's browser over a WebSocket held by
-that same DO (hibernatable, so idle sockets cost nothing).
+instantly. `pending` starts as soon as the AI asks for a human; `operator` starts only with
+the first human reply. operator replies are pushed to the visitor's browser over a WebSocket
+held by that same DO (hibernatable, so idle sockets cost nothing).
 
 ## 2. the control markers — `[!HANDOFF]` and `[!FORM:<id>]`
 

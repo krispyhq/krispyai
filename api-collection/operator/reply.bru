@@ -41,8 +41,9 @@ docs {
   credentials → 401. Verified bearers are cached in-isolate for 60s.
 
   The Buttr operator app's reply into a live visitor thread — the second trigger of the
-  same SessionDO handoff spine Telegram uses. Sets `handedOff`, appends the reply to the
-  session's 20-message ring buffer, and broadcasts `{ type: "operator", text }` to the
+  same SessionDO handoff spine Telegram uses. Moves `handoffState` from `pending` to
+  `operator` (`handedOff: true`), appends the reply to the session's 20-message ring buffer,
+  and broadcasts `{ type: "operator", handoffState: "operator", text }` to the
   visitor's WebSocket. The replying operator is learned with `channel: 'app'` so the
   Telegram handoff @mention skips them (they get the push instead). Metered as a handoff.
   Missing `tenantId`/`sessionId`/`text` → 400.

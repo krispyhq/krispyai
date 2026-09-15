@@ -245,13 +245,16 @@ export interface Env {
   LEAD_EMAIL_FROM?: string;
 }
 
+/** Strongly-consistent owner of the next reply for one chat session. */
+export type HandoffState = "ai" | "pending" | "operator";
+
 /** Message pushed over the DO WebSocket to the visitor's browser. */
 export type ServerEvent =
-  | { type: "ready"; handedOff: boolean }
-  | { type: "operator"; text: string }
-  | { type: "handoff" }
+  | { type: "ready"; handoffState: HandoffState; handedOff: boolean }
+  | { type: "operator"; handoffState: "operator"; text: string }
+  | { type: "handoff"; handoffState: "pending" | "operator" }
   /** The AI took the session back (operator resolved it, or went silent past the
    * HANDBACK_SILENCE_MINUTES alarm). Widget drops its "human joined" framing. */
-  | { type: "resume" }
+  | { type: "resume"; handoffState: "ai" }
   /** Live visitor/AI ring-append mirrored to `role=operator` sockets only (Buttr thread, §3d/§6). */
   | { type: "message"; role: "visitor" | "ai"; text: string; ts: number };

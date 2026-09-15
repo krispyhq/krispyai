@@ -76,7 +76,7 @@ function deps(over: Partial<ChatDeps> = {}) {
     systemPrompt: buildSystemPrompt(), // the REAL prompt, so leak-detection is exercised end-to-end
     ensureTopic: async () => 5,
     toTopic: async (_t, text) => void topic.push(text),
-    isHandedOff: async () => false,
+    getHandoffState: async () => "ai",
     ai: async () => ({ text: "Sure, we open at 9am." }),
     meter: async (k) => void metered.push(k),
     ...over,
@@ -195,11 +195,12 @@ describe("Fix 2 — handoff idempotency guard (DO /handoff)", () => {
     // re-emitted marker can't even be produced.
     let aiCalled = false;
     const { base } = deps({
-      isHandedOff: async () => true,
+      getHandoffState: async () => "operator",
       ai: async () => ((aiCalled = true), { text: `x ${HANDOFF_MARKER}` }),
     });
     const r = await chatFlow(base, { sessionId: "s", message: "still here?" });
     expect(r.handedOff).toBe(true);
+    expect(r.handoffState).toBe("operator");
     expect(r.handoff).toBe(false);
     expect(aiCalled).toBe(false);
   });

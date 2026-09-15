@@ -23,6 +23,15 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
   The widget already supported both settings, but the edge projection omitted them.
   The circular default and secret-free configuration boundary are unchanged.
 
+- Handoff: escalation now moves the SessionDO into an explicit `pending` state immediately,
+  before an operator replies. Later visitor messages still reach the operator topic and ring,
+  while AI generation and repeated contact forms stay off. The first operator reply changes the
+  state to `operator`; resolve or silence handback restores `ai`. Reconnecting while pending says
+  the team was notified instead of falsely saying a team member already joined. A dedicated,
+  Telegram-independent KV index makes app-only handoffs discoverable before the required DO
+  transition; the inbox also unions legacy topic keys. Failed index/state writes stop before
+  notification instead of claiming a handoff that the system cannot route.
+
 ## [0.2.2] — 2026-08-18
 
 ### Changed

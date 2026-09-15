@@ -56,9 +56,15 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook" \
   and stores the `topic ↔ session` link in KV.
 - every visitor message and every AI reply is mirrored into that topic (best-effort — a
   Telegram outage never blocks the visitor's reply).
+- when the AI requests a human, the session becomes `pending` immediately. Later visitor
+  messages keep landing in the topic, but the AI stays silent and the contact form does not
+  repeat.
 - when you **type a reply in the topic**, Telegram calls `POST /api/telegram/webhook`. the
-  Worker parses your reply, sets the session's `handedOff` flag in the DO, and pushes your
-  text to the visitor's browser live. the AI goes silent for that session.
+  Worker parses your reply, moves the session from `pending` to `operator`, and pushes your
+  text to the visitor's browser live. only then does the widget say a team member joined.
+- send `/done` when finished to resolve the handoff and let the AI answer again. The silence
+  handback does the same after a waiting visitor receives no operator reply for the configured
+  interval.
 - the Worker ignores its own bot echoes, service messages (topic-created), and messages in
   the group's General topic — only a real typed reply in a visitor topic counts.
 

@@ -12,7 +12,7 @@ one Cloudflare Worker hosts all of these plus the `SessionDO`. CORS allow-origin
 
 | method | path                             | body / query → response                                                                                                           |
 | ------ | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `POST` | `/api/chat`                      | `{ sessionId, message, tenantId?, history? }` → `{ reply, handoff, handedOff, degraded?, formId?, form? }`                        |
+| `POST` | `/api/chat`                      | `{ sessionId, message, tenantId?, history? }` → `{ reply, handoff, handoffState, handedOff, degraded?, formId?, form? }`          |
 | `POST` | `/api/contact`                   | `{ sessionId, tenantId?, name?, contact?, message? }` → `{ ok: true }` — legacy contact-capture shim (maps onto the lead fan-out) |
 | `POST` | `/api/lead`                      | `{ tenantId?, sessionId, formId?, values, history }` → `{ ok: true }` — a form's captured values fan out to delivery connectors   |
 | `GET`  | `/api/session/:id/ws?t=<tenant>` | WebSocket upgrade → `SessionDO`. `426` if not an upgrade. the visitor's live channel                                              |
@@ -27,6 +27,16 @@ always entitled and unmetered. a non-self tenant with no valid snapshot gets
 `402 { error: "subscription_required" }`; over its cap it gets
 `429 { error: "usage_limit_reached" }`. missing `sessionId`/`message` → `400`.
 
+`handoffState` is explicit: `ai` answers; `pending` means a human was notified but has not
+replied; `operator` starts with the first human reply. Pending and operator-owned visitor
+messages still reach the topic and server ring, while the AI stays silent. `handedOff` remains
+as a compatibility boolean and is true only for `operator`.
+
+Telegram is optional for the Buttr inbox. Before moving a session to `pending`, the Worker writes
+`handoff:<tenant>:<session>` to KV. Topic links keep their separate legacy `session:` keys, so
+enabling Telegram later cannot overwrite discovery state. The inbox unions and de-duplicates both
+prefixes so conversations created before this index remain visible.
+
 ## secret-guarded routes
 
 these carry a bot token or mutate config, so they require a shared-secret header. a missing
@@ -34,7 +44,7 @@ or wrong secret returns **401** (config routes) / **403** (webhook, billing) and
 
 | method | path                                             | auth header                                                  | purpose                                                                                                                                                                                                                                                                                       |
 | ------ | ------------------------------------------------ | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST` | `/api/telegram/webhook`                          | `x-telegram-bot-api-secret-token: <TELEGRAM_WEBHOOK_SECRET>` | owner's Telegram reply → push to the visitor via the DO, set `handedOff`                                                                                                                                                                                                                      |
+| `POST` | `/api/telegram/webhook`                          | `x-telegram-bot-api-secret-token: <TELEGRAM_WEBHOOK_SECRET>` | owner's Telegram reply → push to the visitor via the DO, move `pending` → `operator`                                                                                                                                                                                                          |
 | `GET`  | `/api/tenant/config?t=<tenant>`                  | `x-tenant-sync-secret: <TENANT_SYNC_SECRET>`                 | read a tenant's full config `{ botToken, chatId, systemPrompt?, model?, ... }` (404 if none)                                                                                                                                                                                                  |
 | `POST` | `/api/tenant/config`                             | `x-tenant-sync-secret: <TENANT_SYNC_SECRET>`                 | `{ tenantId, config }` → **merge** into the tenant's KV config. the CLI writes here. out-of-bounds configs are hard-rejected: oversized avatar/kbSources → `413`, bad avatar scheme or non-https CTA url → `400` (see [tenant config → write caps](/docs/reference/tenant-config#write-caps)) |
 | `POST` | `/api/billing/entitlement`                       | `x-billing-sync-secret: <BILLING_SYNC_SECRET>`               | mirror an entitlement snapshot into KV (for a hosted/multi-tenant deploy; unused in self-host)                                                                                                                                                                                                |
@@ -62,12 +72,16 @@ or wrong secret returns **401** (config routes) / **403** (webhook, billing) and
 
 the Worker forwards to a `SessionDO` per `(tenant, session)`; the browser never calls it
 directly. its surface: the WebSocket upgrade (visitor connects, receives
-`{ type: "ready", handedOff }`), `GET /state` (`{ handedOff }`), `POST /context { tenantId, siteId? }`
-(the chat flow's combined `{ handedOff, messages }` read — the body persists the tenant's
+`{ type: "ready", handoffState, handedOff }`), `GET /state` (`{ handoffState, handedOff }`),
+`POST /context { tenantId, siteId? }` (the chat flow's combined
+`{ handoffState, handedOff, messages }` read — the body persists the tenant's
 identity into DO storage **write-once** so the relearning handback, which fires from an alarm
 with no request in flight, can build the per-site `suggestions:` key + meter the AI call),
-`POST /operator {text}` (set `handedOff`, broadcast the operator reply), and `POST /handoff`
-(broadcast a handoff prompt). server → browser events: `ready`, `operator`, `handoff`, `resume`.
+`POST /operator {text}` (move pending → operator and broadcast the reply), and `POST /handoff`
+(move ai → pending and broadcast the waiting state). `POST /resolve` and silence handback move
+either human state back to ai. server → browser events: `ready`, `operator`, `handoff`, `resume`.
+On reconnect, `pending` renders a truthful waiting message; only `operator` says a team member
+joined.
 
 **Relearning.** On a real handback (operator had the session, then it resolves or the silence
 alarm fires) the DO makes **one** Workers-AI call to extract a Q→A the human answered that the

@@ -56,10 +56,12 @@ All opt-in. Leave `data-launcher` off and the built-in launcher renders exactly 
 
 1. Visitor types → `POST /api/chat` → instant AI reply (Workers AI).
 2. Every visitor message is mirrored to the owner's Telegram (one topic per visitor).
-3. Owner replies from their phone → the widget's WebSocket (`/api/session/:id/ws`)
-   pushes it in live, and **the AI goes silent** — the human owns the conversation.
-4. When the AI hits its limit it appends `[!HANDOFF]`; the widget then shows a
-   small contact-capture form (`POST /api/contact`).
+3. When the AI appends `[!HANDOFF]`, the session becomes `pending`: the widget shows one
+   small contact form, later messages still reach the operator, and the AI stays silent.
+4. An operator reply arrives live over the widget's WebSocket (`/api/session/:id/ws`) and
+   moves the session to `operator`. Until that first reply, reconnects say the team was
+   notified without claiming someone joined.
+5. Resolve or silence handback restores `ai`, so the assistant can answer again.
 
 ## Local demo
 
