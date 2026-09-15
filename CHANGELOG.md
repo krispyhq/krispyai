@@ -16,6 +16,9 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Fixed
 
+- CLI logo processing uses Sharp 0.35.4, resolving the libvips/libheif advisories
+  reported against the previous image-processing dependency.
+
 - Pill launcher style and label now pass through the public widget configuration.
   The widget already supported both settings, but the edge projection omitted them.
   The circular default and secret-free configuration boundary are unchanged.
