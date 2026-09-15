@@ -66,6 +66,47 @@
     var n = parseInt(s, 16);
     return (n >> 16) + "," + ((n >> 8) & 255) + "," + (n & 255);
   }
+  // Keep the warm brand ink when it is readable on a tenant accent. Dark or
+  // mid-tone accents automatically get whichever of black/white has the higher
+  // WCAG contrast, so custom branding never turns message text or actions into
+  // a guessing game. Cloud's preview mirrors this function and its test cases.
+  var BRAND_INK = "#24212e";
+  function colorChannels(v) {
+    if (typeof v !== "string") return null;
+    var hex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.exec(v.trim());
+    if (hex) {
+      var s = hex[1];
+      if (s.length === 3) s = s[0] + s[0] + s[1] + s[1] + s[2] + s[2];
+      if (s.length === 8) s = s.slice(0, 6);
+      var n = parseInt(s, 16);
+      return [n >> 16, (n >> 8) & 255, n & 255];
+    }
+    var rgb = /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i.exec(v.trim());
+    if (!rgb) return null;
+    return [Math.min(255, +rgb[1]), Math.min(255, +rgb[2]), Math.min(255, +rgb[3])];
+  }
+  function relativeLuminance(v) {
+    var channels = colorChannels(v);
+    if (!channels) return null;
+    var linear = channels.map(function (channel) {
+      var c = channel / 255;
+      return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+  }
+  function contrastRatio(a, b) {
+    var la = relativeLuminance(a);
+    var lb = relativeLuminance(b);
+    if (la == null || lb == null) return 0;
+    return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+  }
+  function readableForeground(background) {
+    if (!colorChannels(background)) return BRAND_INK;
+    if (contrastRatio(background, BRAND_INK) >= 4.5) return BRAND_INK;
+    return contrastRatio(background, "#ffffff") >= contrastRatio(background, "#000000")
+      ? "#ffffff"
+      : "#000000";
+  }
   // Shared avatar gate (mirrored as isRenderableAvatar() in the cloud libs/ui):
   // "buttr" sentinel, an https URL, or a data:image/ URI — anything else keeps
   // the default. The avatar IS the logo: header AND floating launcher badge.
@@ -535,9 +576,144 @@
     "border-radius:16px;padding:6px 12px;font-size:13px;cursor:pointer;font-family:var(--k-font);" +
     "transition:background .15s,border-color .15s}" +
     ".chip:hover{background:var(--k-muted);border-color:var(--k-primary)}" +
+    // ── Owner experience v2 ────────────────────────────────────────────────
+    // Buttr is the expressive element. The rest is one calm conversation
+    // surface: soft depth, modern sans type, no outlined-card stack.
+    ":host{" +
+    "--k-font:'Bricolage Grotesque','Avenir Next',Avenir,'Segoe UI',sans-serif;" +
+    "--k-cream:#fff9ee;--k-card:#fff;--k-espresso:#24212e;--k-muted:#f4f0f6;" +
+    "--k-muted-fg:#6a6470;--k-border:rgba(36,33,46,.10);--k-butter:#ffd447;" +
+    "--k-jam:#f176a4;--k-pistachio:#35b989;--k-pistachio-bg:#eaf9f3;" +
+    "--k-pistachio-text:#17644e;--k-primary-ink:" +
+    readableForeground(clampColor(cfg.accent) || "#e39a2b") +
+    ";--k-radius:20px;--k-origin-x:calc(100% - 34px);" +
+    "pointer-events:none;color:var(--k-espresso);font-synthesis:none" +
+    "}" +
+    ".panel,.btn,.pop{pointer-events:auto}" +
+    ".panel{" +
+    "display:flex;visibility:hidden;opacity:0;pointer-events:none;" +
+    "width:388px;max-width:calc(100vw - 32px);" +
+    "height:min(600px,calc(var(--kvvh,100dvh) - 116px));max-height:640px;" +
+    "margin-bottom:12px;background:var(--k-cream);border:0;border-radius:var(--k-radius);" +
+    "box-shadow:0 30px 90px rgba(36,33,46,.18),0 8px 28px rgba(36,33,46,.10);" +
+    "transform:translateY(22px) scale(.94);transform-origin:var(--k-origin-x) 100%;" +
+    "transition:opacity .2s ease,transform .34s cubic-bezier(.2,.82,.2,1),visibility 0s linear .34s;" +
+    "will-change:transform,opacity" +
+    "}" +
+    ".panel.open{" +
+    "visibility:visible;opacity:1;pointer-events:auto;transform:translateY(0) scale(1);" +
+    "animation:none;transition-delay:0s" +
+    "}" +
+    ".hd{" +
+    "position:relative;isolation:isolate;overflow:hidden;min-height:76px;" +
+    "padding:15px 14px 13px 16px;gap:11px;background:rgba(255,255,255,.82);" +
+    "border:0;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)" +
+    "}" +
+    ".hd::before{" +
+    "content:'';position:absolute;z-index:-1;width:94px;height:58px;left:-18px;top:-25px;" +
+    "border-radius:50%;background:var(--k-primary);opacity:.24;filter:blur(17px);" +
+    "transform:rotate(-12deg)" +
+    "}" +
+    ".hd .av{" +
+    "width:44px;height:44px;border:0;border-radius:0;padding:5px;background:transparent;" +
+    "filter:drop-shadow(0 8px 12px rgba(36,33,46,.12));transform:rotate(-3deg);" +
+    "transition:transform .28s cubic-bezier(.2,.8,.2,1)" +
+    "}" +
+    ".panel.kfill .hd .av{border-radius:15px;padding:2px;background:var(--k-launcher)}" +
+    ".panel.open .hd .av{animation:kbuttrhello .5s cubic-bezier(.2,.8,.2,1) both}" +
+    "@keyframes kbuttrhello{0%{opacity:0;transform:translateY(7px) rotate(-9deg) scale(.86)}65%{opacity:1;transform:translateY(-1px) rotate(2deg) scale(1.04)}100%{transform:rotate(-3deg) scale(1)}}" +
+    ".hd .ttl{font-family:var(--k-font);font-size:16px;font-weight:760;letter-spacing:-.025em;line-height:1.18;color:var(--k-espresso)}" +
+    ".hd .sub{gap:6px;margin-top:4px;font-size:12px;font-weight:520;line-height:1.15;color:var(--k-muted-fg)}" +
+    ".hd .sub .pdot{width:7px;height:7px;box-shadow:0 0 0 3px rgba(53,185,137,.13);animation:none}" +
+    ".hd .mute,.hd .x,.att .attx{" +
+    "width:34px;height:34px;padding:0;border:0;border-radius:12px;display:flex;align-items:center;" +
+    "justify-content:center;background:transparent;color:var(--k-muted-fg);transition:background .16s ease,color .16s ease,transform .16s ease" +
+    "}" +
+    ".hd .mute:hover,.hd .x:hover,.att .attx:hover{background:var(--k-muted);color:var(--k-espresso);transform:scale(1.04)}" +
+    ".log{padding:18px 14px 14px;gap:10px;background:var(--k-cream);scrollbar-color:rgba(106,100,112,.25) transparent}" +
+    ".log::-webkit-scrollbar-thumb{background:rgba(106,100,112,.24)}" +
+    ".msg{max-width:84%;padding:10px 13px;font-size:14px;line-height:1.48;letter-spacing:-.006em}" +
+    ".me{background:var(--k-primary);color:var(--k-primary-ink);border-radius:18px 18px 6px 18px;box-shadow:0 7px 18px rgba(36,33,46,.08)}" +
+    ".bot{background:var(--k-card);color:var(--k-espresso);border:0;border-radius:18px 18px 18px 6px;box-shadow:0 7px 22px rgba(36,33,46,.065)}" +
+    ".op{background:var(--k-pistachio-bg);color:var(--k-pistachio-text);border:0;border-radius:18px 18px 18px 6px;box-shadow:0 7px 20px rgba(23,100,78,.07)}" +
+    ".sys{max-width:82%;padding:4px 10px;font-size:11.5px;line-height:1.4;color:var(--k-muted-fg)}" +
+    "@keyframes kmsg{from{opacity:0;transform:translateY(9px) scale(.985)}to{opacity:1;transform:none}}" +
+    ".msg,.cap,.ctarow{animation-duration:.28s;animation-timing-function:cubic-bezier(.2,.8,.2,1)}" +
+    ".typing{padding:11px 14px;background:var(--k-card);border:0;border-radius:18px 18px 18px 6px;box-shadow:0 7px 22px rgba(36,33,46,.065)}" +
+    ".typing span{width:6px;height:6px;background:var(--k-muted-fg)}" +
+    ".att{margin:0 10px 7px;padding:8px 10px;background:rgba(255,255,255,.88);border:0;border-radius:16px;box-shadow:0 7px 22px rgba(36,33,46,.07)}" +
+    ".att .attthumb{width:38px;height:38px;border:0;border-radius:11px}" +
+    ".msg .shot{border-radius:12px}" +
+    ".panel.kdrop{outline:3px solid color-mix(in srgb,var(--k-primary) 72%,white);outline-offset:-7px}" +
+    ".ft{" +
+    "margin:0 10px 10px;padding:6px 6px 6px 14px;gap:7px;align-items:flex-end;" +
+    "background:rgba(255,255,255,.94);border:0;border-radius:24px;" +
+    "box-shadow:0 10px 30px rgba(36,33,46,.10),0 1px 0 rgba(255,255,255,.8) inset;" +
+    "backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)" +
+    "}" +
+    ".ft .in{min-height:40px;padding:9px 2px;border:0;border-radius:0;background:transparent;color:var(--k-espresso);font-size:16px;line-height:1.4;box-shadow:none}" +
+    ".ft .in:focus{border:0;background:transparent;box-shadow:none}" +
+    ".ft .in::placeholder{color:#8b8590}" +
+    ".ft button{" +
+    "width:40px;height:40px;background:var(--k-primary);color:var(--k-primary-ink);" +
+    "box-shadow:0 7px 18px rgba(36,33,46,.11);transition:transform .18s cubic-bezier(.2,.8,.2,1),filter .18s ease,opacity .18s ease" +
+    "}" +
+    ".ft button:hover{background:var(--k-primary);box-shadow:0 9px 22px rgba(36,33,46,.14);filter:saturate(1.04);transform:translateY(-2px) scale(1.03)}" +
+    ".ft button:active{transform:scale(.94)}" +
+    ".cap{max-width:92%;padding:14px;background:var(--k-card);border:0;border-radius:18px;box-shadow:0 10px 28px rgba(36,33,46,.08);gap:9px}" +
+    ".cap>div:first-child{color:var(--k-espresso)!important;font-size:14px!important;font-weight:720!important;letter-spacing:-.01em}" +
+    ".cap input,.cap textarea,.cap select{width:100%;padding:10px 11px;border:0;border-radius:12px;background:var(--k-muted);color:var(--k-espresso);outline:none}" +
+    ".cap input:focus,.cap textarea:focus,.cap select:focus{box-shadow:0 0 0 3px var(--k-ring,rgba(227,154,43,.15))}" +
+    ".cap button{padding:10px 14px;border:0;border-radius:12px;background:var(--k-primary);color:var(--k-primary-ink);font-size:14px;font-weight:720;letter-spacing:0}" +
+    ".cap button:hover{background:var(--k-primary);filter:saturate(1.04)}" +
+    ".cap a{border:0!important;border-radius:12px!important;background:var(--k-muted)!important;color:var(--k-espresso)!important;font-weight:650!important}" +
+    ".pop{max-width:278px;margin:0 0 11px auto;padding:13px 34px 13px 15px;background:rgba(255,255,255,.96);border:0;border-radius:18px;box-shadow:0 18px 48px rgba(36,33,46,.14);font-size:13px;line-height:1.45}" +
+    "@keyframes kpopin{from{opacity:0;transform:translateY(12px) scale(.96)}to{opacity:1;transform:none}}" +
+    ".pop.show{animation-duration:.38s;animation-timing-function:cubic-bezier(.2,.8,.2,1)}" +
+    ".ctarow{gap:9px}" +
+    ".ctaitem{gap:5px}" +
+    ".ctacap{padding:0 5px;font-size:12px}" +
+    ".cta{min-height:42px;padding:10px 14px;border-radius:14px;font-size:14px;box-shadow:0 8px 22px rgba(36,33,46,.09);transition:transform .18s cubic-bezier(.2,.8,.2,1),filter .18s ease}" +
+    ".cta-phone,.cta-link{background:var(--k-primary);color:var(--k-primary-ink)}" +
+    ".starters{gap:7px;padding:2px 12px 10px;background:var(--k-cream);overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none}" +
+    ".starters::-webkit-scrollbar{display:none}" +
+    ".chip{flex:0 0 auto;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:8px 12px;border:0;border-radius:14px;background:var(--k-card);color:var(--k-espresso);font-size:13px;font-weight:620;box-shadow:0 5px 16px rgba(36,33,46,.06);transition:transform .16s ease,background .16s ease}" +
+    ".chip:hover{background:var(--k-muted);border:0;transform:translateY(-1px)}" +
+    ".btn{width:76px;height:76px;pointer-events:auto}" +
+    ".btn .bic{width:68px;height:68px;padding:7px;border-radius:0;background:transparent;filter:drop-shadow(0 11px 19px rgba(36,33,46,.18));transition:transform .28s cubic-bezier(.2,.8,.2,1),filter .2s ease}" +
+    ".btn.kfill .bic{padding:3px;border-radius:50%;background:var(--k-launcher)}" +
+    ".btn:hover .bic{transform:translateY(-3px) scale(1.045) rotate(-4deg);filter:drop-shadow(0 15px 23px rgba(36,33,46,.22))}" +
+    ".btn:active .bic{transform:scale(.94) rotate(2deg)}" +
+    ".btn .dot{top:2px;right:1px;width:13px;height:13px;border:3px solid var(--k-card);box-shadow:0 4px 10px rgba(241,118,164,.34)}" +
+    ".btn .online{bottom:4px;right:2px;width:12px;height:12px;border:3px solid var(--k-card)}" +
+    ".btn.kpill{height:54px;width:var(--kpill-open-width,172px);max-width:calc(100vw - 32px);gap:10px;padding:0 15px 0 8px;overflow:hidden;border:0;border-radius:18px;background:rgba(255,255,255,.96);box-shadow:0 16px 42px rgba(36,33,46,.16);--kt:420ms;--ke:cubic-bezier(.2,.82,.2,1);transition:width var(--kt) var(--ke),padding var(--kt) var(--ke),background-color .2s ease,box-shadow .2s ease}" +
+    ".btn.kpill .bic{width:38px;height:38px;padding:4px;border-radius:0;background:transparent;filter:none}" +
+    ".btn.kpill.kfill .bic{padding:1px;border-radius:13px;background:var(--k-launcher)}" +
+    ".btn.kpill:hover .bic{transform:rotate(-3deg) scale(1.04)}" +
+    ".btn.kpill .blabel{font-size:14px;font-weight:720;letter-spacing:-.01em;text-transform:none;color:var(--k-espresso);transition:opacity .18s ease,transform var(--kt) var(--ke)}" +
+    ".btn.kpill .brule{width:5px;height:5px;border-radius:50%;background:var(--k-pistachio);transition:opacity .18s ease,transform var(--kt) var(--ke)}" +
+    ".btn.kpill .online{display:none}" +
+    ".btn.kpill.kunread .brule{width:7px;height:7px;background:var(--k-jam);animation:kattend 2.8s ease-in-out infinite}" +
+    ".btn.kpill.kshut{width:54px;padding:0 8px;border:0;background:transparent;box-shadow:none}" +
+    ".btn.kpill.kshut .brule,.btn.kpill.kshut .blabel{width:auto;margin:0;opacity:0;transform:translateX(12px)}" +
+    ".btn.kpill::after{display:none}" +
+    ".btn.kpill.kshut .bic{transform:rotate(5deg) scale(1.04)}" +
+    ".btn:focus-visible,.hd button:focus-visible,.ft button:focus-visible,.chip:focus-visible,.cta:focus-visible,.cap :is(input,textarea,select,button,a):focus-visible{" +
+    "outline:3px solid color-mix(in srgb,var(--k-primary) 72%,#000);outline-offset:3px" +
+    "}" +
+    ".panel.rtl .me{border-radius:18px 18px 18px 6px}" +
+    ".panel.rtl .bot,.panel.rtl .op,.panel.rtl .typing{border-radius:18px 18px 6px 18px}" +
+    "@media (max-width:480px){" +
+    ".panel{max-width:calc(100vw - 24px);height:min(620px,calc(var(--kvvh,100dvh) - 104px));margin-bottom:8px;border-radius:min(var(--k-radius),18px)}" +
+    ".hd{min-height:72px;padding:13px 12px 12px}.log{padding:15px 11px 12px}.msg{max-width:88%}.ft{margin:0 8px 8px}.starters{padding-left:10px;padding-right:10px}" +
+    "}" +
+    "@media (prefers-reduced-motion:reduce){" +
+    ".panel,.panel.open,.hd .av,.panel.open .hd .av,.msg,.cap,.ctarow,.pop.show,.btn,.btn *," +
+    ".ft .in,.ft button,.cta,.chip{animation:none!important;transition:none!important;transform:none!important;scroll-behavior:auto!important}" +
+    "}" +
     "</style>" +
     // ── Panel markup ──
-    '<div class="panel" part="panel">' +
+    '<div class="panel" part="panel" role="dialog" aria-label="Chat" aria-hidden="true">' +
     // Header: avatar + title/status + mute + close
     // Avatar shows the BUTTR mark by default; applyTheme can replace src or hide
     '<div class="hd">' +
@@ -576,7 +752,7 @@
     '<span class="popt"></span>' +
     "</div>" +
     // Launcher button: real Buttr mascot (PNG from the widget CDN, data-URI fallback)
-    '<button class="btn" aria-label="Open chat">' +
+    '<button class="btn" aria-label="Open chat" aria-expanded="false">' +
     '<img class="bic" alt="">' +
     // Pill-launcher furniture. Present but display:none unless theme.launcherStyle
     // is "pill", so the default launcher is byte-identical to before.
@@ -651,6 +827,7 @@
     var pc = clampColor(th.primaryColor);
     if (pc) {
       host.style.setProperty("--k-primary", pc);
+      host.style.setProperty("--k-primary-ink", readableForeground(pc));
       // hover keeps its lift/shadow feedback; the darker-gold shift only makes
       // sense against the default gold, so a themed primary uses itself
       host.style.setProperty("--k-gold-hover", pc);
@@ -661,18 +838,30 @@
     }
     var lc = clampColor(th.launcherColor);
     if (lc) host.style.setProperty("--k-launcher", lc);
+    var launcherHasFill = Boolean(lc && lc.toLowerCase() !== "transparent");
+    panel.classList.toggle("kfill", launcherHasFill);
+    launcher.classList.toggle("kfill", launcherHasFill);
     // Pill launcher — opt-in. Anything other than the literal "pill" leaves the
     // circle exactly as it is.
     if (th.launcherStyle === "pill") {
       var pillBtn = root.querySelector(".btn");
       pillBtn.classList.add("kpill");
       // textContent, never innerHTML — tenant-controlled string.
-      pillBtn.querySelector(".blabel").textContent =
+      var pillLabel = pillBtn.querySelector(".blabel");
+      pillLabel.textContent =
         typeof th.launcherLabel === "string" && th.launcherLabel.trim()
           ? th.launcherLabel.trim().slice(0, 24)
           : cfg.title;
       // The label is decoration; the button is already named by its aria-label.
-      pillBtn.querySelector(".blabel").setAttribute("aria-hidden", "true");
+      pillLabel.setAttribute("aria-hidden", "true");
+      // CSS cannot interpolate width:auto. The button itself can be flex-shrunk
+      // while the fixed-position host is settling, so use the label's intrinsic
+      // scroll width plus the avatar, status dot, gaps, and horizontal padding.
+      pillBtn.style.removeProperty("--kpill-open-width");
+      pillBtn.style.setProperty(
+        "--kpill-open-width",
+        Math.min(300, Math.max(116, Math.ceil(pillLabel.scrollWidth + 87))) + "px",
+      );
       if (panel.classList.contains("open")) pillBtn.classList.add("kshut");
       restoreUnread();
     }
@@ -683,6 +872,7 @@
     if (th.position === "bl") {
       host.style.right = "auto";
       host.style.left = "20px";
+      host.style.setProperty("--k-origin-x", "34px");
       // bottom-left: the launcher + popup hug the left edge under the open panel
       var blBtn = root.querySelector(".btn");
       if (blBtn) {
@@ -1190,6 +1380,8 @@
     });
     popupObservers = [];
     panel.classList.add("open");
+    panel.setAttribute("aria-hidden", "false");
+    launcher.setAttribute("aria-expanded", "true");
     launcher.classList.remove("kunread", "knudge"); // clear unread on open
     clearUnread();
     setLauncherShut(true);
@@ -1220,6 +1412,8 @@
   }
   function closePanel() {
     panel.classList.remove("open");
+    panel.setAttribute("aria-hidden", "true");
+    launcher.setAttribute("aria-expanded", "false");
     input.blur();
     host.style.bottom = "20px"; // reset the keyboard pin
     setLauncherShut(false);

@@ -3,6 +3,11 @@
 The embeddable live-chat widget. One dependency-free `widget.js`, isolated in a
 Shadow DOM (host-page CSS can't leak in). It talks to [`@krispy/edge`](../../services/edge).
 
+The panel uses a light continuous conversation surface, with Buttr floating as the expressive
+launcher. A tenant can opt into a colored mascot badge with `theme.launcherColor`.
+Tenant accents color visitor messages and actions. Text keeps Krispy's brand ink when it reaches
+4.5:1 contrast, then automatically uses black or white for darker custom colors.
+
 ## Embed
 
 Host `widget.js` anywhere static (your CDN, the edge Worker's origin, an R2/Pages

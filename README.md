@@ -189,6 +189,9 @@ Host the dependency-free `widget.js` anywhere static, then drop one tag on any p
 
 Richer appearance — circle/pill launcher and label, avatar, greeting, position, corner radius, font, notification sound — is set from KV via the `theme` config, not attributes. See [**docs → embed + theme the widget**](./apps/docs/content/docs/guides/embed-and-theme.mdx).
 
+The widget keeps primary actions readable automatically: it prefers Krispy's brand ink at 4.5:1
+contrast, then chooses black or white for darker custom accents.
+
 **Bring your own launcher.** The theme restyles Krispy's launcher; it can't replace it. Set `data-launcher="none"` and drive the panel from your own mark with `window.krispy` (`open` · `close` · `toggle` · `isOpen` · `unread` · `el`), listening for `krispy:open` / `krispy:close` / `krispy:unread` on `document`. The host element carries `class="krispy-widget"`. All opt-in — leave it off and nothing changes. See [**docs → bring your own launcher**](./apps/docs/content/docs/guides/embed-and-theme.mdx#bring-your-own-launcher).
 
 Details: [`packages/widget/README.md`](./packages/widget/README.md).

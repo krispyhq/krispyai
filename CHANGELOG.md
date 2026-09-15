@@ -10,11 +10,25 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+### Changed
+
+- Widget: the chat now reads as one light messaging surface with an expressive Buttr launcher,
+  softer depth, modern sans typography, a floating composer, and transcript-native forms and
+  actions. Opening and closing use one reversible opacity/transform transition; reduced-motion
+  visitors receive the same states without the movement. Existing classes, embed attributes,
+  `window.krispy` methods, events, tenant theme fields, and host CSS variables are unchanged.
+- Widget: Buttr now floats on its transparent asset by default. `theme.launcherColor` remains an
+  explicit opt-in badge fill, and `"transparent"` can clear a previously configured fill.
+
 ### Added
 
 - Widget: **bring your own launcher** — an embedder can suppress Krispy's launcher and drive the panel from their own mark. `data-launcher="none"` on the embed hides the built-in button (it stays in the DOM so the unread dot, nudge, glow and entrance paths are untouched); `window.krispy` exposes `open()` / `close()` / `toggle()` / `isOpen()` / `unread()` / `el`; and `krispy:open`, `krispy:close`, `krispy:unread` (`detail: { unread: boolean }`) fire on `document` so a custom launcher can show its own dot when an operator replies. The host element now carries `class="krispy-widget"` — before this, the only thing identifying it in the document was the z-index in its inline style, so integrators were selecting `div[style*="2147483000"]` and synthesising a `.click()` on the hidden built-in button through the open shadow root. **Every part is opt-in and the default embed is byte-for-byte unchanged**: leave `data-launcher` off and the launcher renders exactly as before; the global and the events are inert until something calls or listens.
 
 ### Fixed
+
+- Widget: tenant accent colors no longer assume dark text. Krispy's brand ink remains the first
+  choice when it reaches 4.5:1 contrast; otherwise the widget chooses black or white by measured
+  contrast for visitor bubbles, send actions, forms, and primary CTAs.
 
 - CLI logo processing uses Sharp 0.35.4, resolving the libvips/libheif advisories
   reported against the previous image-processing dependency.

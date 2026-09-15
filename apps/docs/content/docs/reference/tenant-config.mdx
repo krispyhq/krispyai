@@ -111,15 +111,15 @@ alert still fires, just without a mention.
 interface WidgetTheme {
   launcherStyle?: "circle" | "pill"; // default circle; pill shows a label while closed
   launcherLabel?: string; // pill text, displayed up to 24 chars; defaults to the widget title
-  primaryColor?: string; // header + visitor bubble + send button. Default gold #e39a2b
-  launcherColor?: string; // launcher only (defaults to primaryColor)
+  primaryColor?: string; // visitor bubble + actions + header halo. Default gold #e39a2b
+  launcherColor?: string; // optional badge fill; unset/"transparent" keeps Buttr floating
   glowColor?: string; // hex → launcher glow/sparkle/pulse tint. Unset = no glow layer at all
   position?: "br" | "bl"; // bottom-right | bottom-left. Default "br"
   avatar?: string; // "buttr" (inline default) | https URL | data:image/… URI (≤48KB)
   greeting?: string; // first bot bubble on open
   headerTitle?: string; // header text (supersedes data-title)
   tagline?: string; // header sub-line ("usually replies in minutes")
-  radius?: number; // corner radius px, clamped 0–20. Default 14
+  radius?: number; // panel corner radius px, clamped 0–20. Default 20
   font?: string; // CSS font-family stack
   sound?: boolean; // notification ding. Default true
   sparkle?: boolean; // idle sparkle loop on the launcher. Default false
