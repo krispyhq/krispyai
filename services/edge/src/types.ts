@@ -56,7 +56,7 @@ export interface WidgetTheme {
   glowColor?: string; // hex → drives glow/sparkle/pulse rgba stops. UNSET = no glow
   // layer at all (default) — the launcher keeps today's neutral look
   position?: "br" | "bl"; // bottom-right | bottom-left. Default "br"
-  avatar?: string; // "buttr" (default, inline data-URI) | https URL | data:image/… URI
+  avatar?: string; // "buttr" (default) | "none" | https URL | data:image/… URI
   greeting?: string; // first bot bubble on open
   headerTitle?: string; // header text (supersedes legacy data-title)
   tagline?: string; // header sub-line ("usually replies in minutes")

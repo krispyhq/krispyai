@@ -640,7 +640,7 @@ paths:
         "400":
           description: >
             Missing `tenantId` or `config`, or a malformed value — `avatar_scheme_invalid`
-            (`theme.avatar` must be `buttr`, `https://…`, or
+            (`theme.avatar` must be `buttr`, `none`, `https://…`, or
             `data:image/(png|webp|jpeg);base64,…`) or `cta_url_not_https` (connector
             `profileUrl`/`url` must be https).
           content:
@@ -958,7 +958,7 @@ components:
         avatar:
           {
             type: string,
-            description: '"buttr" (default), an https URL, or a data:image/… URI (≤48KB).',
+            description: '"buttr" (default), "none" for a text-only header, an https URL, or a data:image/… URI (≤48KB).',
           }
         greeting: { type: string, description: "First bot bubble on open." }
         headerTitle: { type: string }

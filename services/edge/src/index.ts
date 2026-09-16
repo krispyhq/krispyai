@@ -992,7 +992,7 @@ function tenantConfigCapError(
   const avatar = cfg.theme?.avatar;
   if (avatar !== undefined) {
     if (avatar.length > AVATAR_MAX_CHARS) return { error: "avatar_too_large", status: 413 };
-    if (avatar !== "buttr" && !AVATAR_SCHEME.test(avatar))
+    if (avatar !== "buttr" && avatar !== "none" && !AVATAR_SCHEME.test(avatar))
       return { error: "avatar_scheme_invalid", status: 400 };
   }
   // Free-text theme strings render verbatim in the public widget — bound them so a

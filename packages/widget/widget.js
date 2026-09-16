@@ -108,11 +108,13 @@
       : "#000000";
   }
   // Shared avatar gate (mirrored as isRenderableAvatar() in the cloud libs/ui):
-  // "buttr" sentinel, an https URL, or a data:image/ URI — anything else keeps
-  // the default. The avatar IS the logo: header AND floating launcher badge.
+  // "buttr" sentinel, an https URL, or a data:image/ URI render an image. Invalid
+  // values leave the initial/default Buttr image in place. "none" is handled
+  // explicitly by applyTheme for a text-only header and generic launcher mark.
   function isRenderableAvatar(v) {
     if (typeof v !== "string") return null;
     if (v === "buttr") return BUTTR;
+    if (v === "none") return null;
     return v.startsWith("https://") || v.startsWith("data:image/") ? v : null;
   }
 
@@ -776,6 +778,8 @@
   $(".ttl").textContent = cfg.title;
   // Default avatar + launcher: real Buttr PNG, inline data-URI as onerror fallback.
   var launcherIcon = $(".bic");
+  var CHAT_MARK =
+    "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Cpath%20d='M6%207.5A4.5%204.5%200%200%201%2010.5%203h11A4.5%204.5%200%200%201%2026%207.5v8a4.5%204.5%200%200%201-4.5%204.5h-5.2l-4.8%203.5v-3.5h-1A4.5%204.5%200%200%201%206%2015.5v-8Z'%20fill='%23fff'/%3E%3Cpath%20d='M10%2023l3.4-2.8h5.9A4.7%204.7%200%200%200%2024%2015.5v-8A4.7%204.7%200%200%200%2019.3%203h-9.8'%20fill='none'%20stroke='%23241a12'%20stroke-width='1.6'%20stroke-linecap='round'/%3E%3Ccircle%20cx='12'%20cy='11.5'%20r='1.2'%20fill='%23241a12'/%3E%3Ccircle%20cx='16'%20cy='11.5'%20r='1.2'%20fill='%23241a12'/%3E%3Ccircle%20cx='20'%20cy='11.5'%20r='1.2'%20fill='%23241a12'/%3E%3C/svg%3E";
   function setButtr(img) {
     if (!img) return;
     img.onerror = function () {
@@ -886,9 +890,22 @@
       $(".ttl").textContent = th.headerTitle;
     if (typeof th.tagline === "string" && th.tagline) $(".subtxt").textContent = th.tagline;
     if (typeof th.greeting === "string") greeting = th.greeting.trim();
-    // avatar (shared gate) — brands the header AND the floating launcher badge
+    // avatar (shared gate) — brands the header AND the floating launcher badge.
+    // "none" is an explicit text-only customer-brand mode: remove the header
+    // image (and its flex slot) and use a neutral chat mark in our launcher.
+    if (th.avatar === "none") {
+      avatarEl.style.display = "none";
+      launcherIcon.onerror = null;
+      launcherIcon.src = CHAT_MARK;
+    } else {
+      avatarEl.style.display = "";
+      launcherIcon.onerror = function () {
+        this.onerror = null;
+        this.src = BUTTR;
+      };
+    }
     var av = isRenderableAvatar(th.avatar);
-    if (av) {
+    if (av && th.avatar !== "none") {
       avatarEl.src = av;
       launcherIcon.src = av;
     }

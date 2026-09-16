@@ -56,6 +56,11 @@ describe("publicWidgetConfig", () => {
     expect(JSON.stringify(out)).not.toContain("botToken");
   });
 
+  test('explicit avatar "none" projects while unset keeps the default sentinel', () => {
+    expect(publicWidgetConfig({ theme: { avatar: "none" } }).theme.avatar).toBe("none");
+    expect(publicWidgetConfig({ theme: {} }).theme.avatar).toBeUndefined();
+  });
+
   test("kbSources / kbVersion never reach the public projection", () => {
     const out = publicWidgetConfig({
       botToken: "x",

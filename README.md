@@ -193,6 +193,7 @@ The widget keeps primary actions readable automatically: it prefers Krispy's bra
 contrast, then chooses black or white for darker custom accents.
 
 **Bring your own launcher.** The theme restyles Krispy's launcher; it can't replace it. Set `data-launcher="none"` and drive the panel from your own mark with `window.krispy` (`open` · `close` · `toggle` · `isOpen` · `unread` · `el`), listening for `krispy:open` / `krispy:close` / `krispy:unread` on `document`. The host element carries `class="krispy-widget"`. All opt-in — leave it off and nothing changes. See [**docs → bring your own launcher**](./apps/docs/content/docs/guides/embed-and-theme.mdx#bring-your-own-launcher).
+Set `theme.avatar` to `"none"` for a text-only customer header; the built-in launcher uses a neutral chat mark while the default remains Buttr.
 
 Details: [`packages/widget/README.md`](./packages/widget/README.md).
 

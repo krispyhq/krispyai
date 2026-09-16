@@ -52,7 +52,7 @@ the themeable fields (`WidgetTheme`):
 | `launcherLabel` | the widget title | the word on the pill (≤24 chars); inert unless `launcherStyle:"pill"`  |
 | `glowColor`     | — (no glow)      | opt-in launcher glow tint (hex); unset = no glow layer at all          |
 | `position`      | `br`             | `br` (bottom-right) or `bl` (bottom-left)                              |
-| `avatar`        | —                | `"buttr"` (inline default), an `https://` URL, or a `data:image/…` URI |
+| `avatar`        | —                | `"buttr"` (inline default), `"none"`, an `https://` URL, or a `data:image/…` URI |
 | `greeting`      | —                | first bot bubble shown when the panel opens                            |
 | `headerTitle`   | —                | header text (supersedes `data-title`)                                  |
 | `tagline`       | built-in         | header sub-line ("we usually reply in minutes")                        |
@@ -88,7 +88,7 @@ dismisses it for the cooldown window.
 <Callout type="warn">
 theme values cross a CSS trust boundary. the widget **sanitizes** them: colors must be
 `#hex` or `rgb(...)` (`glowColor` hex-only), radius is clamped 0–20, fonts reject `;{}<>`,
-timing is clamped, and avatars must be the literal `buttr`, an `https://` URL, or a
+timing is clamped, and avatars must be the literal `buttr`, `none`, an `https://` URL, or a
 `data:image/…` URI. anything else is dropped. see [security](/docs/security).
 </Callout>
 

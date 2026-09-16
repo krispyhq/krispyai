@@ -547,9 +547,9 @@ describe("tenant config routes", () => {
     expect(await readTenantConfig(env, "t1")).toBeNull();
   });
 
-  test("avatar scheme: https/data-image/buttr pass, http and data:text rejected", async () => {
+  test('avatar scheme: https/data-image/buttr/none pass, http and data:text rejected', async () => {
     const env = fakeEnv({ TENANT_SYNC_SECRET: SECRET });
-    for (const avatar of ["buttr", "https://cdn.example/logo.png", "data:image/webp;base64,AA"]) {
+    for (const avatar of ["buttr", "none", "https://cdn.example/logo.png", "data:image/webp;base64,AA"]) {
       expect((await postCfg(env, { theme: { avatar } })).status).toBe(200);
     }
     for (const avatar of [
