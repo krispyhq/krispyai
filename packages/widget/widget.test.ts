@@ -72,8 +72,13 @@ describe("widget visual contract", () => {
 
   test("human handoff does not require the visitor to submit contact details", () => {
     expect(source).not.toContain("DEFAULT_CONTACT_FORM");
-    expect(source).not.toContain('else if (res.handoff) showForm');
+    expect(source).not.toContain("else if (res.handoff) showForm");
     expect(source).toContain("if (res.form) showForm(res.form)");
+  });
+
+  test("app-only tenants do not advertise Telegram-backed screenshot upload", () => {
+    expect(source).toContain("c.capabilities.attachments === false");
+    expect(source).toContain("if (!attachmentsEnabled) return;");
   });
 
   test("Buttr floats without a badge fill unless a tenant supplies one", () => {
@@ -103,5 +108,12 @@ describe("widget visual contract", () => {
     const bootFetch = source.slice(start, end);
     expect(bootFetch).toContain('{ cache: "no-cache" }');
     expect(bootFetch).not.toContain("Date.now()");
+  });
+
+  test("reconnect sync compares raw text, preserving markdown and duplicates", () => {
+    expect(source).toContain("d.dataset.krispyText = String(text)");
+    expect(source).toContain("el.dataset.krispyText ?? el.textContent");
+    expect(source).toContain("counts[key] = (counts[key] || 0) + 1");
+    expect(source).toContain("if (counts[key]) counts[key] -= 1");
   });
 });
