@@ -31,6 +31,9 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Fixed
 
+- Edge: first-message handoffs no longer duplicate the current visitor message when the browser
+  includes that message as the final `history` entry. Earlier identical questions remain intact.
+
 - Cloud chat now honors prompt, theme, forms, and Buttr handoff for app-only tenants without
   requiring Telegram credentials. Business facts in an onboarding prompt can be repeated as
   answers without tripping the control-instruction leak detector. Known questions remain with

@@ -60,6 +60,9 @@ visitor ──▶ AI answers (Cloudflare Workers AI) ──▶ visitor
 - You reply from Telegram → it's pushed into the browser over a WebSocket, **live**.
 - The bot detects it's a human job and steps back immediately. Messages sent while you are
   on the way still reach the same topic; the bot stays quiet until you resolve the handoff.
+- Browser clients may include the current visitor line at the end of `history`; the first
+  handoff seeds only the prior turns, then records that live line once. Earlier repeated
+  questions remain real conversation turns.
 
 Under the hood it's **one Cloudflare Worker** plus a **hibernatable Durable Object** (`SessionDO`)
 that holds the strongly-consistent `ai` / `pending` / `operator` state and keeps idle sockets

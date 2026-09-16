@@ -42,6 +42,11 @@ without requiring a name, email, phone, or order reference. Only a business-conf
 collect details. Screenshot paste/drop is advertised only when `capabilities.attachments` is true;
 the current attachment transport remains Telegram-backed.
 
+`history` is client-supplied context and may include the current visitor message as its final
+`user` entry (the browser widget sends it that way). When an empty session is handed off, the
+Worker seeds only prior history and appends the live visitor turn once. It removes one trailing
+exact match only; earlier repeated messages remain separate turns.
+
 ## secret-guarded routes
 
 these carry a bot token or mutate config, so they require a shared-secret header. a missing

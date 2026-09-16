@@ -62,6 +62,11 @@ response exposes no usage counts) under the `usage:<tenant>:<yyyymm>:tokens` KV 
 surfaced as `tokens` in `/api/usage`. Prompt caching is N/A on Workers AI (no
 `cache_control` knob); the BYO-key adapter seam in `ai.ts` is where it plugs in later.
 
+The browser widget sends its current visitor line at the end of `history` before posting
+`/api/chat`. On a first-message handoff, the Worker removes only that trailing exact match
+from the empty-ring seed and then appends the live turn once. Earlier identical questions
+are preserved; history entries that do not end with the current line are seeded unchanged.
+
 ### Tenant-config sync (the `krispy` CLI → gate)
 
 The `krispy` CLI (`packages/cli`) — or Krispy Cloud, or your own tooling — manages a
