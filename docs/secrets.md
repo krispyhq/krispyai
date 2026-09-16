@@ -24,6 +24,12 @@ bearer tokens via `GET /me` — e.g. `https://api.krispyai.com`). It's a plain v
 `wrangler.toml` per env; unset means operator bearer auth **fails closed** (a
 self-host without the operator app doesn't need it).
 
+The hosted preview Worker is paired with the dev cloud API at
+`https://api-preview.krispyai.com`; this value is committed in
+`services/edge/wrangler.toml` under `[env.preview.vars]`. Production keeps its separate
+`https://api.krispyai.com` verifier. Keep these origins and their Infisical environments
+paired; never point the preview Worker at the production API.
+
 Local `wrangler dev` reads them from a git-ignored `.dev.vars` in `services/edge` if you want to iterate without deploying.
 
 ## 2. CLI config — `.env.local`

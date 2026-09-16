@@ -12,6 +12,10 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Changed
 
+- Edge preview: configure `API_ORIGIN` to the hosted dev API
+  (`https://api-preview.krispyai.com`) so Buttr operator bearer verification stays in the
+  preview environment. Production retains its separate API origin.
+
 - Widget: the chat now reads as one light messaging surface with an expressive Buttr launcher,
   softer depth, modern sans typography, a floating composer, and transcript-native forms and
   actions. Opening and closing use one reversible opacity/transform transition; reduced-motion
