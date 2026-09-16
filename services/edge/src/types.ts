@@ -52,7 +52,7 @@ export interface WidgetTheme {
   launcherStyle?: "circle" | "pill"; // default circle; pill shows a short label while closed
   launcherLabel?: string; // pill text; widget trims to 24 characters, defaults to header title
   primaryColor?: string; // header + visitor bubble + send button. Default gold #e39a2b
-  launcherColor?: string; // FAB only (defaults to primaryColor)
+  launcherColor?: string; // optional mascot badge fill; unset/"transparent" keeps Buttr floating
   glowColor?: string; // hex → drives glow/sparkle/pulse rgba stops. UNSET = no glow
   // layer at all (default) — the launcher keeps today's neutral look
   position?: "br" | "bl"; // bottom-right | bottom-left. Default "br"

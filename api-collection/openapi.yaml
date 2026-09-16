@@ -943,7 +943,11 @@ components:
             type: string,
             description: "Header + visitor bubble + send button. Default gold #e39a2b.",
           }
-        launcherColor: { type: string, description: "FAB only; defaults to primaryColor." }
+        launcherColor:
+          {
+            type: string,
+            description: "Optional mascot badge fill. Unset or transparent keeps Buttr floating without a disc.",
+          }
         position:
           { type: string, enum: [br, bl], description: "bottom-right | bottom-left. Default br." }
         glowColor:
