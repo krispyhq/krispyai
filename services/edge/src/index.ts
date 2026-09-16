@@ -96,6 +96,25 @@ export function ringToHistory(
     .slice(-cap);
 }
 
+/** Browser clients append the current visitor message before POSTing /api/chat.
+ * During a first-message handoff that message is otherwise seeded into the empty
+ * ring and then mirrored again as the live turn. Remove only the final matching
+ * user entry; earlier identical messages are legitimate conversation history. */
+export function historySeed(
+  history: ChatMessage[] | undefined,
+  currentMessage: string,
+): { role: "visitor" | "ai"; text: string }[] {
+  const entries = history ?? [];
+  const last = entries.at(-1);
+  const seedEntries =
+    last?.role === "user" && last.content.trim() === currentMessage
+      ? entries.slice(0, -1)
+      : entries;
+  return seedEntries
+    .filter((m) => (m.role === "user" || m.role === "assistant") && m.content)
+    .map((m) => ({ role: m.role === "user" ? "visitor" : "ai", text: m.content }));
+}
+
 // ── visitor-text length caps (cost-DoS + prompt-stuffing guard at the entry) ──
 // Every place visitor text enters the model path is bounded here, BEFORE it reaches the
 // AI: the live message and the client-sent history seed (both spoofable). The DO ring is
@@ -417,11 +436,7 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
   // seed the ring from the widget's re-sent history FIRST (the DO no-ops the seed
   // unless the ring is still empty), so pre-ring turns aren't lost.
   {
-    const seed = result.handoff
-      ? (clientHistory ?? [])
-          .filter((m) => (m.role === "user" || m.role === "assistant") && m.content)
-          .map((m) => ({ role: m.role === "user" ? "visitor" : "ai", text: m.content }))
-      : [];
+    const seed = result.handoff ? historySeed(clientHistory, message) : [];
     const turn: { role: "visitor" | "ai"; text: string }[] = [{ role: "visitor", text: message }];
     if (result.reply) turn.push({ role: "ai", text: result.reply });
     if (seed.length) {
