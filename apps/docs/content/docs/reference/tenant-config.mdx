@@ -238,18 +238,18 @@ its KB.
 `POST /api/tenant/config` hard-rejects out-of-bounds configs at the trust boundary
 (nothing invalid ever reaches KV):
 
-| rule                                                                                 | response                                    |
-| ------------------------------------------------------------------------------------ | ------------------------------------------- |
-| `theme.avatar` over 48KB                                                             | `413 { error: "avatar_too_large" }`         |
+| rule                                                                                            | response                                    |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `theme.avatar` over 48KB                                                                        | `413 { error: "avatar_too_large" }`         |
 | `theme.avatar` not `"buttr"` / `"none"` / `https://…` / `data:image/(png\|webp\|jpeg);base64,…` | `400 { error: "avatar_scheme_invalid" }`    |
-| a connector CTA url (`profileUrl`/`url`) not `https://`                              | `400 { error: "cta_url_not_https" }`        |
-| `kbSources` total text over 100K chars                                               | `413 { error: "kb_sources_too_large" }`     |
-| more than 8 `popups`                                                                 | `413 { error: "too_many_popups" }`          |
-| a popup `text` over 500 chars                                                        | `413 { error: "popup_text_too_large" }`     |
-| a popup selector (`near` `selector` / `cancelOnClick`) over 200 chars                | `413 { error: "popup_selector_too_large" }` |
-| more than 5 `script.opening` entries                                                 | `413 { error: "too_many_opening" }`         |
-| more than 4 `script.starters` entries                                                | `413 { error: "too_many_starters" }`        |
-| `persona` + `script` combined free text over 8K chars                                | `413 { error: "persona_script_too_large" }` |
+| a connector CTA url (`profileUrl`/`url`) not `https://`                                         | `400 { error: "cta_url_not_https" }`        |
+| `kbSources` total text over 100K chars                                                          | `413 { error: "kb_sources_too_large" }`     |
+| more than 8 `popups`                                                                            | `413 { error: "too_many_popups" }`          |
+| a popup `text` over 500 chars                                                                   | `413 { error: "popup_text_too_large" }`     |
+| a popup selector (`near` `selector` / `cancelOnClick`) over 200 chars                           | `413 { error: "popup_selector_too_large" }` |
+| more than 5 `script.opening` entries                                                            | `413 { error: "too_many_opening" }`         |
+| more than 4 `script.starters` entries                                                           | `413 { error: "too_many_starters" }`        |
+| `persona` + `script` combined free text over 8K chars                                           | `413 { error: "persona_script_too_large" }` |
 
 ## KV keys
 

@@ -50,6 +50,7 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
   Telegram-independent KV index makes app-only handoffs discoverable before the required DO
   transition; the inbox also unions legacy topic keys. Failed index/state writes stop before
   notification instead of claiming a handoff that the system cannot route.
+
 ## [0.2.2] — 2026-08-18
 
 ### Changed

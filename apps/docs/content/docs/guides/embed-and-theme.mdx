@@ -44,25 +44,25 @@ writing `POST /api/tenant/config`) and the widget picks it up on next load; no r
 
 the themeable fields (`WidgetTheme`):
 
-| field           | default          | what it controls                                                       |
-| --------------- | ---------------- | ---------------------------------------------------------------------- |
-| `primaryColor`  | `#e39a2b` (gold) | visitor bubble, send button, header halo, input focus ring             |
-| `launcherColor` | transparent      | optional badge behind the launcher mascot; unset keeps Buttr floating  |
-| `launcherStyle` | `"circle"`       | `"pill"` = labelled plate that collapses to the avatar while open      |
-| `launcherLabel` | the widget title | the word on the pill (≤24 chars); inert unless `launcherStyle:"pill"`  |
-| `glowColor`     | — (no glow)      | opt-in launcher glow tint (hex); unset = no glow layer at all          |
-| `position`      | `br`             | `br` (bottom-right) or `bl` (bottom-left)                              |
+| field           | default          | what it controls                                                                 |
+| --------------- | ---------------- | -------------------------------------------------------------------------------- |
+| `primaryColor`  | `#e39a2b` (gold) | visitor bubble, send button, header halo, input focus ring                       |
+| `launcherColor` | transparent      | optional badge behind the launcher mascot; unset keeps Buttr floating            |
+| `launcherStyle` | `"circle"`       | `"pill"` = labelled plate that collapses to the avatar while open                |
+| `launcherLabel` | the widget title | the word on the pill (≤24 chars); inert unless `launcherStyle:"pill"`            |
+| `glowColor`     | — (no glow)      | opt-in launcher glow tint (hex); unset = no glow layer at all                    |
+| `position`      | `br`             | `br` (bottom-right) or `bl` (bottom-left)                                        |
 | `avatar`        | —                | `"buttr"` (inline default), `"none"`, an `https://` URL, or a `data:image/…` URI |
-| `greeting`      | —                | first bot bubble shown when the panel opens                            |
-| `headerTitle`   | —                | header text (supersedes `data-title`)                                  |
-| `tagline`       | built-in         | header sub-line ("we usually reply in minutes")                        |
-| `radius`        | `20`             | panel corner radius, px, clamped 0–20                                  |
-| `font`          | Bricolage/system | a CSS `font-family` stack                                              |
-| `sound`         | `true`           | notification "ding" on inbound messages while the panel is closed      |
-| `sparkle`       | `false`          | idle sparkle loop on the launcher (shadow swell + conic ring)          |
-| `direction`     | `ltr`            | `rtl` flips the panel: bubble corners, input dir, mirrored send icon   |
-| `popupText`     | — (popup off)    | proactive teaser card above the launcher (see timing below)            |
-| `timing`        | see below        | `WidgetTiming` — attention/timing knobs                                |
+| `greeting`      | —                | first bot bubble shown when the panel opens                                      |
+| `headerTitle`   | —                | header text (supersedes `data-title`)                                            |
+| `tagline`       | built-in         | header sub-line ("we usually reply in minutes")                                  |
+| `radius`        | `20`             | panel corner radius, px, clamped 0–20                                            |
+| `font`          | Bricolage/system | a CSS `font-family` stack                                                        |
+| `sound`         | `true`           | notification "ding" on inbound messages while the panel is closed                |
+| `sparkle`       | `false`          | idle sparkle loop on the launcher (shadow swell + conic ring)                    |
+| `direction`     | `ltr`            | `rtl` flips the panel: bubble corners, input dir, mirrored send icon             |
+| `popupText`     | — (popup off)    | proactive teaser card above the launcher (see timing below)                      |
+| `timing`        | see below        | `WidgetTiming` — attention/timing knobs                                          |
 
 Unset knobs keep their documented defaults. Tenant accents automatically keep Krispy's brand ink
 when it reaches 4.5:1 contrast; otherwise the widget chooses black or white by measured contrast.
