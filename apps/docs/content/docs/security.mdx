@@ -49,7 +49,7 @@ the DOM, so the widget sanitizes at the boundary:
 - **colors** must match `#hex` (3–8 digits) or `rgb(...)`; anything else is dropped.
 - **radius** is clamped to `0–20`.
 - **font** strings that contain `;`, `{`, `}`, `<`, `>` are rejected.
-- **avatar** must be the literal `buttr` or an `https://` URL.
+- **avatar** must be the literal `buttr`, `none`, or an `https://` URL.
 - **bot/operator markdown** is built with `createElement` + `textContent` — **never**
   `innerHTML` (the load-bearing XSS guard). links render only for `http(s)`/`mailto`;
   `javascript:` / `data:` schemes are rejected and rendered as literal text.

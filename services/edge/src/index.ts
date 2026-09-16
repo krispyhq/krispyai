@@ -20,7 +20,7 @@ import type { ChatMessage } from "./ai";
 import { workersAiRunner, DEFAULT_MODEL } from "./ai";
 import { chatFlow } from "./chat";
 import { SessionDO, type RingMsg } from "./session-do";
-import { buildSystemPrompt } from "./system-prompt";
+import { buildPromptLeakScope, buildSystemPrompt } from "./system-prompt";
 import {
   parseOwnerReply,
   createForumTopic,
@@ -35,6 +35,7 @@ import { renderLeadEmail, sendLeadEmail } from "./email";
 import type { Connector, Env, FormSpec, HandoffState, TenantConfig } from "./types";
 import {
   getTenant,
+  hasTelegramConfig,
   resolveSiteId,
   getThreadForSession,
   getSessionForThread,
@@ -93,6 +94,25 @@ export function ringToHistory(
       content: m.text,
     }))
     .slice(-cap);
+}
+
+/** Browser clients append the current visitor message before POSTing /api/chat.
+ * During a first-message handoff that message is otherwise seeded into the empty
+ * ring and then mirrored again as the live turn. Remove only the final matching
+ * user entry; earlier identical messages are legitimate conversation history. */
+export function historySeed(
+  history: ChatMessage[] | undefined,
+  currentMessage: string,
+): { role: "visitor" | "ai"; text: string }[] {
+  const entries = history ?? [];
+  const last = entries.at(-1);
+  const seedEntries =
+    last?.role === "user" && last.content.trim() === currentMessage
+      ? entries.slice(0, -1)
+      : entries;
+  return seedEntries
+    .filter((m) => (m.role === "user" || m.role === "assistant") && m.content)
+    .map((m) => ({ role: m.role === "user" ? "visitor" : "ai", text: m.content }));
 }
 
 // ── visitor-text length caps (cost-DoS + prompt-stuffing guard at the entry) ──
@@ -359,13 +379,9 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
         tenant?.persona,
         tenant?.kbSources,
       ),
-      // Leak-check scope = the INSTRUCTION portion only (same prompt WITHOUT the injected
-      // knowledge block), so a bot quoting its own kbSources verbatim isn't flagged as a
-      // prompt leak. Undefined when there's no knowledge (chatFlow falls back to systemPrompt,
-      // which is then identical) — avoids the extra build on the common no-KB path.
-      leakScope: tenant?.kbSources?.length
-        ? buildSystemPrompt(tenant?.systemPrompt, tenant?.forms, tenant?.persona)
-        : undefined,
+      // Leak-check only the control/security instructions. The onboarding prompt can
+      // also contain business facts, and quoting those is a correct answer, not a leak.
+      leakScope: buildPromptLeakScope(tenant?.forms, tenant?.persona),
       // Ring-derived (or seed) history in; chatFlow applies the sliding window +
       // counts turns (chokepoint).
       history,
@@ -399,7 +415,7 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
             return state.handoffState ?? (state.handedOff ? "operator" : "ai");
           },
       ensureTopic: async (sessionId, firstMessage) => {
-        if (!tenant) return 0;
+        if (!hasTelegramConfig(tenant)) return 0;
         const existing = await getThreadForSession(env, tenantId, sessionId);
         if (existing) return existing;
         const name = `${firstMessage.slice(0, 40)} · ${sessionId.slice(0, 6)}`;
@@ -408,7 +424,8 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
         return threadId;
       },
       toTopic: async (threadId, text) => {
-        if (tenant && threadId) await sendToTopic(tenant.botToken, tenant.chatId, threadId, text);
+        if (hasTelegramConfig(tenant) && threadId)
+          await sendToTopic(tenant.botToken, tenant.chatId, threadId, text);
       },
     },
     { sessionId: body.sessionId, message },
@@ -419,11 +436,7 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
   // seed the ring from the widget's re-sent history FIRST (the DO no-ops the seed
   // unless the ring is still empty), so pre-ring turns aren't lost.
   {
-    const seed = result.handoff
-      ? (clientHistory ?? [])
-          .filter((m) => (m.role === "user" || m.role === "assistant") && m.content)
-          .map((m) => ({ role: m.role === "user" ? "visitor" : "ai", text: m.content }))
-      : [];
+    const seed = result.handoff ? historySeed(clientHistory, message) : [];
     const turn: { role: "visitor" | "ai"; text: string }[] = [{ role: "visitor", text: message }];
     if (result.reply) turn.push({ role: "ai", text: result.reply });
     if (seed.length) {
@@ -472,7 +485,7 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
       // Deliberately OUTSIDE the tenant/Telegram guard (an app-only tenant has no
       // Telegram config) and failure-tolerant by contract (push.ts never throws).
       await pushToApp(env, tenantId, body.sessionId, message);
-      if (tenant) {
+      if (hasTelegramConfig(tenant)) {
         const threadId = await getThreadForSession(env, tenantId, body.sessionId);
         if (threadId) {
           // 'app' operators get the push above — skip them here so they aren't
@@ -518,13 +531,9 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
  * had to describe it in words, which is exactly what they were already failing to
  * do when they reached for the chat.
  *
- * TELEGRAM IS THE STORE, and that is a deliberate choice over adding R2. Krispy's
- * Worker binds AI, Durable Objects and KV and nothing else; an object store would
- * be a new binding every self-hoster has to provision before the feature works at
- * all. Telegram already keeps the file, already renders it in the operator's
- * thread, and is already required — getTenant() returns null without both Telegram
- * secrets. So the image goes where the person who needs to see it already is, and
- * this ships to every existing deployment with no config change.
+ * TELEGRAM IS THE STORE for attachments, and that is a deliberate choice over adding
+ * R2. App-only Cloud tenants can chat and hand off through Buttr, but screenshot
+ * upload remains unavailable until a separate attachment store lands.
  *
  * The trade, stated plainly: the image is NOT in the visitor's transcript across a
  * reload (the widget shows it from a local object URL for the life of the page),
@@ -589,7 +598,7 @@ async function handleAttachment(request: Request, env: Env): Promise<Response> {
     return json(env, { error: "unsupported_type", allowed: Object.keys(ATTACH_TYPES) }, 415);
 
   const tenant = await getTenant(env, tenantId, siteId);
-  if (!tenant) return json(env, { error: "attachments_unavailable" }, 503);
+  if (!hasTelegramConfig(tenant)) return json(env, { error: "attachments_unavailable" }, 503);
 
   // NO TOPIC, NO UPLOAD. The topic is created by the first chat message, so this
   // can only ever add to a conversation the visitor already started — it cannot
@@ -695,7 +704,7 @@ export async function deliverLead(env: Env, lead: LeadPayload): Promise<void> {
     : connectors;
 
   // Telegram delivery — drop the values into the visitor's topic.
-  if (tenant) {
+  if (hasTelegramConfig(tenant)) {
     const threadId = await getThreadForSession(env, lead.tenantId, lead.sessionId);
     if (threadId) {
       const lines = Object.entries(lead.values)
@@ -759,7 +768,7 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
         body: JSON.stringify({ resolved: true }),
       });
       const tenant = await getTenant(env, tenantId);
-      if (tenant) {
+      if (hasTelegramConfig(tenant)) {
         await sendToTopic(
           tenant.botToken,
           tenant.chatId,
@@ -992,7 +1001,7 @@ function tenantConfigCapError(
   const avatar = cfg.theme?.avatar;
   if (avatar !== undefined) {
     if (avatar.length > AVATAR_MAX_CHARS) return { error: "avatar_too_large", status: 413 };
-    if (avatar !== "buttr" && !AVATAR_SCHEME.test(avatar))
+    if (avatar !== "buttr" && avatar !== "none" && !AVATAR_SCHEME.test(avatar))
       return { error: "avatar_scheme_invalid", status: 400 };
   }
   // Free-text theme strings render verbatim in the public widget — bound them so a
@@ -1143,10 +1152,17 @@ async function handleWidgetConfig(request: Request, env: Env): Promise<Response>
   // Free heartbeat: this fetch fires on every page load, so stamp the site's
   // last-seen record (throttled in-isolate, best-effort — never blocks the boot).
   await stampSeen(env, t, request, siteId);
-  // Short public cache — the boot config (now up to ~10–30KB with a data-URI avatar)
-  // is otherwise refetched uncached on every page load. 60s keeps edits near-live.
-  return Response.json(publicWidgetConfig(cfg), {
-    headers: { ...cors(env), "Cache-Control": "public, max-age=60" },
+  // Browsers may store this public projection, but every widget boot must revalidate it:
+  // tenant branding and forms can change while a Safari tab remains warm. Revalidation
+  // avoids stale config without creating an unbounded set of cache-buster URLs.
+  const capabilities = {
+    attachments:
+      t === DEFAULT_TENANT
+        ? !!env.TELEGRAM_BOT_TOKEN && !!env.TELEGRAM_CHAT_ID
+        : !!cfg?.botToken && !!cfg.chatId,
+  };
+  return Response.json(publicWidgetConfig(cfg, capabilities), {
+    headers: { ...cors(env), "Cache-Control": "public, max-age=0, must-revalidate" },
   });
 }
 

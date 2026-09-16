@@ -3,7 +3,7 @@
  * isolated (host-page CSS can't leak in). Talks to @krispy/edge:
  *   POST /api/chat            → instant AI reply
  *   WS   /api/session/:id/ws  → live operator replies (bot goes silent on handoff)
- *   POST /api/contact         → [!HANDOFF] contact capture
+ *   POST /api/contact         → legacy contact-capture compatibility
  *
  * Embed (one line):
  *   <script src="https://YOUR-HOST/widget.js"
@@ -108,11 +108,13 @@
       : "#000000";
   }
   // Shared avatar gate (mirrored as isRenderableAvatar() in the cloud libs/ui):
-  // "buttr" sentinel, an https URL, or a data:image/ URI — anything else keeps
-  // the default. The avatar IS the logo: header AND floating launcher badge.
+  // "buttr" sentinel, an https URL, or a data:image/ URI render an image. Invalid
+  // values leave the initial/default Buttr image in place. "none" is handled
+  // explicitly by applyTheme for a text-only header and generic launcher mark.
   function isRenderableAvatar(v) {
     if (typeof v !== "string") return null;
     if (v === "buttr") return BUTTR;
+    if (v === "none") return null;
     return v.startsWith("https://") || v.startsWith("data:image/") ? v : null;
   }
 
@@ -161,6 +163,7 @@
   var handedOff = false; // internal silence gate: pending OR operator
   var ws = null;
   var keepalive = null;
+  var wsReconnectTimer = null;
   var wsBackoff = 3000; // reconnect delay, exponential up to WS_BACKOFF_MAX (with jitter)
   var WS_BACKOFF_MAX = 30000;
 
@@ -630,6 +633,8 @@
     "justify-content:center;background:transparent;color:var(--k-muted-fg);transition:background .16s ease,color .16s ease,transform .16s ease" +
     "}" +
     ".hd .mute:hover,.hd .x:hover,.att .attx:hover{background:var(--k-muted);color:var(--k-espresso);transform:scale(1.04)}" +
+    // Keep the compact desktop chrome while giving finger taps a full 44px target.
+    "@media (pointer:coarse){.hd .mute,.hd .x{width:44px;height:44px}}" +
     ".log{padding:18px 14px 14px;gap:10px;background:var(--k-cream);scrollbar-color:rgba(106,100,112,.25) transparent}" +
     ".log::-webkit-scrollbar-thumb{background:rgba(106,100,112,.24)}" +
     ".msg{max-width:84%;padding:10px 13px;font-size:14px;line-height:1.48;letter-spacing:-.006em}" +
@@ -776,6 +781,8 @@
   $(".ttl").textContent = cfg.title;
   // Default avatar + launcher: real Buttr PNG, inline data-URI as onerror fallback.
   var launcherIcon = $(".bic");
+  var CHAT_MARK =
+    "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Cpath%20d='M6%207.5A4.5%204.5%200%200%201%2010.5%203h11A4.5%204.5%200%200%201%2026%207.5v8a4.5%204.5%200%200%201-4.5%204.5h-5.2l-4.8%203.5v-3.5h-1A4.5%204.5%200%200%201%206%2015.5v-8Z'%20fill='%23fff'/%3E%3Cpath%20d='M10%2023l3.4-2.8h5.9A4.7%204.7%200%200%200%2024%2015.5v-8A4.7%204.7%200%200%200%2019.3%203h-9.8'%20fill='none'%20stroke='%23241a12'%20stroke-width='1.6'%20stroke-linecap='round'/%3E%3Ccircle%20cx='12'%20cy='11.5'%20r='1.2'%20fill='%23241a12'/%3E%3Ccircle%20cx='16'%20cy='11.5'%20r='1.2'%20fill='%23241a12'/%3E%3Ccircle%20cx='20'%20cy='11.5'%20r='1.2'%20fill='%23241a12'/%3E%3C/svg%3E";
   function setButtr(img) {
     if (!img) return;
     img.onerror = function () {
@@ -812,6 +819,7 @@
   var formTimers = []; // FormSpec.afterReplyMs fallback timers; cleared on takeover / when any form shows
   var ctaArmed = false; // CTAs arm once, on the first visitor message
   var repliedOnce = false; // first AI reply arms the afterReplyMs form fallback
+  var attachmentsEnabled = true; // old edges omit capabilities; preserve their behavior
   var ctaRow = null; // lazily-created CTA-row card inside .log
   var startersEl = null; // starter-chip strip above the composer (fresh conversation only)
   var popShown = false; // a teaser card is currently visible (one at a time)
@@ -886,9 +894,22 @@
       $(".ttl").textContent = th.headerTitle;
     if (typeof th.tagline === "string" && th.tagline) $(".subtxt").textContent = th.tagline;
     if (typeof th.greeting === "string") greeting = th.greeting.trim();
-    // avatar (shared gate) — brands the header AND the floating launcher badge
+    // avatar (shared gate) — brands the header AND the floating launcher badge.
+    // "none" is an explicit text-only customer-brand mode: remove the header
+    // image (and its flex slot) and use a neutral chat mark in our launcher.
+    if (th.avatar === "none") {
+      avatarEl.style.display = "none";
+      launcherIcon.onerror = null;
+      launcherIcon.src = CHAT_MARK;
+    } else {
+      avatarEl.style.display = "";
+      launcherIcon.onerror = function () {
+        this.onerror = null;
+        this.src = BUTTR;
+      };
+    }
     var av = isRenderableAvatar(th.avatar);
-    if (av) {
+    if (av && th.avatar !== "none") {
       avatarEl.src = av;
       launcherIcon.src = av;
     }
@@ -944,6 +965,7 @@
   // sugar for a single timer popup. All lists default empty → nothing new shows.
   function applyBoot(c) {
     if (!c) return;
+    if (c.capabilities && c.capabilities.attachments === false) attachmentsEnabled = false;
     if (Array.isArray(c.ctas)) ctas = c.ctas;
     if (Array.isArray(c.forms)) forms = c.forms;
     if (c.script) {
@@ -990,6 +1012,7 @@
       "/api/widget/config?t=" +
       encodeURIComponent(cfg.tenant) +
       (cfg.site ? "&s=" + encodeURIComponent(cfg.site) : ""),
+    { cache: "no-cache" },
   )
     .then(function (r) {
       return r.json();
@@ -1298,6 +1321,10 @@
     }
     var d = document.createElement("div");
     d.className = "msg " + cls;
+    // Keep the raw server text beside the rendered DOM. Markdown formatting
+    // changes textContent, so reconnect reconciliation must compare payloads,
+    // not the visual text extracted from the bubble.
+    d.dataset.krispyText = String(text);
     // Only AI-emitted bubbles get markdown; visitor (me) + system (sys) stay
     // literal so a visitor can never inject markup.
     if (cls === "bot" || cls === "op") renderRich(d, String(text));
@@ -1306,6 +1333,41 @@
     log.scrollTop = log.scrollHeight;
     if (!restoring && (cls === "me" || cls === "bot" || cls === "op")) persistMsg(cls, text);
     return d;
+  }
+
+  // A reconnect's ready frame includes the durable ring. Reconcile by role/text
+  // counts so a reply received while this tab was suspended appears exactly once
+  // without duplicating the locally persisted transcript.
+  function syncServerMessages(messages) {
+    if (!Array.isArray(messages) || !messages.length) return;
+    var counts = Object.create(null);
+    log.querySelectorAll(".msg").forEach(function (el) {
+      var cls = el.classList.contains("me")
+        ? "me"
+        : el.classList.contains("op")
+          ? "op"
+          : el.classList.contains("bot")
+            ? "bot"
+            : "";
+      if (!cls) return;
+      var key = cls + "\u0000" + (el.dataset.krispyText ?? el.textContent);
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    messages.forEach(function (message) {
+      var cls = message.role === "visitor" ? "me" : message.role === "operator" ? "op" : "bot";
+      var text = String(message.text || "");
+      var key = cls + "\u0000" + text;
+      if (counts[key]) counts[key] -= 1;
+      else add(cls, text);
+    });
+    // The server ring is authoritative for the next AI turn after reconnect.
+    history.length = 0;
+    messages.slice(-10).forEach(function (message) {
+      history.push({
+        role: message.role === "visitor" ? "user" : "assistant",
+        content: String(message.text || ""),
+      });
+    });
   }
 
   // ── keyboard-aware floating card (visualViewport) ───────────────────────
@@ -1471,7 +1533,16 @@
   };
 
   // ── live channel (operator replies) ─────────────────────────────────────
+  function scheduleWsReconnect(delay) {
+    if (wsReconnectTimer != null) return;
+    wsReconnectTimer = setTimeout(function () {
+      wsReconnectTimer = null;
+      connectWs();
+    }, delay);
+  }
+
   function connectWs() {
+    if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
     try {
       var wsUrl =
         cfg.api.replace(/^http/, "ws") +
@@ -1493,6 +1564,7 @@
           handedOff = handoffState !== "ai";
           if (handoffState === "operator") markHuman();
           else if (handoffState === "pending") markWaiting();
+          syncServerMessages(ev.messages);
         } else if (ev.type === "operator") {
           handoffState = "operator";
           handedOff = true;
@@ -1519,7 +1591,7 @@
         // thundering-herd reconnect when the edge recovers). Reset on open.
         var delay = wsBackoff * (0.75 + Math.random() * 0.5);
         wsBackoff = Math.min(wsBackoff * 2, WS_BACKOFF_MAX);
-        setTimeout(connectWs, delay);
+        scheduleWsReconnect(delay);
       }; // reconnect
       // keepalive so proxies don't idle-close (hibernation-friendly)
       ws.onopen = function () {
@@ -1537,6 +1609,21 @@
       /* WS optional; POST still works */
     }
   }
+
+  // Mobile browsers may suspend the socket without delivering a close event.
+  // Force a reconnect on return so the ready snapshot backfills missed replies.
+  document.addEventListener("visibilitychange", function () {
+    if (!opened || document.visibilityState !== "visible") return;
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+      try {
+        ws.close();
+      } catch {
+        /* reconnect below is best-effort */
+      }
+    } else {
+      connectWs();
+    }
+  });
 
   var waitingMarked = false;
   function markWaiting() {
@@ -1561,20 +1648,6 @@
     formTimers.forEach(clearTimeout);
     formTimers = [];
   }
-
-  // ── contact capture (on [!HANDOFF] with no form) ────────────────────────
-  // One renderer, one door: the legacy hardcoded .cap markup is gone — handoff
-  // without a tenant form renders this default FormSpec through showForm(),
-  // posting /api/lead like every other form (/api/contact stays an edge shim
-  // for already-deployed widgets).
-  var DEFAULT_CONTACT_FORM = {
-    id: "contact",
-    title: "Leave your contact",
-    fields: [
-      { name: "name", label: "Your name", type: "text" },
-      { name: "contact", label: "Email or phone", type: "text", required: true },
-    ],
-  };
 
   // ── CTA engine (§4) — social-connector cards inside .log ─────────────────────
   // Armed on the FIRST visitor message; each CTA renders once after its own
@@ -1835,8 +1908,9 @@
             armFormFallback(); // first AI reply → afterReplyMs form timer (§4)
           }
         }
+        // Handoff itself never asks for contact details. The operator is already
+        // reachable in Buttr; only an explicitly configured form may collect data.
         if (res.form) showForm(res.form);
-        else if (res.handoff) showForm(DEFAULT_CONTACT_FORM);
         if (responseState === "pending") {
           // The first handoff reply already tells the visitor a teammate is coming.
           // Later silent turns/reconnects need one truthful waiting line of their own.
@@ -1957,6 +2031,7 @@
   }
 
   function attach(file) {
+    if (!attachmentsEnabled) return;
     if (!file || file.type.indexOf("image/") !== 0) return;
     // `void`: deliberately fire-and-forget. shrink() resolves on every path
     // (including its own failures, which fall back to the untouched file), so
@@ -1978,6 +2053,7 @@
   // PASTE. clipboardData.files is the modern surface; items is the fallback for
   // browsers that only expose the entries.
   input.addEventListener("paste", function (e) {
+    if (!attachmentsEnabled) return;
     var dt = e.clipboardData;
     if (!dt) return;
     var file = dt.files && dt.files[0];
@@ -1995,6 +2071,7 @@
 
   // DROP, anywhere on the panel.
   panel.addEventListener("dragover", function (e) {
+    if (!attachmentsEnabled) return;
     if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types, "Files") > -1) {
       e.preventDefault();
       panel.classList.add("kdrop");
@@ -2004,6 +2081,7 @@
     if (e.target === panel) panel.classList.remove("kdrop");
   });
   panel.addEventListener("drop", function (e) {
+    if (!attachmentsEnabled) return;
     if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
     e.preventDefault();
     panel.classList.remove("kdrop");

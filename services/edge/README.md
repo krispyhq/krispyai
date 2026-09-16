@@ -62,14 +62,21 @@ response exposes no usage counts) under the `usage:<tenant>:<yyyymm>:tokens` KV 
 surfaced as `tokens` in `/api/usage`. Prompt caching is N/A on Workers AI (no
 `cache_control` knob); the BYO-key adapter seam in `ai.ts` is where it plugs in later.
 
+The browser widget sends its current visitor line at the end of `history` before posting
+`/api/chat`. On a first-message handoff, the Worker removes only that trailing exact match
+from the empty-ring seed and then appends the live turn once. Earlier identical questions
+are preserved; history entries that do not end with the current line are seeded unchanged.
+
 ### Tenant-config sync (the `krispy` CLI → gate)
 
 The `krispy` CLI (`packages/cli`) — or Krispy Cloud, or your own tooling — manages a
-tenant's Telegram creds + prompt/model over `/api/tenant/config`. Both routes require the header
+tenant's optional Telegram creds + prompt/model over `/api/tenant/config`. Both routes require the header
 `x-tenant-sync-secret: <TENANT_SYNC_SECRET>` — the payload holds a **bot token**, so
 without the secret they return **401** and never leak config. POST **merges** (unset
 fields are preserved), writing the exact KV shape `getTenant()` reads (key
-`tenant:<tenantId>`), so a saved bot token/prompt immediately drives the bot.
+`tenant:<tenantId>`). A Cloud tenant's prompt/theme/forms work without Telegram; Buttr
+handles operator handoff. Screenshot forwarding remains Telegram-backed, so the public
+widget config reports that capability as unavailable for app-only tenants.
 
 Secrets are separate on purpose: `TENANT_SYNC_SECRET` guards the config sync (the
 `krispy` CLI uses it); `BILLING_SYNC_SECRET` guards the optional billing→gate push
@@ -91,7 +98,8 @@ Secrets are separate on purpose: `TENANT_SYNC_SECRET` guards the config sync (th
 - **Metering** — every AI call + handoff increments a KV counter; `planFor()` /
   `withinPlan()` are the plan-gate seam (unlimited for `self` today).
 - **Graceful degradation** — AI down → still hands off to a human (never drops the
-  visitor); Telegram unconfigured → chat still answers, topic ops no-op.
+  visitor); Telegram unconfigured → chat and Buttr handoff still work, topic operations
+  no-op, and screenshot paste/drop stays disabled.
 - **AI adapter** — Workers AI default (`workersAiRunner`); the `AiRunner` type is the
   BYO-key seam.
 

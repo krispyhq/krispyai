@@ -16,6 +16,8 @@ export const HANDOFF_MARKER = "[!HANDOFF]";
 // competes with it (a reply can still be one short sentence + the marker).
 export const BREVITY_INSTRUCTION = "Keep replies under ~3 short sentences.";
 
+export const HANDOFF_INSTRUCTION = `When a human should take over, append ${HANDOFF_MARKER} at the very end of your reply. Use it for an explicit human request or a question you cannot answer safely. Do not use it for normal questions you can answer from the business information provided.`;
+
 // Always-appended guardrails (see buildSystemPrompt). Kept SEPARATE from DEFAULT_PROMPT
 // on purpose: a tenant's custom systemPrompt replaces DEFAULT wholesale, so anything the
 // bot must ALWAYS obey — refusing prompt / architecture / secret disclosure, staying in
@@ -82,15 +84,23 @@ export function buildSystemPrompt(
   kbSources?: KbSource[],
 ): string {
   const base = custom?.trim() ? custom.trim() : DEFAULT_PROMPT;
-  // Even a custom prompt must know the handoff contract, so always restate it.
-  const withHandoff = custom?.includes(HANDOFF_MARKER)
-    ? base
-    : `${base}\n\nWhen a human should take over, append ${HANDOFF_MARKER} at the very end of your reply.`;
+  // Even a custom prompt must know the complete handoff contract. Always restate
+  // it so merely mentioning the token in custom copy cannot omit the normal-answer
+  // boundary and cause needless escalations.
+  const withHandoff = `${base}\n\n${HANDOFF_INSTRUCTION}`;
   // Persona rides between the instructions and the forms/guardrail contracts — the bot's
   // voice, still inside the leak-guard scope. SECURITY_INSTRUCTION + BREVITY are ALWAYS
   // appended, even over a custom prompt, so the guardrails and length cap can never be
   // dropped by a tenant overriding the base prompt.
   return `${withHandoff}${personaBlock(persona)}${knowledgeBlock(kbSources)}${formsBlock(forms)}\n\n${SECURITY_INSTRUCTION}\n\n${BREVITY_INSTRUCTION}`;
+}
+
+/** Instruction-only scope for output leak detection. Custom system prompts often
+ * contain the business's answerable facts (the original onboarding contract), so
+ * treating every repeated fact as a secret suppresses correct answers. Control
+ * tokens and security sentinels are still checked independently by detectPromptLeak. */
+export function buildPromptLeakScope(forms?: FormRef[], persona?: PersonaSpec): string {
+  return `${HANDOFF_INSTRUCTION}${personaBlock(persona)}${formsBlock(forms)}\n\n${SECURITY_INSTRUCTION}\n\n${BREVITY_INSTRUCTION}`;
 }
 
 export interface ParsedReply {

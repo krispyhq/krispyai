@@ -56,7 +56,7 @@ export interface WidgetTheme {
   glowColor?: string; // hex → drives glow/sparkle/pulse rgba stops. UNSET = no glow
   // layer at all (default) — the launcher keeps today's neutral look
   position?: "br" | "bl"; // bottom-right | bottom-left. Default "br"
-  avatar?: string; // "buttr" (default, inline data-URI) | https URL | data:image/… URI
+  avatar?: string; // "buttr" (default) | "none" | https URL | data:image/… URI
   greeting?: string; // first bot bubble on open
   headerTitle?: string; // header text (supersedes legacy data-title)
   tagline?: string; // header sub-line ("usually replies in minutes")
@@ -132,10 +132,10 @@ export interface KbSuggestion {
 }
 
 export interface TenantConfig {
-  /** Telegram bot token (BotFather). */
-  botToken: string;
-  /** Target supergroup id WITH topics enabled, e.g. -1001234567890. */
-  chatId: string;
+  /** Telegram bot token (BotFather). Optional for app-only Cloud tenants. */
+  botToken?: string;
+  /** Target supergroup id WITH topics enabled. Optional for app-only Cloud tenants. */
+  chatId?: string;
   /** Optional system-prompt override. */
   systemPrompt?: string;
   /** Optional model override. */
@@ -250,8 +250,14 @@ export type HandoffState = "ai" | "pending" | "operator";
 
 /** Message pushed over the DO WebSocket to the visitor's browser. */
 export type ServerEvent =
-  | { type: "ready"; handoffState: HandoffState; handedOff: boolean }
-  | { type: "operator"; handoffState: "operator"; text: string }
+  | {
+      type: "ready";
+      handoffState: HandoffState;
+      handedOff: boolean;
+      /** Authoritative ring snapshot for clients reconnecting after backgrounding. */
+      messages?: { role: "visitor" | "ai" | "operator"; text: string; ts: number }[];
+    }
+  | { type: "operator"; handoffState: "operator"; text: string; ts: number }
   | { type: "handoff"; handoffState: "pending" | "operator" }
   /** The AI took the session back (operator resolved it, or went silent past the
    * HANDBACK_SILENCE_MINUTES alarm). Widget drops its "human joined" framing. */

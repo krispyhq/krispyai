@@ -12,6 +12,10 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Changed
 
+- Edge preview: configure `API_ORIGIN` to the hosted dev API
+  (`https://api-preview.krispyai.com`) so Buttr operator bearer verification stays in the
+  preview environment. Production retains its separate API origin.
+
 - Widget: the chat now reads as one light messaging surface with an expressive Buttr launcher,
   softer depth, modern sans typography, a floating composer, and transcript-native forms and
   actions. Opening and closing use one reversible opacity/transform transition; reduced-motion
@@ -23,8 +27,23 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 ### Added
 
 - Widget: **bring your own launcher** — an embedder can suppress Krispy's launcher and drive the panel from their own mark. `data-launcher="none"` on the embed hides the built-in button (it stays in the DOM so the unread dot, nudge, glow and entrance paths are untouched); `window.krispy` exposes `open()` / `close()` / `toggle()` / `isOpen()` / `unread()` / `el`; and `krispy:open`, `krispy:close`, `krispy:unread` (`detail: { unread: boolean }`) fire on `document` so a custom launcher can show its own dot when an operator replies. The host element now carries `class="krispy-widget"` — before this, the only thing identifying it in the document was the z-index in its inline style, so integrators were selecting `div[style*="2147483000"]` and synthesising a `.click()` on the hidden built-in button through the open shadow root. **Every part is opt-in and the default embed is byte-for-byte unchanged**: leave `data-launcher` off and the launcher renders exactly as before; the global and the events are inert until something calls or listens.
+- Widget: `theme.avatar: "none"` hides the header avatar without leaving a flex gap and uses a neutral chat mark in the built-in launcher. Existing tenants and the default Buttr avatar remain unchanged.
 
 ### Fixed
+
+- Edge: first-message handoffs no longer duplicate the current visitor message when the browser
+  includes that message as the final `history` entry. Earlier identical questions remain intact.
+
+- Cloud chat now honors prompt, theme, forms, and Buttr handoff for app-only tenants without
+  requiring Telegram credentials. Business facts in an onboarding prompt can be repeated as
+  answers without tripping the control-instruction leak detector. Known questions remain with
+  the AI; explicit human requests enter `pending` without forcing a name, email, or phone form.
+  The widget also disables Telegram-backed screenshot paste/drop when the public capability
+  projection says attachments are unavailable.
+
+- Widget: mute and close controls now expose 44px touch targets on coarse-pointer devices while
+  keeping the compact desktop chrome. Public widget configuration revalidates once per boot, so
+  a warm browser tab no longer reuses stale tenant branding after a reload.
 
 - Widget: tenant accent colors no longer assume dark text. Krispy's brand ink remains the first
   choice when it reaches 4.5:1 contrast; otherwise the widget chooses black or white by measured

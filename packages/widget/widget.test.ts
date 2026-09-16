@@ -70,6 +70,17 @@ describe("widget visual contract", () => {
     expect(source).toContain('aria-expanded="false"');
   });
 
+  test("human handoff does not require the visitor to submit contact details", () => {
+    expect(source).not.toContain("DEFAULT_CONTACT_FORM");
+    expect(source).not.toContain("else if (res.handoff) showForm");
+    expect(source).toContain("if (res.form) showForm(res.form)");
+  });
+
+  test("app-only tenants do not advertise Telegram-backed screenshot upload", () => {
+    expect(source).toContain("c.capabilities.attachments === false");
+    expect(source).toContain("if (!attachmentsEnabled) return;");
+  });
+
   test("Buttr floats without a badge fill unless a tenant supplies one", () => {
     expect(source).toContain("--k-launcher:transparent;");
     expect(source).not.toContain("--k-launcher:var(--k-primary)");
@@ -83,5 +94,26 @@ describe("widget visual contract", () => {
   test("pill width follows the intrinsic label instead of a flex-shrunk button", () => {
     expect(source).toContain("Math.ceil(pillLabel.scrollWidth + 87)");
     expect(source).not.toContain("Math.max(116, pillBtn.scrollWidth)");
+  });
+
+  test("coarse pointers get comfortable header controls without resizing desktop controls", () => {
+    expect(source).toContain(".hd .mute,.hd .x,.att .attx{");
+    expect(source).toContain("width:34px;height:34px;");
+    expect(source).toContain("@media (pointer:coarse){.hd .mute,.hd .x{width:44px;height:44px}}");
+  });
+
+  test("boot config revalidates without creating one-off cache-buster URLs", () => {
+    const start = source.indexOf('"/api/widget/config?t="');
+    const end = source.indexOf(".then(function (r)", start);
+    const bootFetch = source.slice(start, end);
+    expect(bootFetch).toContain('{ cache: "no-cache" }');
+    expect(bootFetch).not.toContain("Date.now()");
+  });
+
+  test("reconnect sync compares raw text, preserving markdown and duplicates", () => {
+    expect(source).toContain("d.dataset.krispyText = String(text)");
+    expect(source).toContain("el.dataset.krispyText ?? el.textContent");
+    expect(source).toContain("counts[key] = (counts[key] || 0) + 1");
+    expect(source).toContain("if (counts[key]) counts[key] -= 1");
   });
 });

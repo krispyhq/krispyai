@@ -10,7 +10,7 @@ import {
   BREVITY_INSTRUCTION,
 } from "../src/system-prompt";
 import { renderLeadEmail, sendLeadEmail } from "../src/email";
-import { deliverLead, ringToHistory, RING_HISTORY_MAX } from "../src/index";
+import { deliverLead, historySeed, ringToHistory, RING_HISTORY_MAX } from "../src/index";
 import { parseOwnerReply, sendToTopic, buildMentions, sendHandoffAlert } from "../src/telegram";
 import {
   broadcast,
@@ -374,6 +374,17 @@ describe("store", () => {
     const overridden = await getTenant({ ...env, SYSTEM_PROMPT: "env prompt" } as any, "self");
     expect(overridden?.systemPrompt).toBe("env prompt");
   });
+  test("getTenant keeps app-only Cloud prompt config without Telegram credentials", async () => {
+    const env = fakeEnv();
+    await mergeTenantConfig(env, "delulus", {
+      systemPrompt: "Answer from the Delulus curriculum.",
+      theme: { headerTitle: "Delulus" },
+    });
+    expect(await getTenant(env, "delulus")).toEqual({
+      systemPrompt: "Answer from the Delulus curriculum.",
+      theme: { headerTitle: "Delulus" },
+    });
+  });
   test("plan gate", () => {
     expect(withinPlan({ ai: 0, handoff: 0 }, planFor("self"))).toBe(true);
     expect(withinPlan({ ai: 5, handoff: 0 }, { aiPerMonth: 5, handoffPerMonth: 10 })).toBe(false);
@@ -547,9 +558,14 @@ describe("tenant config routes", () => {
     expect(await readTenantConfig(env, "t1")).toBeNull();
   });
 
-  test("avatar scheme: https/data-image/buttr pass, http and data:text rejected", async () => {
+  test("avatar scheme: https/data-image/buttr/none pass, http and data:text rejected", async () => {
     const env = fakeEnv({ TENANT_SYNC_SECRET: SECRET });
-    for (const avatar of ["buttr", "https://cdn.example/logo.png", "data:image/webp;base64,AA"]) {
+    for (const avatar of [
+      "buttr",
+      "none",
+      "https://cdn.example/logo.png",
+      "data:image/webp;base64,AA",
+    ]) {
       expect((await postCfg(env, { theme: { avatar } })).status).toBe(200);
     }
     for (const avatar of [
@@ -718,12 +734,14 @@ describe("broadcast", () => {
       type: "operator",
       handoffState: "operator",
       text: "hi",
+      ts: 1,
     });
     expect(n).toBe(2);
     expect(JSON.parse(seen[0]!)).toEqual({
       type: "operator",
       handoffState: "operator",
       text: "hi",
+      ts: 1,
     });
   });
 });
@@ -2140,6 +2158,64 @@ describe("pushToApp", () => {
 
 // ── handoff integration: ring seed + app push + Telegram mention skip ────────
 describe("handoff → push + mention skip (integration)", () => {
+  test("first-message handoff seeds prior history without duplicating the current visitor turn", async () => {
+    const env = wireSessionNS(
+      fakeEnv({
+        TENANT_SYNC_SECRET: OP_SECRET,
+        AI: { run: async () => ({ response: "One sec. [!HANDOFF]" }) } as unknown as Ai,
+      }),
+    );
+    const res = await worker.fetch(
+      new Request("https://edge.test/api/chat", {
+        method: "POST",
+        body: JSON.stringify({
+          sessionId: "s-first-handoff",
+          tenantId: "self",
+          message: "same question",
+          history: [
+            { role: "user", content: "same question" },
+            { role: "assistant", content: "earlier answer" },
+            { role: "user", content: "same question" },
+          ],
+        }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(200);
+
+    const thread = await worker.fetch(
+      new Request("https://edge.test/api/operator/thread", {
+        method: "POST",
+        headers: { "x-tenant-sync-secret": OP_SECRET },
+        body: JSON.stringify({ tenantId: "self", sessionId: "s-first-handoff" }),
+      }),
+      env,
+    );
+    const { messages } = (await thread.json()) as { messages: RingMsg[] };
+    expect(messages.map((m) => [m.role, m.text])).toEqual([
+      ["visitor", "same question"],
+      ["ai", "earlier answer"],
+      ["visitor", "same question"],
+      ["ai", "One sec."],
+    ]);
+  });
+
+  test("historySeed removes only a trailing current-message entry", () => {
+    expect(
+      historySeed(
+        [
+          { role: "user", content: "same question" },
+          { role: "assistant", content: "earlier answer" },
+          { role: "user", content: "same question" },
+        ],
+        "same question",
+      ),
+    ).toEqual([
+      { role: "visitor", text: "same question" },
+      { role: "ai", text: "earlier answer" },
+    ]);
+  });
+
   test("[!HANDOFF]: history seeds the ring, app op pushed (not @mentioned), tg op mentioned", async () => {
     const env = wireSessionNS(
       fakeEnv({

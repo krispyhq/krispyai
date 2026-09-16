@@ -60,6 +60,9 @@ visitor ──▶ AI answers (Cloudflare Workers AI) ──▶ visitor
 - You reply from Telegram → it's pushed into the browser over a WebSocket, **live**.
 - The bot detects it's a human job and steps back immediately. Messages sent while you are
   on the way still reach the same topic; the bot stays quiet until you resolve the handoff.
+- Browser clients may include the current visitor line at the end of `history`; the first
+  handoff seeds only the prior turns, then records that live line once. Earlier repeated
+  questions remain real conversation turns.
 
 Under the hood it's **one Cloudflare Worker** plus a **hibernatable Durable Object** (`SessionDO`)
 that holds the strongly-consistent `ai` / `pending` / `operator` state and keeps idle sockets
@@ -130,6 +133,10 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook" \
 
 Honest about the Telegram step: BotFather, the supergroup-with-Topics, and admin rights are a real five minutes of clicking — there's no way around a token if you want replies on your phone. Full walkthrough and architecture notes: [`services/edge/README.md`](./services/edge/README.md).
 
+Hosted Cloud can use the Buttr owner app without Telegram. In that mode the tenant's prompt,
+theme, forms, and human handoff still work; Telegram topic mirroring and screenshot forwarding
+stay off, and the widget suppresses the unavailable attachment path.
+
 ## Local dev
 
 No Docker, no Tilt, no orchestrator — two `bun` scripts in two terminals:
@@ -188,11 +195,14 @@ Host the dependency-free `widget.js` anywhere static, then drop one tag on any p
 | `data-launcher` | no       | (built-in)     | `none` suppresses the built-in launcher button  |
 
 Richer appearance — circle/pill launcher and label, avatar, greeting, position, corner radius, font, notification sound — is set from KV via the `theme` config, not attributes. See [**docs → embed + theme the widget**](./apps/docs/content/docs/guides/embed-and-theme.mdx).
+Each page load revalidates that public config, so a warm browser picks up tenant changes without a cache-buster URL.
 
 The widget keeps primary actions readable automatically: it prefers Krispy's brand ink at 4.5:1
 contrast, then chooses black or white for darker custom accents.
 
 **Bring your own launcher.** The theme restyles Krispy's launcher; it can't replace it. Set `data-launcher="none"` and drive the panel from your own mark with `window.krispy` (`open` · `close` · `toggle` · `isOpen` · `unread` · `el`), listening for `krispy:open` / `krispy:close` / `krispy:unread` on `document`. The host element carries `class="krispy-widget"`. All opt-in — leave it off and nothing changes. See [**docs → bring your own launcher**](./apps/docs/content/docs/guides/embed-and-theme.mdx#bring-your-own-launcher).
+Set `theme.avatar` to `"none"` for a text-only customer header; the built-in launcher uses a neutral chat mark while the default remains Buttr.
+On coarse-pointer devices, the mute and close controls expand to 44px touch targets while their icons and desktop sizing stay unchanged.
 
 Details: [`packages/widget/README.md`](./packages/widget/README.md).
 
