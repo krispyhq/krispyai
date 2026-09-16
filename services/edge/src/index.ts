@@ -20,7 +20,7 @@ import type { ChatMessage } from "./ai";
 import { workersAiRunner, DEFAULT_MODEL } from "./ai";
 import { chatFlow } from "./chat";
 import { SessionDO, type RingMsg } from "./session-do";
-import { buildSystemPrompt } from "./system-prompt";
+import { buildPromptLeakScope, buildSystemPrompt } from "./system-prompt";
 import {
   parseOwnerReply,
   createForumTopic,
@@ -360,13 +360,9 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
         tenant?.persona,
         tenant?.kbSources,
       ),
-      // Leak-check scope = the INSTRUCTION portion only (same prompt WITHOUT the injected
-      // knowledge block), so a bot quoting its own kbSources verbatim isn't flagged as a
-      // prompt leak. Undefined when there's no knowledge (chatFlow falls back to systemPrompt,
-      // which is then identical) — avoids the extra build on the common no-KB path.
-      leakScope: tenant?.kbSources?.length
-        ? buildSystemPrompt(tenant?.systemPrompt, tenant?.forms, tenant?.persona)
-        : undefined,
+      // Leak-check only the control/security instructions. The onboarding prompt can
+      // also contain business facts, and quoting those is a correct answer, not a leak.
+      leakScope: buildPromptLeakScope(tenant?.forms, tenant?.persona),
       // Ring-derived (or seed) history in; chatFlow applies the sliding window +
       // counts turns (chokepoint).
       history,
