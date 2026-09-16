@@ -163,6 +163,7 @@
   var handedOff = false; // internal silence gate: pending OR operator
   var ws = null;
   var keepalive = null;
+  var wsReconnectTimer = null;
   var wsBackoff = 3000; // reconnect delay, exponential up to WS_BACKOFF_MAX (with jitter)
   var WS_BACKOFF_MAX = 30000;
 
@@ -818,6 +819,7 @@
   var formTimers = []; // FormSpec.afterReplyMs fallback timers; cleared on takeover / when any form shows
   var ctaArmed = false; // CTAs arm once, on the first visitor message
   var repliedOnce = false; // first AI reply arms the afterReplyMs form fallback
+  var attachmentsEnabled = true; // old edges omit capabilities; preserve their behavior
   var ctaRow = null; // lazily-created CTA-row card inside .log
   var startersEl = null; // starter-chip strip above the composer (fresh conversation only)
   var popShown = false; // a teaser card is currently visible (one at a time)
@@ -963,6 +965,7 @@
   // sugar for a single timer popup. All lists default empty → nothing new shows.
   function applyBoot(c) {
     if (!c) return;
+    if (c.capabilities && c.capabilities.attachments === false) attachmentsEnabled = false;
     if (Array.isArray(c.ctas)) ctas = c.ctas;
     if (Array.isArray(c.forms)) forms = c.forms;
     if (c.script) {
@@ -1328,6 +1331,41 @@
     return d;
   }
 
+  // A reconnect's ready frame includes the durable ring. Reconcile by role/text
+  // counts so a reply received while this tab was suspended appears exactly once
+  // without duplicating the locally persisted transcript.
+  function syncServerMessages(messages) {
+    if (!Array.isArray(messages) || !messages.length) return;
+    var counts = Object.create(null);
+    log.querySelectorAll(".msg").forEach(function (el) {
+      var cls = el.classList.contains("me")
+        ? "me"
+        : el.classList.contains("op")
+          ? "op"
+          : el.classList.contains("bot")
+            ? "bot"
+            : "";
+      if (!cls) return;
+      var key = cls + "\u0000" + el.textContent;
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    messages.forEach(function (message) {
+      var cls = message.role === "visitor" ? "me" : message.role === "operator" ? "op" : "bot";
+      var text = String(message.text || "");
+      var key = cls + "\u0000" + text;
+      if (counts[key]) counts[key] -= 1;
+      else add(cls, text);
+    });
+    // The server ring is authoritative for the next AI turn after reconnect.
+    history.length = 0;
+    messages.slice(-10).forEach(function (message) {
+      history.push({
+        role: message.role === "visitor" ? "user" : "assistant",
+        content: String(message.text || ""),
+      });
+    });
+  }
+
   // ── keyboard-aware floating card (visualViewport) ───────────────────────
   var vv = window.visualViewport;
   function syncViewport() {
@@ -1491,7 +1529,16 @@
   };
 
   // ── live channel (operator replies) ─────────────────────────────────────
+  function scheduleWsReconnect(delay) {
+    if (wsReconnectTimer != null) return;
+    wsReconnectTimer = setTimeout(function () {
+      wsReconnectTimer = null;
+      connectWs();
+    }, delay);
+  }
+
   function connectWs() {
+    if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
     try {
       var wsUrl =
         cfg.api.replace(/^http/, "ws") +
@@ -1513,6 +1560,7 @@
           handedOff = handoffState !== "ai";
           if (handoffState === "operator") markHuman();
           else if (handoffState === "pending") markWaiting();
+          syncServerMessages(ev.messages);
         } else if (ev.type === "operator") {
           handoffState = "operator";
           handedOff = true;
@@ -1539,7 +1587,7 @@
         // thundering-herd reconnect when the edge recovers). Reset on open.
         var delay = wsBackoff * (0.75 + Math.random() * 0.5);
         wsBackoff = Math.min(wsBackoff * 2, WS_BACKOFF_MAX);
-        setTimeout(connectWs, delay);
+        scheduleWsReconnect(delay);
       }; // reconnect
       // keepalive so proxies don't idle-close (hibernation-friendly)
       ws.onopen = function () {
@@ -1557,6 +1605,21 @@
       /* WS optional; POST still works */
     }
   }
+
+  // Mobile browsers may suspend the socket without delivering a close event.
+  // Force a reconnect on return so the ready snapshot backfills missed replies.
+  document.addEventListener("visibilitychange", function () {
+    if (!opened || document.visibilityState !== "visible") return;
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+      try {
+        ws.close();
+      } catch {
+        /* reconnect below is best-effort */
+      }
+    } else {
+      connectWs();
+    }
+  });
 
   var waitingMarked = false;
   function markWaiting() {
@@ -1964,6 +2027,7 @@
   }
 
   function attach(file) {
+    if (!attachmentsEnabled) return;
     if (!file || file.type.indexOf("image/") !== 0) return;
     // `void`: deliberately fire-and-forget. shrink() resolves on every path
     // (including its own failures, which fall back to the untouched file), so
@@ -1985,6 +2049,7 @@
   // PASTE. clipboardData.files is the modern surface; items is the fallback for
   // browsers that only expose the entries.
   input.addEventListener("paste", function (e) {
+    if (!attachmentsEnabled) return;
     var dt = e.clipboardData;
     if (!dt) return;
     var file = dt.files && dt.files[0];
@@ -2002,6 +2067,7 @@
 
   // DROP, anywhere on the panel.
   panel.addEventListener("dragover", function (e) {
+    if (!attachmentsEnabled) return;
     if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types, "Files") > -1) {
       e.preventDefault();
       panel.classList.add("kdrop");
@@ -2011,6 +2077,7 @@
     if (e.target === panel) panel.classList.remove("kdrop");
   });
   panel.addEventListener("drop", function (e) {
+    if (!attachmentsEnabled) return;
     if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
     e.preventDefault();
     panel.classList.remove("kdrop");

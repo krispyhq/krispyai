@@ -250,7 +250,13 @@ export type HandoffState = "ai" | "pending" | "operator";
 
 /** Message pushed over the DO WebSocket to the visitor's browser. */
 export type ServerEvent =
-  | { type: "ready"; handoffState: HandoffState; handedOff: boolean }
+  | {
+      type: "ready";
+      handoffState: HandoffState;
+      handedOff: boolean;
+      /** Authoritative ring snapshot for clients reconnecting after backgrounding. */
+      messages?: { role: "visitor" | "ai" | "operator"; text: string; ts: number }[];
+    }
   | { type: "operator"; handoffState: "operator"; text: string }
   | { type: "handoff"; handoffState: "pending" | "operator" }
   /** The AI took the session back (operator resolved it, or went silent past the

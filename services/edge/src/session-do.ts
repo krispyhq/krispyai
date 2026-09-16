@@ -60,6 +60,18 @@ export interface RingMsg {
   ts: number;
 }
 
+/** The first frame after every WS reconnect carries the durable ring snapshot.
+ * Clients may have been backgrounded while a reply arrived, so the live event
+ * alone cannot be the source of truth after reconnect. */
+export function readyEvent(handoffState: HandoffState, messages: RingMsg[]): ServerEvent {
+  return {
+    type: "ready",
+    handoffState,
+    handedOff: handoffState === "operator",
+    messages: messages.slice(-RING_MAX),
+  };
+}
+
 // ── silence hand-back (DO alarm) ─────────────────────────────────────────────
 // Operator silence after a visitor message on a handed-off session → hand back to
 // the AI. Minutes are env-tunable (HANDBACK_SILENCE_MINUTES); this is the default.
@@ -195,11 +207,7 @@ export class SessionDO {
       const operator = url.searchParams.get("role") === "operator";
       this.state.acceptWebSocket(server, operator ? ["operator"] : undefined); // hibernatable — no idle billing
       const handoffState = await this.handoffState();
-      const event: ServerEvent = {
-        type: "ready",
-        handoffState,
-        handedOff: handoffState === "operator",
-      };
+      const event = readyEvent(handoffState, await this.ring());
       try {
         server.send(JSON.stringify(event));
       } catch {
