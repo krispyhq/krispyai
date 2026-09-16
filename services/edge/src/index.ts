@@ -1137,10 +1137,11 @@ async function handleWidgetConfig(request: Request, env: Env): Promise<Response>
   // Free heartbeat: this fetch fires on every page load, so stamp the site's
   // last-seen record (throttled in-isolate, best-effort — never blocks the boot).
   await stampSeen(env, t, request, siteId);
-  // Short public cache — the boot config (now up to ~10–30KB with a data-URI avatar)
-  // is otherwise refetched uncached on every page load. 60s keeps edits near-live.
+  // Browsers may store this public projection, but every widget boot must revalidate it:
+  // tenant branding and forms can change while a Safari tab remains warm. Revalidation
+  // avoids stale config without creating an unbounded set of cache-buster URLs.
   return Response.json(publicWidgetConfig(cfg), {
-    headers: { ...cors(env), "Cache-Control": "public, max-age=60" },
+    headers: { ...cors(env), "Cache-Control": "public, max-age=0, must-revalidate" },
   });
 }
 

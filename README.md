@@ -188,12 +188,14 @@ Host the dependency-free `widget.js` anywhere static, then drop one tag on any p
 | `data-launcher` | no       | (built-in)     | `none` suppresses the built-in launcher button  |
 
 Richer appearance — circle/pill launcher and label, avatar, greeting, position, corner radius, font, notification sound — is set from KV via the `theme` config, not attributes. See [**docs → embed + theme the widget**](./apps/docs/content/docs/guides/embed-and-theme.mdx).
+Each page load revalidates that public config, so a warm browser picks up tenant changes without a cache-buster URL.
 
 The widget keeps primary actions readable automatically: it prefers Krispy's brand ink at 4.5:1
 contrast, then chooses black or white for darker custom accents.
 
 **Bring your own launcher.** The theme restyles Krispy's launcher; it can't replace it. Set `data-launcher="none"` and drive the panel from your own mark with `window.krispy` (`open` · `close` · `toggle` · `isOpen` · `unread` · `el`), listening for `krispy:open` / `krispy:close` / `krispy:unread` on `document`. The host element carries `class="krispy-widget"`. All opt-in — leave it off and nothing changes. See [**docs → bring your own launcher**](./apps/docs/content/docs/guides/embed-and-theme.mdx#bring-your-own-launcher).
 Set `theme.avatar` to `"none"` for a text-only customer header; the built-in launcher uses a neutral chat mark while the default remains Buttr.
+On coarse-pointer devices, the mute and close controls expand to 44px touch targets while their icons and desktop sizing stay unchanged.
 
 Details: [`packages/widget/README.md`](./packages/widget/README.md).
 

@@ -31,6 +31,10 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Fixed
 
+- Widget: mute and close controls now expose 44px touch targets on coarse-pointer devices while
+  keeping the compact desktop chrome. Public widget configuration revalidates once per boot, so
+  a warm browser tab no longer reuses stale tenant branding after a reload.
+
 - Widget: tenant accent colors no longer assume dark text. Krispy's brand ink remains the first
   choice when it reaches 4.5:1 contrast; otherwise the widget chooses black or white by measured
   contrast for visitor bubbles, send actions, forms, and primary CTAs.

@@ -632,6 +632,8 @@
     "justify-content:center;background:transparent;color:var(--k-muted-fg);transition:background .16s ease,color .16s ease,transform .16s ease" +
     "}" +
     ".hd .mute:hover,.hd .x:hover,.att .attx:hover{background:var(--k-muted);color:var(--k-espresso);transform:scale(1.04)}" +
+    // Keep the compact desktop chrome while giving finger taps a full 44px target.
+    "@media (pointer:coarse){.hd .mute,.hd .x{width:44px;height:44px}}" +
     ".log{padding:18px 14px 14px;gap:10px;background:var(--k-cream);scrollbar-color:rgba(106,100,112,.25) transparent}" +
     ".log::-webkit-scrollbar-thumb{background:rgba(106,100,112,.24)}" +
     ".msg{max-width:84%;padding:10px 13px;font-size:14px;line-height:1.48;letter-spacing:-.006em}" +
@@ -1007,6 +1009,7 @@
       "/api/widget/config?t=" +
       encodeURIComponent(cfg.tenant) +
       (cfg.site ? "&s=" + encodeURIComponent(cfg.site) : ""),
+    { cache: "no-cache" },
   )
     .then(function (r) {
       return r.json();

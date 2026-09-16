@@ -41,6 +41,8 @@ theme (below), not attributes.
 on open, the widget fetches `GET /api/widget/config?t=<tenant>` — a **public, secret-free**
 projection of your tenant's `theme`. change it in KV (via the CLI or your own tooling
 writing `POST /api/tenant/config`) and the widget picks it up on next load; no rebuild.
+The config response may be stored, but every widget boot revalidates it, so warm tabs pick up
+changes after a reload without generating one-off cache-buster URLs.
 
 the themeable fields (`WidgetTheme`):
 
@@ -170,7 +172,7 @@ in its inline style, which is what integrators had to do before the class existe
   inbound message while the panel is closed. respects a per-visitor mute (persisted) and the
   browser autoplay policy (silent until first interaction).
 - **mobile** — a keyboard-aware floating card via `visualViewport`, `16px` inputs to dodge
-  iOS zoom, and safe-area insets.
+  iOS zoom, safe-area insets, and 44px mute/close touch targets on coarse pointers.
 - **resilience** — the operator WebSocket reconnects with exponential backoff + jitter; the
   chat still works over plain `POST` if the socket is down.
 

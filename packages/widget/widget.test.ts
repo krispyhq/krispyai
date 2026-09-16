@@ -90,4 +90,18 @@ describe("widget visual contract", () => {
     expect(source).toContain("Math.ceil(pillLabel.scrollWidth + 87)");
     expect(source).not.toContain("Math.max(116, pillBtn.scrollWidth)");
   });
+
+  test("coarse pointers get comfortable header controls without resizing desktop controls", () => {
+    expect(source).toContain(".hd .mute,.hd .x,.att .attx{");
+    expect(source).toContain("width:34px;height:34px;");
+    expect(source).toContain("@media (pointer:coarse){.hd .mute,.hd .x{width:44px;height:44px}}");
+  });
+
+  test("boot config revalidates without creating one-off cache-buster URLs", () => {
+    const start = source.indexOf('"/api/widget/config?t="');
+    const end = source.indexOf(".then(function (r)", start);
+    const bootFetch = source.slice(start, end);
+    expect(bootFetch).toContain('{ cache: "no-cache" }');
+    expect(bootFetch).not.toContain("Date.now()");
+  });
 });

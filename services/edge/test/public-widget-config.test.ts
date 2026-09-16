@@ -2,6 +2,7 @@
 // Telegram bot token to the public web. Run: `bun test`.
 import { expect, test, describe } from "bun:test";
 import { publicWidgetConfig } from "../src/store";
+import worker from "../src/index";
 
 describe("publicWidgetConfig", () => {
   test("returns theme, NEVER secrets", () => {
@@ -173,4 +174,22 @@ test("pill launcher settings survive the public configuration projection", () =>
   expect(out.theme.launcherLabel).toBe("Ask us");
   expect(JSON.stringify(out)).not.toContain("private-token");
   expect(publicWidgetConfig(null).theme.launcherStyle).toBeUndefined();
+});
+
+test("widget config requires revalidation instead of serving a warm browser copy", async () => {
+  const values = new Map<string, string>();
+  const env = {
+    KRISPY_KV: {
+      get: async (key: string) => values.get(key) ?? null,
+      put: async (key: string, value: string) => void values.set(key, value),
+    },
+  } as never;
+
+  const response = await worker.fetch(
+    new Request("https://edge.example/api/widget/config?t=cache-contract"),
+    env,
+  );
+
+  expect(response.status).toBe(200);
+  expect(response.headers.get("Cache-Control")).toBe("public, max-age=0, must-revalidate");
 });
