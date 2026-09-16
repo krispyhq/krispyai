@@ -316,13 +316,15 @@ export class SessionDO {
 
     if (request.method === "POST" && url.pathname.endsWith("/operator")) {
       const { text } = (await request.json()) as { text: string };
+      const ts = Date.now();
       await this.setHandoffState("operator");
       await this.state.storage.deleteAlarm(); // the operator replied — disarm the silence hand-back
-      await this.appendRing([{ role: "operator", text, ts: Date.now() }]);
+      await this.appendRing([{ role: "operator", text, ts }]);
       const n = broadcast(this.state.getWebSockets(), {
         type: "operator",
         handoffState: "operator",
         text,
+        ts,
       });
       return Response.json({ ok: true, delivered: n });
     }

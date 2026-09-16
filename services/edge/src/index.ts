@@ -1140,7 +1140,13 @@ async function handleWidgetConfig(request: Request, env: Env): Promise<Response>
   // Browsers may store this public projection, but every widget boot must revalidate it:
   // tenant branding and forms can change while a Safari tab remains warm. Revalidation
   // avoids stale config without creating an unbounded set of cache-buster URLs.
-  return Response.json(publicWidgetConfig(cfg), {
+  const capabilities = {
+    attachments:
+      t === DEFAULT_TENANT
+        ? !!env.TELEGRAM_BOT_TOKEN && !!env.TELEGRAM_CHAT_ID
+        : !!cfg?.botToken && !!cfg.chatId,
+  };
+  return Response.json(publicWidgetConfig(cfg, capabilities), {
     headers: { ...cors(env), "Cache-Control": "public, max-age=0, must-revalidate" },
   });
 }

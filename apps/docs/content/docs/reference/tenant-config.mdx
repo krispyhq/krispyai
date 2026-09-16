@@ -11,8 +11,8 @@ other tenant reads the whole thing from KV.
 
 ```ts
 interface TenantConfig {
-  botToken: string; // Telegram bot token (BotFather)
-  chatId: string; // target supergroup id WITH topics, e.g. -1001234567890
+  botToken?: string; // optional Telegram bot token (BotFather)
+  chatId?: string; // optional target supergroup id WITH topics, e.g. -1001234567890
   systemPrompt?: string; // optional system-prompt override
   model?: string; // optional model override
   onboardingStep?: number; // onboarding progress (optional; mirrors cloud)
@@ -29,8 +29,13 @@ interface TenantConfig {
 }
 ```
 
-`getTenant()` only treats a config as usable once **both** `botToken` and `chatId` are
-present; a partial config (e.g. a prompt saved before creds) still round-trips through KV.
+For Cloud tenants, `getTenant()` treats the stored config as usable without Telegram:
+the prompt, theme, forms, and Buttr handoff remain active. `botToken` and `chatId` only
+enable Telegram topic mirroring and screenshot forwarding. The public widget projection
+exposes `capabilities.attachments` as a boolean so app-only tenants never offer a dead upload path.
+
+For the self-hosted `"self"` tenant, the existing environment-secret setup still requires
+both Telegram values before `getTenant()` assembles the self-host config.
 
 ## `FormSpec`
 
@@ -141,10 +146,10 @@ interface WidgetTiming {
 every new knob defaults to unset/off — a tenant that configures nothing gets today's
 neutral widget, unchanged.
 
-only the `WidgetTheme` fields above (plus the `ctas`, `script`, and `popups` projections
+only the `WidgetTheme` fields above (plus `capabilities`, `ctas`, `script`, and `popups`
 below) are exposed to the public `GET /api/widget/config`; the projection is a literal
 whitelist (never a spread of the config), so `botToken`/`chatId`/`systemPrompt`/`persona`
-are structurally excluded. see [security](/docs/security).
+are structurally excluded. `capabilities` contains booleans only. see [security](/docs/security).
 
 ## `PersonaSpec`
 

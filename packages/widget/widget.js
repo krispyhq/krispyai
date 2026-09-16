@@ -1321,6 +1321,10 @@
     }
     var d = document.createElement("div");
     d.className = "msg " + cls;
+    // Keep the raw server text beside the rendered DOM. Markdown formatting
+    // changes textContent, so reconnect reconciliation must compare payloads,
+    // not the visual text extracted from the bubble.
+    d.dataset.krispyText = String(text);
     // Only AI-emitted bubbles get markdown; visitor (me) + system (sys) stay
     // literal so a visitor can never inject markup.
     if (cls === "bot" || cls === "op") renderRich(d, String(text));
@@ -1346,7 +1350,7 @@
             ? "bot"
             : "";
       if (!cls) return;
-      var key = cls + "\u0000" + el.textContent;
+      var key = cls + "\u0000" + (el.dataset.krispyText ?? el.textContent);
       counts[key] = (counts[key] || 0) + 1;
     });
     messages.forEach(function (message) {

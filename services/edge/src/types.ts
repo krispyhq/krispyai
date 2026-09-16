@@ -257,7 +257,7 @@ export type ServerEvent =
       /** Authoritative ring snapshot for clients reconnecting after backgrounding. */
       messages?: { role: "visitor" | "ai" | "operator"; text: string; ts: number }[];
     }
-  | { type: "operator"; handoffState: "operator"; text: string }
+  | { type: "operator"; handoffState: "operator"; text: string; ts: number }
   | { type: "handoff"; handoffState: "pending" | "operator" }
   /** The AI took the session back (operator resolved it, or went silent past the
    * HANDBACK_SILENCE_MINUTES alarm). Widget drops its "human joined" framing. */

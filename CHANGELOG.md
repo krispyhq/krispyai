@@ -31,6 +31,13 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Fixed
 
+- Cloud chat now honors prompt, theme, forms, and Buttr handoff for app-only tenants without
+  requiring Telegram credentials. Business facts in an onboarding prompt can be repeated as
+  answers without tripping the control-instruction leak detector. Known questions remain with
+  the AI; explicit human requests enter `pending` without forcing a name, email, or phone form.
+  The widget also disables Telegram-backed screenshot paste/drop when the public capability
+  projection says attachments are unavailable.
+
 - Widget: mute and close controls now expose 44px touch targets on coarse-pointer devices while
   keeping the compact desktop chrome. Public widget configuration revalidates once per boot, so
   a warm browser tab no longer reuses stale tenant branding after a reload.

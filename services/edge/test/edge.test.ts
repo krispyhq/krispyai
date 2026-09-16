@@ -734,12 +734,14 @@ describe("broadcast", () => {
       type: "operator",
       handoffState: "operator",
       text: "hi",
+      ts: 1,
     });
     expect(n).toBe(2);
     expect(JSON.parse(seen[0]!)).toEqual({
       type: "operator",
       handoffState: "operator",
       text: "hi",
+      ts: 1,
     });
   });
 });

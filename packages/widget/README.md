@@ -60,13 +60,18 @@ All opt-in. Leave `data-launcher` off and the built-in launcher renders exactly 
 ## The loop
 
 1. Visitor types → `POST /api/chat` → instant AI reply (Workers AI).
-2. Every visitor message is mirrored to the owner's Telegram (one topic per visitor).
+2. The AI answers from the tenant's prompt and knowledge. Telegram mirroring is optional;
+   app-only Cloud tenants use the Buttr owner inbox.
 3. When the AI appends `[!HANDOFF]`, the session becomes `pending`: the widget shows one
-   small contact form, later messages still reach the operator, and the AI stays silent.
+   truthful waiting line, later messages still reach the operator, and the AI stays silent.
+   Handoff never requires contact details; only a business-configured form may collect them.
 4. An operator reply arrives live over the widget's WebSocket (`/api/session/:id/ws`) and
    moves the session to `operator`. Until that first reply, reconnects say the team was
    notified without claiming someone joined.
 5. Resolve or silence handback restores `ai`, so the assistant can answer again.
+
+Screenshot paste/drop is enabled only when the public boot config reports a Telegram-backed
+attachment channel. App-only tenants do not present an upload path that would fail at send time.
 
 ## Local demo
 

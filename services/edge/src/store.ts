@@ -60,9 +60,15 @@ function popupTextSugar(th: WidgetTheme): PopupSpec[] {
 // construction: botToken/chatId/systemPrompt/model, operators (Telegram user ids) AND
 // persona (instruction text) are structurally excluded (we project explicit keys, never
 // spread cfg). The leak-guard test enforces this.
-export function publicWidgetConfig(cfg: Partial<TenantConfig> | null) {
+export function publicWidgetConfig(
+  cfg: Partial<TenantConfig> | null,
+  capabilities = { attachments: !!cfg?.botToken && !!cfg.chatId },
+) {
   const th = cfg?.theme ?? {};
   return {
+    // Public booleans only: the browser learns which controls work, never why or
+    // which private connector credentials back them.
+    capabilities,
     theme: {
       launcherStyle: th.launcherStyle,
       launcherLabel: th.launcherLabel,
@@ -194,9 +200,7 @@ export type TelegramTenantConfig = TenantConfig & { botToken: string; chatId: st
 
 /** Narrow a tenant to the optional Telegram delivery channel. App-only Cloud
  * tenants remain valid configs for prompts, Buttr handoff, forms, and email. */
-export function hasTelegramConfig(
-  tenant: TenantConfig | null,
-): tenant is TelegramTenantConfig {
+export function hasTelegramConfig(tenant: TenantConfig | null): tenant is TelegramTenantConfig {
   return !!tenant?.botToken && !!tenant.chatId;
 }
 

@@ -3,8 +3,8 @@ import { readyEvent, RING_MAX, type RingMsg } from "../src/session-do";
 
 test("WS ready frame carries the durable ring snapshot for reconnecting clients", () => {
   const messages: RingMsg[] = Array.from({ length: RING_MAX + 1 }, (_, i) => ({
-    role: "operator",
-    text: `reply-${i}`,
+    role: i === 0 ? "ai" : "operator",
+    text: i === 1 || i === 2 ? "same **reply**" : `reply-${i}`,
     ts: i,
   }));
 

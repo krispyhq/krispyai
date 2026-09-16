@@ -168,9 +168,9 @@ paths:
       operationId: widgetConfig
       description: >
         The widget's boot-time read of its appearance/forms. Returns ONLY the whitelist
-        projection (`theme`, `ctas`, `script`, `popups`) — NEVER botToken/chatId/systemPrompt/
-        persona. Do not confuse with the secret-guarded `GET /api/tenant/config`, which
-        returns the full config.
+        projection (`capabilities`, `theme`, `ctas`, `script`, `popups`) — NEVER
+        botToken/chatId/systemPrompt/persona. Do not confuse with the secret-guarded
+        `GET /api/tenant/config`, which returns the full config.
       security: [] # public — no auth
       parameters:
         - $ref: "#/components/parameters/Tenant"
@@ -182,6 +182,13 @@ paths:
               schema:
                 type: object
                 properties:
+                  capabilities:
+                    type: object
+                    required: [attachments]
+                    properties:
+                      attachments:
+                        type: boolean
+                        description: "Whether screenshot paste/drop has a configured Telegram delivery channel."
                   theme: { $ref: "#/components/schemas/WidgetTheme" }
                   ctas:
                     type: array
@@ -1124,14 +1131,17 @@ components:
 
     TenantConfig:
       type: object
-      required: [botToken, chatId]
       description: >
         The full tenant record `getTenant()` consumes. Returned in full only by the
-        secret-guarded GET /api/tenant/config.
+        secret-guarded GET /api/tenant/config. Telegram credentials are optional for
+        Cloud tenants using the Buttr operator app.
       properties:
-        botToken: { type: string, description: "Telegram bot token (BotFather)." }
+        botToken: { type: string, description: "Optional Telegram bot token (BotFather)." }
         chatId:
-          { type: string, description: "Supergroup id with Topics enabled, e.g. -1001234567890." }
+          {
+            type: string,
+            description: "Optional supergroup id with Topics enabled, e.g. -1001234567890.",
+          }
         systemPrompt: { type: string }
         model: { type: string }
         onboardingStep: { type: integer }

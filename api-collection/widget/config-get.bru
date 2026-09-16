@@ -15,6 +15,8 @@ tests {
   });
   test("returns the theme projection only (no secrets)", function() {
     const b = res.getBody();
+    expect(b).to.have.property("capabilities");
+    expect(b.capabilities).to.have.property("attachments");
     expect(b).to.have.property("theme");
     expect(b).to.not.have.property("botToken");
     expect(b).to.not.have.property("systemPrompt");
@@ -23,12 +25,13 @@ tests {
 
 docs {
   PUBLIC (CORS-*, no secret): the widget's boot-time read of its appearance. Returns ONLY the
-  whitelist projection `{ theme, ctas, script, popups }` — NEVER botToken/chatId/systemPrompt/
+  whitelist projection `{ capabilities, theme, ctas, script, popups }` — NEVER botToken/chatId/systemPrompt/
   persona (persona is instruction text folded into the system prompt, never projected). `ctas`
   are CTA-capable connectors (minus `cta:false` opt-outs) with server-built hrefs + default
   labels; `popups` is the popup engine (or the `theme.popupText` sugar). Do NOT confuse with the
   secret-guarded `GET /api/tenant/config`, which returns the full config incl. the bot token.
   The theme includes launcherStyle (circle/pill) and launcherLabel when configured.
+  `capabilities.attachments` is true only when screenshot paste/drop has a Telegram delivery channel.
   The widget trims pill labels to 24 characters; unset fields keep the circular default.
   See `openapi.yaml` and `reference/edge-routes.mdx`.
 }

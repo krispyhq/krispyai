@@ -30,6 +30,7 @@ describe("publicWidgetConfig", () => {
     expect((out as Record<string, unknown>).chatId).toBeUndefined();
     expect((out as Record<string, unknown>).systemPrompt).toBeUndefined();
     expect((out as Record<string, unknown>).operators).toBeUndefined();
+    expect(out.capabilities.attachments).toBe(true);
   });
 
   test("new theme knobs (glow/tagline/sparkle/direction/popup/timing) project through", () => {
@@ -80,6 +81,13 @@ describe("publicWidgetConfig", () => {
     const out = publicWidgetConfig(null);
     expect(out.theme.primaryColor).toBeUndefined();
     expect((out as Record<string, unknown>).botToken).toBeUndefined();
+  });
+
+  test("capabilities expose attachment availability without connector secrets", () => {
+    expect(publicWidgetConfig({ systemPrompt: "app only" }).capabilities.attachments).toBe(false);
+    expect(
+      publicWidgetConfig({ systemPrompt: "self via env" }, { attachments: true }).capabilities,
+    ).toEqual({ attachments: true });
   });
 
   test("script (opening/starters) projects, capped 5/4; persona NEVER leaks", () => {
@@ -192,4 +200,28 @@ test("widget config requires revalidation instead of serving a warm browser copy
 
   expect(response.status).toBe(200);
   expect(response.headers.get("Cache-Control")).toBe("public, max-age=0, must-revalidate");
+});
+
+test("widget config reports only attachment support the current tenant can deliver", async () => {
+  const values = new Map<string, string>();
+  const env = {
+    KRISPY_KV: {
+      get: async (key: string) => values.get(key) ?? null,
+      put: async (key: string, value: string) => void values.set(key, value),
+    },
+    TELEGRAM_BOT_TOKEN: "self-token",
+    TELEGRAM_CHAT_ID: "self-chat",
+  } as never;
+
+  const appOnly = await worker.fetch(
+    new Request("https://edge.example/api/widget/config?t=app-only"),
+    env,
+  );
+  const self = await worker.fetch(
+    new Request("https://edge.example/api/widget/config?t=self"),
+    env,
+  );
+
+  expect((await appOnly.json()).capabilities).toEqual({ attachments: false });
+  expect((await self.json()).capabilities).toEqual({ attachments: true });
 });
