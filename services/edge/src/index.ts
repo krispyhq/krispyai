@@ -35,6 +35,7 @@ import { renderLeadEmail, sendLeadEmail } from "./email";
 import type { Connector, Env, FormSpec, HandoffState, TenantConfig } from "./types";
 import {
   getTenant,
+  hasTelegramConfig,
   resolveSiteId,
   getThreadForSession,
   getSessionForThread,
@@ -399,7 +400,7 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
             return state.handoffState ?? (state.handedOff ? "operator" : "ai");
           },
       ensureTopic: async (sessionId, firstMessage) => {
-        if (!tenant) return 0;
+        if (!hasTelegramConfig(tenant)) return 0;
         const existing = await getThreadForSession(env, tenantId, sessionId);
         if (existing) return existing;
         const name = `${firstMessage.slice(0, 40)} · ${sessionId.slice(0, 6)}`;
@@ -408,7 +409,8 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
         return threadId;
       },
       toTopic: async (threadId, text) => {
-        if (tenant && threadId) await sendToTopic(tenant.botToken, tenant.chatId, threadId, text);
+        if (hasTelegramConfig(tenant) && threadId)
+          await sendToTopic(tenant.botToken, tenant.chatId, threadId, text);
       },
     },
     { sessionId: body.sessionId, message },
@@ -472,7 +474,7 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
       // Deliberately OUTSIDE the tenant/Telegram guard (an app-only tenant has no
       // Telegram config) and failure-tolerant by contract (push.ts never throws).
       await pushToApp(env, tenantId, body.sessionId, message);
-      if (tenant) {
+      if (hasTelegramConfig(tenant)) {
         const threadId = await getThreadForSession(env, tenantId, body.sessionId);
         if (threadId) {
           // 'app' operators get the push above — skip them here so they aren't
@@ -518,13 +520,9 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
  * had to describe it in words, which is exactly what they were already failing to
  * do when they reached for the chat.
  *
- * TELEGRAM IS THE STORE, and that is a deliberate choice over adding R2. Krispy's
- * Worker binds AI, Durable Objects and KV and nothing else; an object store would
- * be a new binding every self-hoster has to provision before the feature works at
- * all. Telegram already keeps the file, already renders it in the operator's
- * thread, and is already required — getTenant() returns null without both Telegram
- * secrets. So the image goes where the person who needs to see it already is, and
- * this ships to every existing deployment with no config change.
+ * TELEGRAM IS THE STORE for attachments, and that is a deliberate choice over adding
+ * R2. App-only Cloud tenants can chat and hand off through Buttr, but screenshot
+ * upload remains unavailable until a separate attachment store lands.
  *
  * The trade, stated plainly: the image is NOT in the visitor's transcript across a
  * reload (the widget shows it from a local object URL for the life of the page),
@@ -589,7 +587,7 @@ async function handleAttachment(request: Request, env: Env): Promise<Response> {
     return json(env, { error: "unsupported_type", allowed: Object.keys(ATTACH_TYPES) }, 415);
 
   const tenant = await getTenant(env, tenantId, siteId);
-  if (!tenant) return json(env, { error: "attachments_unavailable" }, 503);
+  if (!hasTelegramConfig(tenant)) return json(env, { error: "attachments_unavailable" }, 503);
 
   // NO TOPIC, NO UPLOAD. The topic is created by the first chat message, so this
   // can only ever add to a conversation the visitor already started — it cannot
@@ -695,7 +693,7 @@ export async function deliverLead(env: Env, lead: LeadPayload): Promise<void> {
     : connectors;
 
   // Telegram delivery — drop the values into the visitor's topic.
-  if (tenant) {
+  if (hasTelegramConfig(tenant)) {
     const threadId = await getThreadForSession(env, lead.tenantId, lead.sessionId);
     if (threadId) {
       const lines = Object.entries(lead.values)
@@ -759,7 +757,7 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
         body: JSON.stringify({ resolved: true }),
       });
       const tenant = await getTenant(env, tenantId);
-      if (tenant) {
+      if (hasTelegramConfig(tenant)) {
         await sendToTopic(
           tenant.botToken,
           tenant.chatId,

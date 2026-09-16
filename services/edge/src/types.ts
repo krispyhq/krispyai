@@ -132,10 +132,10 @@ export interface KbSuggestion {
 }
 
 export interface TenantConfig {
-  /** Telegram bot token (BotFather). */
-  botToken: string;
-  /** Target supergroup id WITH topics enabled, e.g. -1001234567890. */
-  chatId: string;
+  /** Telegram bot token (BotFather). Optional for app-only Cloud tenants. */
+  botToken?: string;
+  /** Target supergroup id WITH topics enabled. Optional for app-only Cloud tenants. */
+  chatId?: string;
   /** Optional system-prompt override. */
   systemPrompt?: string;
   /** Optional model override. */

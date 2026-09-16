@@ -374,6 +374,17 @@ describe("store", () => {
     const overridden = await getTenant({ ...env, SYSTEM_PROMPT: "env prompt" } as any, "self");
     expect(overridden?.systemPrompt).toBe("env prompt");
   });
+  test("getTenant keeps app-only Cloud prompt config without Telegram credentials", async () => {
+    const env = fakeEnv();
+    await mergeTenantConfig(env, "delulus", {
+      systemPrompt: "Answer from the Delulus curriculum.",
+      theme: { headerTitle: "Delulus" },
+    });
+    expect(await getTenant(env, "delulus")).toEqual({
+      systemPrompt: "Answer from the Delulus curriculum.",
+      theme: { headerTitle: "Delulus" },
+    });
+  });
   test("plan gate", () => {
     expect(withinPlan({ ai: 0, handoff: 0 }, planFor("self"))).toBe(true);
     expect(withinPlan({ ai: 5, handoff: 0 }, { aiPerMonth: 5, handoffPerMonth: 10 })).toBe(false);

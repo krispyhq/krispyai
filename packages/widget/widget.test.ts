@@ -70,6 +70,12 @@ describe("widget visual contract", () => {
     expect(source).toContain('aria-expanded="false"');
   });
 
+  test("human handoff does not require the visitor to submit contact details", () => {
+    expect(source).not.toContain("DEFAULT_CONTACT_FORM");
+    expect(source).not.toContain('else if (res.handoff) showForm');
+    expect(source).toContain("if (res.form) showForm(res.form)");
+  });
+
   test("Buttr floats without a badge fill unless a tenant supplies one", () => {
     expect(source).toContain("--k-launcher:transparent;");
     expect(source).not.toContain("--k-launcher:var(--k-primary)");

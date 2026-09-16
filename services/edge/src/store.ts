@@ -163,8 +163,8 @@ export function monthKey(now = new Date()): string {
 
 // ── tenant config ────────────────────────────────────────────────────────────
 // "self" (single-tenant self-host) is assembled from env secrets; any other
-// tenant is a JSON blob in KV. Missing/incomplete config → null (Telegram off,
-// chat still works — see chat flow's graceful degradation).
+// tenant is a JSON blob in KV. Telegram credentials are optional for Cloud:
+// Buttr is the operator channel, while prompt/theme/forms still govern chat.
 export async function getTenant(
   env: Env,
   tenantId: string,
@@ -187,8 +187,17 @@ export async function getTenant(
   }
   const raw = await env.KRISPY_KV.get(kTenant(tenantId, siteId));
   if (!raw) return null;
-  const cfg = JSON.parse(raw) as Partial<TenantConfig>;
-  return cfg.botToken && cfg.chatId ? (cfg as TenantConfig) : null;
+  return JSON.parse(raw) as TenantConfig;
+}
+
+export type TelegramTenantConfig = TenantConfig & { botToken: string; chatId: string };
+
+/** Narrow a tenant to the optional Telegram delivery channel. App-only Cloud
+ * tenants remain valid configs for prompts, Buttr handoff, forms, and email. */
+export function hasTelegramConfig(
+  tenant: TenantConfig | null,
+): tenant is TelegramTenantConfig {
+  return !!tenant?.botToken && !!tenant.chatId;
 }
 
 // ── tenant config sync (krispy CLI / your own tooling → gate) ────────────────
@@ -196,7 +205,7 @@ export async function getTenant(
 // tenant's Telegram creds + prompt/model here so getTenant() picks them up, via the
 // POST /api/tenant/config route. Same KV key + shape getTenant() reads (kTenant → a
 // Partial<TenantConfig> JSON blob). Read raw so a partial config (e.g. prompt saved
-// before creds) still round-trips — getTenant() itself gates on both botToken+chatId.
+// before optional Telegram creds) still round-trips and governs app-only chat.
 export async function readTenantConfig(
   env: Env,
   tenantId: string,

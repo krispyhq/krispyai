@@ -3,7 +3,7 @@
  * isolated (host-page CSS can't leak in). Talks to @krispy/edge:
  *   POST /api/chat            → instant AI reply
  *   WS   /api/session/:id/ws  → live operator replies (bot goes silent on handoff)
- *   POST /api/contact         → [!HANDOFF] contact capture
+ *   POST /api/contact         → legacy contact-capture compatibility
  *
  * Embed (one line):
  *   <script src="https://YOUR-HOST/widget.js"
@@ -1579,20 +1579,6 @@
     formTimers = [];
   }
 
-  // ── contact capture (on [!HANDOFF] with no form) ────────────────────────
-  // One renderer, one door: the legacy hardcoded .cap markup is gone — handoff
-  // without a tenant form renders this default FormSpec through showForm(),
-  // posting /api/lead like every other form (/api/contact stays an edge shim
-  // for already-deployed widgets).
-  var DEFAULT_CONTACT_FORM = {
-    id: "contact",
-    title: "Leave your contact",
-    fields: [
-      { name: "name", label: "Your name", type: "text" },
-      { name: "contact", label: "Email or phone", type: "text", required: true },
-    ],
-  };
-
   // ── CTA engine (§4) — social-connector cards inside .log ─────────────────────
   // Armed on the FIRST visitor message; each CTA renders once after its own
   // showAfterMs (staggered) into a lazily-created .ctarow card that scrolls with
@@ -1852,8 +1838,9 @@
             armFormFallback(); // first AI reply → afterReplyMs form timer (§4)
           }
         }
+        // Handoff itself never asks for contact details. The operator is already
+        // reachable in Buttr; only an explicitly configured form may collect data.
         if (res.form) showForm(res.form);
-        else if (res.handoff) showForm(DEFAULT_CONTACT_FORM);
         if (responseState === "pending") {
           // The first handoff reply already tells the visitor a teammate is coming.
           // Later silent turns/reconnects need one truthful waiting line of their own.
