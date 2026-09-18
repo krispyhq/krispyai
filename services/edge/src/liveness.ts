@@ -8,9 +8,9 @@
 // KV write budget: a busy site boots the widget on every page view, but KV caps
 // writes at ~1/sec per key. So we THROTTLE in-isolate (same pattern as
 // operator-auth's verify cache): each warm isolate writes at most once per
-// THROTTLE_MS per tenant. Across isolates you get a handful of writes per window —
-// well under budget — with zero extra KV *read* on the hot boot path (the throttle
-// lives in memory, not KV). Stamping never throws into the boot path (best-effort).
+// THROTTLE_MS per tenant/site/origin. Across isolates you get a handful of writes per
+// window — well under budget — with zero extra KV *read* on the hot boot path (the
+// throttle lives in memory, not KV). Stamping never throws into the boot path (best-effort).
 //
 // ponytail: stores only the LAST-seen origin/url (single write, no read-modify-merge
 // → no cross-isolate race). Upgrade path: a bounded per-origin set ("live on these N
@@ -20,7 +20,7 @@ import { ns } from "./store";
 
 // Per-site: an unsuffixed tenant keeps `seen:<t>` exactly; site B is `seen:<t>:<siteB>`.
 export const kSeen = (tenantId: string, siteId?: string) => `seen:${ns(tenantId, siteId)}`;
-export const SEEN_THROTTLE_MS = 5 * 60_000; // one stamp per site per isolate per 5 min
+export const SEEN_THROTTLE_MS = 5 * 60_000; // one stamp per site/origin per isolate per 5 min
 
 /** One tenant's last-seen record — what the dashboard renders. */
 export interface SeenRecord {
@@ -29,11 +29,17 @@ export interface SeenRecord {
   url?: string; // full embedding page URL when the Referer carried it
 }
 
-// In-isolate throttle: ns(tenant,site) → last ms we wrote KV for it. Keyed by the
-// SITE namespace, not the bare tenant — else a warm isolate that just stamped site A
-// would throttle site B's first heartbeat and B would show "not detected". Bounded
-// like the operator-auth cache; a single account's traffic never approaches the cap.
+// In-isolate throttle: (tenant, site, origin) → last ms we wrote KV for it. Keyed by
+// origin as well as the site namespace, so a warm isolate that just stamped origin A
+// does not throttle origin B's first heartbeat and make B show "not detected". The
+// cap remains bounded like the operator-auth cache; a single account's traffic never
+// approaches it during normal use.
 const lastStamp = new Map<string, number>();
+
+function stampKey(tenantId: string, siteId: string | undefined, origin: string | undefined) {
+  // JSON encoding avoids delimiter collisions from untrusted tenant/origin strings.
+  return JSON.stringify([ns(tenantId, siteId), origin ?? ""]);
+}
 
 /** Host (scheme+host) + full url of the page that embedded the widget, from the
  * request headers. Origin is the reliable signal; Referer adds the path when the
@@ -64,14 +70,15 @@ export async function stampSeen(
   siteId?: string,
 ): Promise<void> {
   const now = Date.now();
-  const key = ns(tenantId, siteId);
+  const embedding = embedder(request);
+  const key = stampKey(tenantId, siteId, embedding.origin);
   const prev = lastStamp.get(key);
   if (prev !== undefined && now - prev < SEEN_THROTTLE_MS) return; // throttled, no write
   // crude size cap — one account's operators never approach it; clear wholesale if a
   // large fleet ever does (matches operator-auth's cache backstop).
   if (lastStamp.size > 5000) lastStamp.clear();
   lastStamp.set(key, now);
-  const rec: SeenRecord = { at: now, ...embedder(request) };
+  const rec: SeenRecord = { at: now, ...embedding };
   try {
     await env.KRISPY_KV.put(kSeen(tenantId, siteId), JSON.stringify(rec));
   } catch (e) {

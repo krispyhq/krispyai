@@ -48,10 +48,18 @@ describe("widget liveness", () => {
     const { env, writes } = fakeEnv();
     // unique tenant so this isolate's throttle map isn't already primed by another test
     await stampSeen(env, "throttle-tenant", req({ Origin: "https://a.com" }));
-    await stampSeen(env, "throttle-tenant", req({ Origin: "https://b.com" }));
+    await stampSeen(env, "throttle-tenant", req({ Origin: "https://a.com" }));
     expect(writes()).toBe(1); // second call short-circuited
     // the stored record is from the first (un-throttled) write
     expect((await readSeen(env, "throttle-tenant"))!.origin).toBe("https://a.com");
+  });
+
+  test("a second origin gets its first heartbeat within the throttle window", async () => {
+    const { env, writes } = fakeEnv();
+    await stampSeen(env, "origin-throttle", req({ Origin: "https://a.example" }));
+    await stampSeen(env, "origin-throttle", req({ Origin: "https://b.example" }));
+    expect(writes()).toBe(2);
+    expect((await readSeen(env, "origin-throttle"))!.origin).toBe("https://b.example");
   });
 
   test("readSeen returns null when the widget never phoned home", async () => {

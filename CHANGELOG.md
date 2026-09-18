@@ -31,6 +31,10 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Fixed
 
+- Edge liveness throttling now tracks the embedding origin as well as the tenant/site.
+  A second installed origin records its first heartbeat immediately during the five-minute
+  window, while repeat boots from the same origin remain bounded.
+
 - Edge: first-message handoffs no longer duplicate the current visitor message when the browser
   includes that message as the final `history` entry. Earlier identical questions remain intact.
 
