@@ -60,6 +60,9 @@ visitor ──▶ AI answers (Cloudflare Workers AI) ──▶ visitor
 - You reply from Telegram → it's pushed into the browser over a WebSocket, **live**.
 - The bot detects it's a human job and steps back immediately. Messages sent while you are
   on the way still reach the same topic; the bot stays quiet until you resolve the handoff.
+- A complete answer should not summon an operator merely because it describes a limitation,
+  an extra cost or included human support. Explicit human requests and missing information
+  still escalate; business-specific approval requirements remain authoritative.
 - Browser clients may include the current visitor line at the end of `history`; the first
   handoff seeds only the prior turns, then records that live line once. Earlier repeated
   questions remain real conversation turns.
@@ -67,6 +70,17 @@ visitor ──▶ AI answers (Cloudflare Workers AI) ──▶ visitor
 Under the hood it's **one Cloudflare Worker** plus a **hibernatable Durable Object** (`SessionDO`)
 that holds the strongly-consistent `ai` / `pending` / `operator` state and keeps idle sockets
 free. That's the whole backend.
+
+### Live handoff regression check
+
+Offline tests do not prove a model's decision quality. To evaluate the current prompt with
+Workers AI, run `bun scripts/eval-handoff.ts <course-knowledge-file> <private-results-file>`
+with `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` supplied through your secret manager.
+This opt-in command makes six billable inference requests, uses `AI_MODEL` or the edge's
+default model, and never creates conversations or notifies operators. Supply reviewed course
+facts covering external tool costs, first-cohort support and outcome guarantees, with the
+review deadline deliberately unknown. It checks routing and prompt-leak suppression; review
+the saved answers for factual correctness. Keep knowledge and result files private.
 
 ## Quickstart — self-host in ~10 minutes
 

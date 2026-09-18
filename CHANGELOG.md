@@ -12,6 +12,11 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Changed
 
+- AI handoff guidance now distinguishes complete factual answers (including negative
+  answers and descriptions of included support) from requests that need a person.
+  The decision policy follows the security rules; explicit human requests, unknown
+  information, business approval requirements and outage fallback remain supported.
+
 - Edge preview: configure `API_ORIGIN` to the hosted dev API
   (`https://api-preview.krispyai.com`) so Buttr operator bearer verification stays in the
   preview environment. Production retains its separate API origin.
