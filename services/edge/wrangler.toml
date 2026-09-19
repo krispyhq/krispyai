@@ -63,6 +63,8 @@ ALLOWED_ORIGIN = "*"
 # Preview cloud API custom domain; this is the verifier for Buttr operator bearer
 # tokens. Keep it paired with the dev/preview cloud Worker, never production.
 API_ORIGIN = "https://api-preview.krispyai.com"
+# Hosted operator device tokens; paired with PUSH_TOKENS_SECRET.
+PUSH_TOKENS_URL = "https://api-preview.krispyai.com/internal/push/tokens"
 
 [env.production]
 name = "krispy-edge"
