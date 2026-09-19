@@ -113,3 +113,13 @@ a route, update the matching `.bru` request in the same change (per `CONTRIBUTIN
 `theme.launcherLabel` when configured. The widget displays up to 24 label characters;
 unset fields retain the circular launcher. These fields contain public display text,
 not credentials. Configure them through the authenticated tenant-config endpoint.
+
+### Hosted owner notifications
+
+The hosted edge needs `PUSH_TOKENS_URL` set to its matching cloud API
+`/internal/push/tokens` endpoint and `PUSH_TOKENS_SECRET` set to the shared
+server credential. The preview deployment config supplies the preview endpoint.
+Without the URL, chat and inbox persistence work but mobile push is skipped.
+A signed device build, notification permission, registered device token, and
+valid platform push credentials are also required; simulator chat tests do not
+prove notification delivery. Self-hosted installations may leave these unset.

@@ -12,6 +12,9 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Changed
 
+- Hosted preview now configures the operator push-token endpoint so handoffs can
+  notify registered Buttr devices instead of silently skipping push.
+
 - AI handoff guidance now distinguishes complete factual answers (including negative
   answers and descriptions of included support) from requests that need a person.
   The decision policy follows the security rules; explicit human requests, unknown

@@ -292,3 +292,13 @@ PRs welcome — this repo is a template people clone, so clarity and convention 
 **à bientôt 🥐**
 
 </div>
+
+### Hosted owner notifications
+
+The hosted edge needs `PUSH_TOKENS_URL` set to its matching cloud API
+`/internal/push/tokens` endpoint and `PUSH_TOKENS_SECRET` set to the shared
+server credential. The preview deployment config supplies the preview endpoint.
+Without the URL, chat and inbox persistence work but mobile push is skipped.
+A signed device build, notification permission, registered device token, and
+valid platform push credentials are also required; simulator chat tests do not
+prove notification delivery. Self-hosted installations may leave these unset.

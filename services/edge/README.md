@@ -145,3 +145,13 @@ Telegram appears live in their browser with the AI silenced.
 The secret-free widget config projection includes `theme.launcherStyle` (`circle` or
 `pill`) and `theme.launcherLabel`. Set these with the authenticated tenant-config route;
 no widget embed change is required. The widget limits the displayed label to 24 characters.
+
+### Hosted owner notifications
+
+The hosted edge needs `PUSH_TOKENS_URL` set to its matching cloud API
+`/internal/push/tokens` endpoint and `PUSH_TOKENS_SECRET` set to the shared
+server credential. The preview deployment config supplies the preview endpoint.
+Without the URL, chat and inbox persistence work but mobile push is skipped.
+A signed device build, notification permission, registered device token, and
+valid platform push credentials are also required; simulator chat tests do not
+prove notification delivery. Self-hosted installations may leave these unset.
