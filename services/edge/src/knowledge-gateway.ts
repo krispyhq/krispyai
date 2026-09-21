@@ -5,6 +5,8 @@ const DEFAULT_TIMEOUT_MS = 250;
 const MAX_EVIDENCE = 6;
 const MAX_TEXT_CHARS = 2_000;
 const MAX_TOTAL_TEXT_CHARS = 6_000;
+const MAX_RESPONSE_BYTES = 32 * 1024;
+const MAX_TIMEOUT_MS = 2_000;
 const MAX_ID_CHARS = 200;
 const MAX_REVISION_CHARS = 100;
 
@@ -44,12 +46,52 @@ function safeGatewayUrl(value: string | undefined): string | undefined {
   if (!value) return undefined;
   try {
     const url = new URL(value);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    if (url.protocol !== "https:") {
+      const local = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+      if (url.protocol !== "http:" || !local.has(url.hostname)) return undefined;
+    }
     if (url.username || url.password) return undefined;
     return url.toString();
   } catch {
     return undefined;
   }
+}
+
+async function readBoundedJson(response: Response, signal: AbortSignal): Promise<unknown> {
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES)
+    throw new Error("response_too_large");
+  if (!response.body) throw new Error("response_body_missing");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const result = await Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) => {
+          if (signal.aborted) reject(signal.reason ?? new Error("aborted"));
+          else
+            signal.addEventListener("abort", () => reject(signal.reason ?? new Error("aborted")), {
+              once: true,
+            });
+        }),
+      ]);
+      if (result.done) break;
+      total += result.value.byteLength;
+      if (total > MAX_RESPONSE_BYTES) throw new Error("response_too_large");
+      chunks.push(result.value);
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(new TextDecoder().decode(bytes));
 }
 
 function parseResponse(value: unknown): GatewayResponse | null {
@@ -100,10 +142,13 @@ function parseResponse(value: unknown): GatewayResponse | null {
 }
 
 const lastUserMessage = (messages: ChatMessage[]): string | null => {
-  const message = [...messages]
-    .reverse()
-    .find((item) => item.role === "user")
-    ?.content.trim();
+  let message: string | undefined;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") {
+      message = messages[index]?.content.trim();
+      break;
+    }
+  }
   return message ? message.slice(0, 4_000) : null;
 };
 
@@ -154,28 +199,36 @@ export function knowledgeGatewayRunner(
   if ((siteId ?? "") !== configuredSite) return base;
   const endpoint = safeGatewayUrl(env.KNOWLEDGE_GATEWAY_URL)!;
   const secret = env.KNOWLEDGE_GATEWAY_SECRET!;
-  const timeoutMs = positiveInt(env.KNOWLEDGE_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
+  const timeoutMs = Math.min(
+    positiveInt(env.KNOWLEDGE_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
+    MAX_TIMEOUT_MS,
+  );
   return async (messages): Promise<AiResult> => {
     const question = lastUserMessage(messages);
     if (!question) return base(messages);
+    const signal = AbortSignal.timeout(timeoutMs);
     try {
       const response = await fetcher(endpoint, {
         method: "POST",
         headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
+        redirect: "error",
         body: JSON.stringify({
           requestId: crypto.randomUUID(),
           tenantId,
           siteId: configuredSite,
           question,
         }),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal,
       });
-      if (!response.ok) return base(messages);
-      const parsed = parseResponse(await response.json());
-      return base(parsed?.evidence.length ? withEvidence(messages, parsed.evidence) : messages);
+      if (response.ok) {
+        const parsed = parseResponse(await readBoundedJson(response, signal));
+        if (parsed?.evidence.length) messages = withEvidence(messages, parsed.evidence);
+      }
     } catch {
-      return base(messages);
+      // Retrieval is optional. Keep the original messages and let the existing chat
+      // path handle an AI failure exactly once.
     }
+    return base(messages);
   };
 }
 

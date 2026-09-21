@@ -47,6 +47,14 @@ the current attachment transport remains Telegram-backed.
 Worker seeds only prior history and appends the live visitor turn once. It removes one trailing
 exact match only; earlier repeated messages remain separate turns.
 
+If the Worker has the optional private knowledge gateway configured for the exact tenant/site,
+it sends the latest question to that server-only gateway immediately before the model call.
+The gateway response is bounded cited reference data placed before the existing system
+instructions, so security and handoff rules retain priority. Missing configuration,
+operator-owned sessions, timeout, scope mismatch, malformed evidence, or gateway errors leave
+the original model messages unchanged. No gateway credential or provider setting is exposed
+through widget config.
+
 ## secret-guarded routes
 
 these carry a bot token or mutate config, so they require a shared-secret header. a missing

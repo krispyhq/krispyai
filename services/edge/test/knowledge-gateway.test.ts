@@ -64,6 +64,15 @@ describe("optional knowledge gateway", () => {
     expect(calls).toBe(0);
   });
 
+  test("rejects public HTTP gateways while allowing loopback HTTP for local tests", async () => {
+    expect(
+      knowledgeGatewayConfigured(env({ KNOWLEDGE_GATEWAY_URL: "http://private.example" })),
+    ).toBe(false);
+    expect(
+      knowledgeGatewayConfigured(env({ KNOWLEDGE_GATEWAY_URL: "http://127.0.0.1:8787" })),
+    ).toBe(true);
+  });
+
   test("adds bounded evidence before the original system instructions", async () => {
     let received: Request | undefined;
     const runner = knowledgeGatewayRunner(
@@ -131,6 +140,21 @@ describe("optional knowledge gateway", () => {
     expect(seen).toEqual(messages);
   });
 
+  test("caps response bodies before parsing", async () => {
+    let seen: ChatMessage[] | undefined;
+    await knowledgeGatewayRunner(
+      async (input) => {
+        seen = input;
+        return answer("base");
+      },
+      env(),
+      "tenant-a",
+      "site-a",
+      async () => new Response(`{"evidence":[]}${" ".repeat(40_000)}`),
+    )(messages);
+    expect(seen).toEqual(messages);
+  });
+
   test("a timeout falls back without delaying the model beyond the configured budget", async () => {
     const started = Date.now();
     let seen: ChatMessage[] | undefined;
@@ -151,6 +175,30 @@ describe("optional knowledge gateway", () => {
     )(messages);
     expect(seen).toEqual(messages);
     expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  test("clamps an excessive configured timeout and calls the base runner once on failure", async () => {
+    let baseCalls = 0;
+    const started = Date.now();
+    expect(
+      knowledgeGatewayRunner(
+        async () => {
+          baseCalls += 1;
+          throw new Error("base failed");
+        },
+        env({ KNOWLEDGE_TIMEOUT_MS: "999999" }),
+        "tenant-a",
+        "site-a",
+        async (_input, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+              once: true,
+            });
+          }),
+      )(messages),
+    ).rejects.toThrow("base failed");
+    expect(baseCalls).toBe(1);
+    expect(Date.now() - started).toBeLessThan(2_500);
   });
 
   test("operator-owned sessions do not invoke retrieval or the model", async () => {

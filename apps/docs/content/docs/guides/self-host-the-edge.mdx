@@ -28,6 +28,7 @@ bunx wrangler secret put TELEGRAM_BOT_TOKEN       # BotFather token
 bunx wrangler secret put TELEGRAM_CHAT_ID         # supergroup id, e.g. -1001234567890
 bunx wrangler secret put TELEGRAM_WEBHOOK_SECRET  # any random string
 bunx wrangler secret put TENANT_SYNC_SECRET       # optional: gates /api/tenant/config
+bunx wrangler secret put KNOWLEDGE_GATEWAY_SECRET # optional: private retrieval gateway
 ```
 
 for local iteration without deploying, `wrangler dev` reads these from a git-ignored
@@ -43,20 +44,29 @@ for local iteration without deploying, `wrangler dev` reads these from a git-ign
 
 set in `wrangler.toml` under `[vars]`, or as secrets. all optional — code defaults apply:
 
-| var                 | default                                    | what it does                                               |
-| ------------------- | ------------------------------------------ | ---------------------------------------------------------- |
-| `ALLOWED_ORIGIN`    | `*`                                        | CORS allow-origin. lock to your site origin in production. |
-| `AI_MODEL`          | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` | override the Workers AI model.                             |
-| `SYSTEM_PROMPT`     | —                                          | override the system prompt from env (KV wins if unset).    |
-| `MAX_HISTORY_MSGS`  | `8`                                        | sliding window — prior messages the AI sees.               |
-| `MAX_OUTPUT_TOKENS` | `256`                                      | hard cap on reply length.                                  |
-| `MAX_AI_TURNS`      | `10`                                       | AI turns before a forced human handoff.                    |
-| `RESEND_API_KEY`    | —                                          | enables lead-email delivery (no key → email no-ops).       |
-| `LEAD_EMAIL_FROM`   | —                                          | verified-domain from-address for lead email.               |
+| var                     | default                                    | what it does                                                       |
+| ----------------------- | ------------------------------------------ | ------------------------------------------------------------------ |
+| `ALLOWED_ORIGIN`        | `*`                                        | CORS allow-origin. lock to your site origin in production.         |
+| `AI_MODEL`              | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` | override the Workers AI model.                                     |
+| `SYSTEM_PROMPT`         | —                                          | override the system prompt from env (KV wins if unset).            |
+| `MAX_HISTORY_MSGS`      | `8`                                        | sliding window — prior messages the AI sees.                       |
+| `MAX_OUTPUT_TOKENS`     | `256`                                      | hard cap on reply length.                                          |
+| `MAX_AI_TURNS`          | `10`                                       | AI turns before a forced human handoff.                            |
+| `RESEND_API_KEY`        | —                                          | enables lead-email delivery (no key → email no-ops).               |
+| `LEAD_EMAIL_FROM`       | —                                          | verified-domain from-address for lead email.                       |
+| `KNOWLEDGE_GATEWAY_URL` | —                                          | private retrieval gateway URL (HTTPS; loopback HTTP only locally). |
+| `KNOWLEDGE_TENANT_ID`   | —                                          | exact tenant binding required before retrieval runs.               |
+| `KNOWLEDGE_SITE_ID`     | empty                                      | exact site binding; empty means the default site.                  |
+| `KNOWLEDGE_TIMEOUT_MS`  | `250`                                      | bounded gateway deadline, clamped to 2000 ms.                      |
 
 `MAX_HISTORY_MSGS` / `MAX_OUTPUT_TOKENS` / `MAX_AI_TURNS` are the "turn tax" cost knobs — the
 client re-sends the whole history each turn, so these three bound per-turn cost without
 changing behavior on normal short chats.
+
+The optional knowledge gateway is called only from the Worker. It must enforce the same exact
+tenant/site binding and return bounded cited reference data. A timeout, scope mismatch, malformed
+response, or gateway error leaves the normal chat path unchanged; no provider setting is exposed
+through the widget.
 
 ## 4. deploy
 
