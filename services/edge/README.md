@@ -62,6 +62,19 @@ response exposes no usage counts) under the `usage:<tenant>:<yyyymm>:tokens` KV 
 surfaced as `tokens` in `/api/usage`. Prompt caching is N/A on Workers AI (no
 `cache_control` knob); the BYO-key adapter seam in `ai.ts` is where it plugs in later.
 
+### Optional private knowledge gateway
+
+The Worker can add cited support evidence from a private gateway immediately before the
+model call. Set `KNOWLEDGE_GATEWAY_URL`, `KNOWLEDGE_GATEWAY_SECRET`, and the exact
+`KNOWLEDGE_TENANT_ID`; `KNOWLEDGE_SITE_ID` defaults to the default site and
+`KNOWLEDGE_TIMEOUT_MS` defaults to 250. These are Worker settings only and never enter
+the public widget config. The gateway receives `{ requestId, tenantId, siteId, question }`
+with a bearer secret and must return `{ evidence: [{ text, sourceId, revision, title?, url? }] }`.
+The edge rejects cross-scope, malformed, oversized, or unsafe evidence. Evidence is treated
+as reference data below the existing security and handoff rules. Missing configuration,
+operator-owned sessions, timeouts, errors, or no evidence use the existing AI path unchanged.
+The private gateway owns provider credentials and Longstory-specific code.
+
 The browser widget sends its current visitor line at the end of `history` before posting
 `/api/chat`. On a first-message handoff, the Worker removes only that trailing exact match
 from the empty-ring seed and then appends the live turn once. Earlier identical questions

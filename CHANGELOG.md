@@ -34,6 +34,11 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Added
 
+- Edge: an optional server-only knowledge gateway can add bounded, cited support evidence
+  to an AI turn for one exact tenant/site binding. It is disabled unless all gateway settings
+  are present, never runs for operator-owned sessions, and any timeout, scope mismatch, bad
+  response, or gateway failure falls back to the existing chat path without logging private data.
+
 - Widget: **bring your own launcher** — an embedder can suppress Krispy's launcher and drive the panel from their own mark. `data-launcher="none"` on the embed hides the built-in button (it stays in the DOM so the unread dot, nudge, glow and entrance paths are untouched); `window.krispy` exposes `open()` / `close()` / `toggle()` / `isOpen()` / `unread()` / `el`; and `krispy:open`, `krispy:close`, `krispy:unread` (`detail: { unread: boolean }`) fire on `document` so a custom launcher can show its own dot when an operator replies. The host element now carries `class="krispy-widget"` — before this, the only thing identifying it in the document was the z-index in its inline style, so integrators were selecting `div[style*="2147483000"]` and synthesising a `.click()` on the hidden built-in button through the open shadow root. **Every part is opt-in and the default embed is byte-for-byte unchanged**: leave `data-launcher` off and the launcher renders exactly as before; the global and the events are inert until something calls or listens.
 - Widget: `theme.avatar: "none"` hides the header avatar without leaving a flex gap and uses a neutral chat mark in the built-in launcher. Existing tenants and the default Buttr avatar remain unchanged.
 

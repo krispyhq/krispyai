@@ -214,6 +214,16 @@ export interface Env {
   ALLOWED_ORIGIN?: string;
   /** BYO AI provider key (future adapter). */
   AI_API_KEY?: string;
+  /** Optional private retrieval gateway. Never projected to widget config. */
+  KNOWLEDGE_GATEWAY_URL?: string;
+  /** Server-only bearer credential for the retrieval gateway. */
+  KNOWLEDGE_GATEWAY_SECRET?: string;
+  /** Exact pilot tenant binding; mismatches disable retrieval. */
+  KNOWLEDGE_TENANT_ID?: string;
+  /** Exact pilot site binding; empty means the default site. */
+  KNOWLEDGE_SITE_ID?: string;
+  /** Retrieval deadline in milliseconds, default 250. */
+  KNOWLEDGE_TIMEOUT_MS?: string;
   /** Shared secret guarding POST /api/billing/entitlement (billing → gate push). */
   BILLING_SYNC_SECRET?: string;
   /** Shared secret guarding GET /internal/usage (Krispy Cloud admin → per-tenant KV
