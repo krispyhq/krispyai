@@ -39,6 +39,11 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Fixed
 
+- Edge operator bearer verification now authorizes against the cloud API's server-resolved
+  tenant instead of always treating the user id as the tenant. Verified teammates can reach
+  the owner's handoff inbox, other tenants remain denied, and malformed identities fail closed;
+  legacy `/me` responses without `tenantId` retain the nonempty-id fallback.
+
 - Edge liveness throttling now tracks the embedding origin as well as the tenant/site.
   A second installed origin records its first heartbeat immediately during the five-minute
   window, while repeat boots from the same origin remain bounded.

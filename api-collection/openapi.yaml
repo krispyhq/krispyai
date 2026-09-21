@@ -684,8 +684,11 @@ components:
       description: >
         The operator app's session token (krispyai-cloud Better Auth bearer). The Worker
         verifies it against the cloud API's `GET /me` (`API_ORIGIN`) and requires the
-        resolved `user.id` to equal the request's `tenantId` — a valid token for a
-        DIFFERENT tenant is 403. Verified tokens are cached in-isolate for 60s.
+        server-resolved `tenantId` to equal the request's `tenantId` — this allows a
+        verified teammate's token to operate the owner's tenant, while a valid token for
+        a DIFFERENT tenant is 403. Older `/me` responses without `tenantId` use `user.id`
+        as a backwards-compatible fallback; malformed identity fields fail closed.
+        Verified tokens are cached in-isolate for 60s.
         On the WebSocket upgrade the same token is passed as the `auth` query parameter
         (RN/browsers cannot set headers on a WS upgrade).
     tenantSyncSecret:

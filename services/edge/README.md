@@ -82,6 +82,11 @@ Secrets are separate on purpose: `TENANT_SYNC_SECRET` guards the config sync (th
 `krispy` CLI uses it); `BILLING_SYNC_SECRET` guards the optional billing→gate push
 (unused in single-tenant self-host). Set either with `bunx wrangler secret put <NAME>`.
 
+The Buttr operator surface verifies its bearer against the cloud API's `GET /me` and
+authorizes against the server-resolved `tenantId`, so verified teammates share the owner's
+tenant access. A legacy `/me` response without `tenantId` falls back to its nonempty `id`;
+malformed identity fields fail closed.
+
 ## Architecture
 
 - **`SessionDO`** — one per `(tenantId, sessionId)`. Uses `state.acceptWebSocket()`
