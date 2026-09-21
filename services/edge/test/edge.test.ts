@@ -1895,15 +1895,17 @@ describe("operator app routes", () => {
 describe("operator route auth", () => {
   const API = "https://api.test";
 
-  /** fetch fake standing in for the cloud API: GET /me → the given user id (or 401). */
-  function meFetch(userId: string | null) {
+  /** fetch fake standing in for the cloud API: GET /me → identity (or 401). */
+  function meFetch(identity: string | Record<string, unknown> | null) {
     const calls: { url: string; auth: string | null }[] = [];
     const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
       calls.push({
         url: String(input),
         auth: (init?.headers as Record<string, string>)?.authorization ?? null,
       });
-      return userId ? Response.json({ id: userId }) : new Response("unauthorized", { status: 401 });
+      return identity
+        ? Response.json(typeof identity === "string" ? { id: identity } : identity)
+        : new Response("unauthorized", { status: 401 });
     }) as typeof fetch;
     return { calls, fetchImpl };
   }
@@ -1942,6 +1944,44 @@ describe("operator route auth", () => {
     const env = fakeEnv({ API_ORIGIN: API });
     expect(await authorizeOperator(req(), env, "acme", "tok-1", fetchImpl)).toBeNull();
     expect(calls).toEqual([{ url: `${API}/me`, auth: "Bearer tok-1" }]);
+  });
+
+  test("verified teammate bearer uses the server-resolved owner tenant", async () => {
+    _authCache.clear();
+    const { fetchImpl } = meFetch({ id: "teammate", tenantId: "acme" });
+    const env = fakeEnv({ API_ORIGIN: API });
+    expect(await authorizeOperator(req(), env, "acme", "teammate-token", fetchImpl)).toBeNull();
+    expect(_authCache.get("teammate-token")?.tenantId).toBe("acme");
+  });
+
+  test("owner tenant remains allowed and another tenant remains denied", async () => {
+    _authCache.clear();
+    const { fetchImpl } = meFetch({ id: "owner", tenantId: "acme" });
+    const env = fakeEnv({ API_ORIGIN: API });
+    expect(await authorizeOperator(req(), env, "acme", "owner-token", fetchImpl)).toBeNull();
+    _authCache.clear();
+    expect(await authorizeOperator(req(), env, "other", "owner-token", fetchImpl)).toEqual({
+      status: 403,
+      error: "token does not match tenantId",
+    });
+  });
+
+  test("malformed identity fields fail closed", async () => {
+    _authCache.clear();
+    const { fetchImpl } = meFetch({ id: "teammate", tenantId: "" });
+    const env = fakeEnv({ API_ORIGIN: API });
+    expect(await authorizeOperator(req(), env, "acme", "malformed-token", fetchImpl)).toEqual({
+      status: 401,
+      error: "invalid or expired token",
+    });
+    _authCache.clear();
+    const malformedId = meFetch({ id: "", tenantId: "acme" });
+    expect(
+      await authorizeOperator(req(), env, "acme", "malformed-id", malformedId.fetchImpl),
+    ).toEqual({
+      status: 401,
+      error: "invalid or expired token",
+    });
   });
 
   test("cache: second verification within the TTL costs zero /me subrequests", async () => {

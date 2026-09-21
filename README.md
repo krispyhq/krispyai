@@ -151,6 +151,10 @@ Hosted Cloud can use the Buttr owner app without Telegram. In that mode the tena
 theme, forms, and human handoff still work; Telegram topic mirroring and screenshot forwarding
 stay off, and the widget suppresses the unavailable attachment path.
 
+The owner app's operator bearer is checked against the cloud API's server-resolved tenant,
+so verified teammates can share the owner's handoff inbox. Legacy `/me` responses without
+`tenantId` use a nonempty user-id fallback; malformed identity fields fail closed.
+
 ## Local dev
 
 No Docker, no Tilt, no orchestrator — two `bun` scripts in two terminals:

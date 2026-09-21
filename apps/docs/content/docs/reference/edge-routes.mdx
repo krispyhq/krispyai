@@ -32,6 +32,16 @@ replied; `operator` starts with the first human reply. Pending and operator-owne
 messages still reach the topic and server ring, while the AI stays silent. `handedOff` remains
 as a compatibility boolean and is true only for `operator`.
 
+### Operator bearer authorization
+
+The operator app sends its Better Auth bearer in `Authorization: Bearer <session token>`
+(or as `?auth=<token>` for an operator WebSocket). The Worker verifies the token against
+the cloud API's `GET /me` and compares the server-resolved `tenantId` with the route's
+`tenantId`. This permits verified teammates to access the owner's tenant while rejecting
+another tenant with `403`. During rollout, a `/me` response without `tenantId` falls back
+to its nonempty `id`; malformed identity fields fail closed with `401`. Verified tokens
+are cached per Worker isolate for 60 seconds.
+
 Telegram is optional for the Buttr inbox. Before moving a session to `pending`, the Worker writes
 `handoff:<tenant>:<session>` to KV. Topic links keep their separate legacy `session:` keys, so
 enabling Telegram later cannot overwrite discovery state. The inbox unions and de-duplicates both
