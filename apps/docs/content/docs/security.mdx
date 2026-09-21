@@ -13,14 +13,15 @@ the honest inventory of what's protected and how.
 the Worker never reads a `.env` at runtime. every secret lives in **Cloudflare**
 (`wrangler secret put`), never in the repo:
 
-| secret                    | guards                                                     |
-| ------------------------- | ---------------------------------------------------------- |
-| `TELEGRAM_BOT_TOKEN`      | the bot itself — the operator channel                      |
-| `TELEGRAM_CHAT_ID`        | your supergroup                                            |
-| `TELEGRAM_WEBHOOK_SECRET` | inbound webhook auth (`x-telegram-bot-api-secret-token`)   |
-| `TENANT_SYNC_SECRET`      | `/api/tenant/config` read + write (`x-tenant-sync-secret`) |
-| `BILLING_SYNC_SECRET`     | the optional billing → gate push (unused in self-host)     |
-| `RESEND_API_KEY`          | lead-email delivery                                        |
+| secret                     | guards                                                     |
+| -------------------------- | ---------------------------------------------------------- |
+| `TELEGRAM_BOT_TOKEN`       | the bot itself — the operator channel                      |
+| `TELEGRAM_CHAT_ID`         | your supergroup                                            |
+| `TELEGRAM_WEBHOOK_SECRET`  | inbound webhook auth (`x-telegram-bot-api-secret-token`)   |
+| `TENANT_SYNC_SECRET`       | `/api/tenant/config` read + write (`x-tenant-sync-secret`) |
+| `KNOWLEDGE_GATEWAY_SECRET` | bearer auth for the optional private retrieval gateway     |
+| `BILLING_SYNC_SECRET`      | the optional billing → gate push (unused in self-host)     |
+| `RESEND_API_KEY`           | lead-email delivery                                        |
 
 the CLI's own config (`KRISPY_API`, `KRISPY_TENANT`, `TENANT_SYNC_SECRET`) is documented in
 `.env.example` → put fill-ins in a git-ignored `.env.local`. secret scanning (`gitleaks`)

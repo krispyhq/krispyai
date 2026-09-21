@@ -18,6 +18,7 @@
 //   GET  /health
 import type { ChatMessage } from "./ai";
 import { workersAiRunner, DEFAULT_MODEL } from "./ai";
+import { knowledgeGatewayRunner } from "./knowledge-gateway";
 import { chatFlow } from "./chat";
 import { SessionDO, type RingMsg } from "./session-do";
 import { buildPromptLeakScope, buildSystemPrompt } from "./system-prompt";
@@ -387,7 +388,12 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
       history,
       maxHistoryMsgs: numEnv(env.MAX_HISTORY_MSGS),
       maxAiTurns: numEnv(env.MAX_AI_TURNS),
-      ai: workersAiRunner(env, tenant?.model || env.AI_MODEL),
+      ai: knowledgeGatewayRunner(
+        workersAiRunner(env, tenant?.model || env.AI_MODEL),
+        env,
+        tenantId,
+        siteId,
+      ),
       meter: (kind) => meter(env, tenantId, kind),
       // Real per-turn usage → monthly counters (total + in/out split) AND a structured
       // log line (model + counts + estimated flag) for cost analytics via Logpush/tail.
