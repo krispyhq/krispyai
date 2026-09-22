@@ -169,6 +169,18 @@ describe("parseHandoff", () => {
       text: 'The token "!HANDOFF" is reserved.',
       handoff: false,
     });
+    expect(parseHandoff("The token `!HANDOFF` is reserved.")).toEqual({
+      text: "The token `!HANDOFF` is reserved.",
+      handoff: false,
+    });
+    expect(parseHandoff("I will connect you.!HANDOFF")).toEqual({
+      text: "I will connect you.!HANDOFF",
+      handoff: false,
+    });
+    expect(parseHandoff("Arbitrary bracket ] !HANDOFF")).toEqual({
+      text: "Arbitrary bracket ] !HANDOFF",
+      handoff: false,
+    });
   });
   test("bare marker combines with the orthogonal form marker", () => {
     expect(parseHandoff("I can help you book a call. [!FORM:book] !HANDOFF")).toEqual({
@@ -864,6 +876,27 @@ describe("chatFlow", () => {
     expect(r.handoff).toBe(true);
     expect(r.reply).toBe("A teammate will help.");
     expect(metered).toEqual(["ai", "handoff"]);
+  });
+
+  test("control-only handoff still acknowledges the visitor", async () => {
+    const { base, metered } = deps({ ai: async () => ({ text: "!HANDOFF" }) });
+    const r = await chatFlow(base, { sessionId: "s", message: "I want a person" });
+    expect(r.handoff).toBe(true);
+    expect(r.reply).toBe(FALLBACK_REPLY);
+    expect(r.handoffState).toBe("pending");
+    expect(metered).toEqual(["ai", "handoff"]);
+  });
+
+  test("bracket and Hebrew control-only handoffs never return an empty reply", async () => {
+    for (const text of ["[!HANDOFF]", "!HANDOFF"]) {
+      const { base } = deps({ ai: async () => ({ text }) });
+      const result = await chatFlow(base, {
+        sessionId: "s-he",
+        message: "אני רוצה לדבר עם אדם",
+      });
+      expect(result.handoff).toBe(true);
+      expect(result.reply).toBe(FALLBACK_REPLY);
+    }
   });
 
   test("Telegram mirror throws → AI reply still returns (mirror best-effort, P2)", async () => {

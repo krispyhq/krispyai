@@ -63,6 +63,10 @@ set in `wrangler.toml` under `[vars]`, or as secrets. all optional — code defa
 client re-sends the whole history each turn, so these three bound per-turn cost without
 changing behavior on normal short chats.
 
+The canonical handoff marker is `[!HANDOFF]`; a standalone terminal `!HANDOFF` is accepted
+for provider compatibility. Either marker produces a visitor acknowledgement if it is the
+entire model reply, so the handoff never leaves an empty bubble.
+
 The optional knowledge gateway is called only from the Worker. It must enforce the same exact
 tenant/site binding and return bounded cited reference data. A timeout, scope mismatch, malformed
 response, or gateway error leaves the normal chat path unchanged; no provider setting is exposed

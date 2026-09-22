@@ -30,7 +30,7 @@ export type AiRunner = (messages: ChatMessage[]) => Promise<AiResult>;
 // Free, fast, good-enough default per the product spec. Override per tenant/env.
 export const DEFAULT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 /** Explicitly selected fast multilingual candidate; default model remains 70B. */
-export const FAST_MULTILINGUAL_MODEL = "@cf/meta/llama-3.1-8b-instruct";
+export const FAST_MULTILINGUAL_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast";
 
 // Output cap (turn tax): a support reply is 2–3 sentences, and output tokens are the
 // pricey side (4–5× input). Capping here bounds per-turn cost hard. Env override:
