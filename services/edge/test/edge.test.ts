@@ -27,7 +27,7 @@ import {
   _authCache,
   AUTH_CACHE_TTL_MS,
 } from "../src/operator-auth";
-import { workersAiRunner, MAX_OUTPUT_TOKENS, type ChatMessage } from "../src/ai";
+import { DEFAULT_MODEL, workersAiRunner, MAX_OUTPUT_TOKENS, type ChatMessage } from "../src/ai";
 import {
   chatFlow,
   FALLBACK_REPLY,
@@ -882,7 +882,14 @@ describe("workersAiRunner max_tokens", () => {
       },
       ...over,
     } as unknown as Env;
-    return { env, input: () => seen as { max_tokens?: number } };
+    return {
+      env,
+      input: () =>
+        seen as {
+          max_tokens?: number;
+          chat_template_kwargs?: { enable_thinking?: boolean };
+        },
+    };
   };
 
   test("caps output at MAX_OUTPUT_TOKENS by default", async () => {
@@ -896,6 +903,39 @@ describe("workersAiRunner max_tokens", () => {
     const { env, input } = fakeAiEnv({ MAX_OUTPUT_TOKENS: "128" });
     await workersAiRunner(env)([{ role: "user", content: "hey" }]);
     expect(input().max_tokens).toBe(128);
+  });
+
+  test("accepts an OpenAI-shaped final content string", async () => {
+    const { env } = fakeAiEnv();
+    (env.AI.run as unknown as () => Promise<unknown>) = async () => ({
+      choices: [{ message: { content: "modern reply", reasoning: "hidden" } }],
+      usage: { prompt_tokens: 3, completion_tokens: 2 },
+    });
+    const result = await workersAiRunner(env)([{ role: "user", content: "hey" }]);
+    expect(result.text).toBe("modern reply");
+    expect(result.usage).toEqual({ promptTokens: 3, completionTokens: 2, estimated: false });
+  });
+
+  test("disables thinking only for the explicitly configured GLM model", async () => {
+    const { env, input } = fakeAiEnv();
+    await workersAiRunner(env, "@cf/zai-org/glm-4.7-flash")([{ role: "user", content: "hey" }]);
+    expect(input().chat_template_kwargs).toEqual({ enable_thinking: false });
+    const regular = fakeAiEnv();
+    await workersAiRunner(regular.env, DEFAULT_MODEL)([{ role: "user", content: "hey" }]);
+    expect(regular.input().chat_template_kwargs).toBeUndefined();
+  });
+
+  test("does not fall back to reasoning when final content is empty", async () => {
+    const env = {
+      AI: {
+        run: async () => ({
+          choices: [{ message: { content: "", reasoning: "must never reach the visitor" } }],
+        }),
+      },
+    } as unknown as Env;
+    await expect(workersAiRunner(env)([{ role: "user", content: "hey" }])).rejects.toThrow(
+      "empty AI response",
+    );
   });
 });
 

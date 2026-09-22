@@ -10,6 +10,13 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+### Changed
+
+- Edge AI adapter accepts both the legacy Workers AI `response` shape and the
+  OpenAI-shaped `choices[0].message.content` final text. Reasoning-only output fails
+  closed; explicitly selected `@cf/zai-org/glm-4.7-flash` disables thinking while the
+  default 70B model behavior remains unchanged.
+
 ### Added
 
 - Edge operator inbox: `includeActive: true` lists every unresolved conversation,

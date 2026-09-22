@@ -123,7 +123,10 @@ malformed identity fields fail closed.
   visitor); Telegram unconfigured → chat and Buttr handoff still work, topic operations
   no-op, and screenshot paste/drop stays disabled.
 - **AI adapter** — Workers AI default (`workersAiRunner`); the `AiRunner` type is the
-  BYO-key seam.
+  BYO-key seam. It accepts both the legacy `response` field and the OpenAI-shaped
+  `choices[0].message.content` final text, and never exposes reasoning-only output.
+  The explicitly selected `@cf/zai-org/glm-4.7-flash` model receives
+  `chat_template_kwargs.enable_thinking=false`; the default 70B model is unchanged.
 
 ## Run locally
 

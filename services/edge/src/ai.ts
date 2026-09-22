@@ -30,6 +30,9 @@ export type AiRunner = (messages: ChatMessage[]) => Promise<AiResult>;
 // Free, fast, good-enough default per the product spec. Override per tenant/env.
 export const DEFAULT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
+/** Models whose provider supports explicit thinking control in chat_template_kwargs. */
+export const THINKING_DISABLED_MODELS = new Set(["@cf/zai-org/glm-4.7-flash"]);
+
 // Output cap (turn tax): a support reply is 2–3 sentences, and output tokens are the
 // pricey side (4–5× input). Capping here bounds per-turn cost hard. Env override:
 // MAX_OUTPUT_TOKENS. The system prompt also asks for brevity so the cap rarely bites.
@@ -39,13 +42,24 @@ export const MAX_OUTPUT_TOKENS = 256;
 export function workersAiRunner(env: Env, model = env.AI_MODEL || DEFAULT_MODEL): AiRunner {
   const maxTokens = Number(env.MAX_OUTPUT_TOKENS) || MAX_OUTPUT_TOKENS;
   return async (messages) => {
-    // Workers AI returns { response, usage:{ prompt_tokens, completion_tokens, total_tokens } }.
-    // Some models omit usage → we surface undefined and the caller estimates (labelled).
-    const res = (await env.AI.run(model, { messages, max_tokens: maxTokens })) as {
-      response?: string;
+    // Workers AI usually returns { response, usage:{ prompt_tokens, completion_tokens } }.
+    // Some newer models return OpenAI-shaped choices instead.
+    const input = {
+      messages,
+      max_tokens: maxTokens,
+      ...(THINKING_DISABLED_MODELS.has(model)
+        ? { chat_template_kwargs: { enable_thinking: false } }
+        : {}),
+    };
+    const res = (await env.AI.run(model, input)) as {
+      response?: unknown;
+      choices?: Array<{ message?: { content?: unknown } }>;
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
-    const text = res?.response?.trim();
+    const legacy = typeof res?.response === "string" ? res.response : "";
+    const modern =
+      typeof res?.choices?.[0]?.message?.content === "string" ? res.choices[0].message.content : "";
+    const text = (legacy || modern).trim();
     if (!text) throw new Error("empty AI response");
     const u = res.usage;
     const usage: TokenUsage | undefined =
