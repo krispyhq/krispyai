@@ -156,7 +156,11 @@ export async function chatFlow(deps: ChatDeps, input: ChatInput): Promise<ChatRe
 
   const { text, handoff } = parseHandoff(raw);
   // Orthogonal form marker — parsed off the already-handoff-stripped text.
-  const { text: clean, formId } = parseForm(text);
+  const parsed = parseForm(text);
+  // A bare control-only response still needs a visitor-facing acknowledgement;
+  // never return an empty bubble while the handoff is pending.
+  const clean = parsed.text || (handoff ? FALLBACK_REPLY : parsed.text);
+  const { formId } = parsed;
 
   // Output guardrail: a jailbroken model can leak its system prompt or re-emit control
   // tokens despite SECURITY_INSTRUCTION. Deterministic, zero-latency catch on the

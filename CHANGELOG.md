@@ -10,6 +10,14 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+### Changed
+
+- Edge accepts a bare terminal `!HANDOFF` compatibility token only when it is a
+  standalone sentence-ending control marker. Ordinary prose and quoted mentions remain
+  text. The explicitly selected `@cf/meta/llama-3.1-8b-instruct-fast` candidate uses
+  temperature 0; the default 70B model remains unchanged. Control-only handoffs now
+  still send the visitor an acknowledgement.
+
 ### Added
 
 - Edge operator inbox: `includeActive: true` lists every unresolved conversation,

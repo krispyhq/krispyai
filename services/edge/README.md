@@ -123,7 +123,11 @@ malformed identity fields fail closed.
   visitor); Telegram unconfigured → chat and Buttr handoff still work, topic operations
   no-op, and screenshot paste/drop stays disabled.
 - **AI adapter** — Workers AI default (`workersAiRunner`); the `AiRunner` type is the
-  BYO-key seam.
+  BYO-key seam. The bracketed `[!HANDOFF]` marker remains canonical; a bare terminal
+  `!HANDOFF` is accepted only as a compatibility variant when sentence-standalone.
+  The explicitly selected `@cf/meta/llama-3.1-8b-instruct-fast` candidate uses temperature
+  0 for repeatability; the default 70B model is unchanged. A control-only handoff still
+  sends the visitor an acknowledgement while the human takes over.
 
 ## Run locally
 

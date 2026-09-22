@@ -62,6 +62,8 @@ visitor ──▶ AI answers (Cloudflare Workers AI) ──▶ visitor
 - You reply from Telegram → it's pushed into the browser over a WebSocket, **live**.
 - The bot detects it's a human job and steps back immediately. Messages sent while you are
   on the way still reach the same topic; the bot stays quiet until you resolve the handoff.
+- A handoff marker by itself still returns a short acknowledgement to the visitor while the
+  human takes over.
 - A complete answer should not summon an operator merely because it describes a limitation,
   an extra cost or included human support. Explicit human requests and missing information
   still escalate; business-specific approval requirements remain authoritative.
