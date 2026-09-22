@@ -171,7 +171,9 @@ describe("optional knowledge gateway", () => {
         "site-a",
         async () => Response.json({ evidence: [], guidance }),
       )(messages);
-      expect(seen).toEqual(messages);
+      if (!seen) throw new Error("base runner was not called");
+      const actual: ChatMessage[] = seen;
+      expect(actual).toEqual(messages);
     }
   });
 
@@ -233,7 +235,7 @@ describe("optional knowledge gateway", () => {
       env(),
       "tenant-a",
       "site-a",
-      async () => new Response(`{"evidence":[]}${" ".repeat(40_000)}`),
+      async () => new Response(`{"evidence":[]}${" ".repeat(70_000)}`),
     )(messages);
     expect(seen).toEqual(messages);
   });
