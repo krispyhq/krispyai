@@ -29,6 +29,8 @@ export type AiRunner = (messages: ChatMessage[]) => Promise<AiResult>;
 
 // Free, fast, good-enough default per the product spec. Override per tenant/env.
 export const DEFAULT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+/** Explicitly selected fast multilingual candidate; default model remains 70B. */
+export const FAST_MULTILINGUAL_MODEL = "@cf/meta/llama-3.1-8b-instruct";
 
 // Output cap (turn tax): a support reply is 2–3 sentences, and output tokens are the
 // pricey side (4–5× input). Capping here bounds per-turn cost hard. Env override:
@@ -41,7 +43,11 @@ export function workersAiRunner(env: Env, model = env.AI_MODEL || DEFAULT_MODEL)
   return async (messages) => {
     // Workers AI returns { response, usage:{ prompt_tokens, completion_tokens, total_tokens } }.
     // Some models omit usage → we surface undefined and the caller estimates (labelled).
-    const res = (await env.AI.run(model, { messages, max_tokens: maxTokens })) as {
+    const res = (await env.AI.run(model, {
+      messages,
+      max_tokens: maxTokens,
+      ...(model === FAST_MULTILINGUAL_MODEL ? { temperature: 0 } : {}),
+    })) as {
       response?: string;
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };

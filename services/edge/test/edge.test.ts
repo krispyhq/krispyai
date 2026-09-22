@@ -27,7 +27,12 @@ import {
   _authCache,
   AUTH_CACHE_TTL_MS,
 } from "../src/operator-auth";
-import { workersAiRunner, MAX_OUTPUT_TOKENS, type ChatMessage } from "../src/ai";
+import {
+  FAST_MULTILINGUAL_MODEL,
+  workersAiRunner,
+  MAX_OUTPUT_TOKENS,
+  type ChatMessage,
+} from "../src/ai";
 import {
   chatFlow,
   FALLBACK_REPLY,
@@ -148,6 +153,28 @@ describe("parseHandoff", () => {
     expect(r.handoff).toBe(true);
     expect(r.text).toBe("Let me get someone.");
     expect(r.text).not.toContain("[!HANDOFF]");
+  });
+  test("bare terminal marker → compatibility handoff", () => {
+    expect(parseHandoff("I will connect you with a teammate. !HANDOFF")).toEqual({
+      text: "I will connect you with a teammate.",
+      handoff: true,
+    });
+  });
+  test("bare marker is not recognized in ordinary prose or quotes", () => {
+    expect(parseHandoff("The customer typed !HANDOFF")).toEqual({
+      text: "The customer typed !HANDOFF",
+      handoff: false,
+    });
+    expect(parseHandoff('The token "!HANDOFF" is reserved.')).toEqual({
+      text: 'The token "!HANDOFF" is reserved.',
+      handoff: false,
+    });
+  });
+  test("bare marker combines with the orthogonal form marker", () => {
+    expect(parseHandoff("I can help you book a call. [!FORM:book] !HANDOFF")).toEqual({
+      text: "I can help you book a call. [!FORM:book]",
+      handoff: true,
+    });
   });
   test("buildSystemPrompt always restates the handoff contract", () => {
     expect(buildSystemPrompt()).toContain(HANDOFF_MARKER);
@@ -829,6 +856,16 @@ describe("chatFlow", () => {
     expect(metered).toEqual(["ai", "handoff"]);
   });
 
+  test("bare terminal handoff from an explicit person request is escalated", async () => {
+    const { base, metered } = deps({
+      ai: async () => ({ text: "A teammate will help. !HANDOFF" }),
+    });
+    const r = await chatFlow(base, { sessionId: "s", message: "I want a person" });
+    expect(r.handoff).toBe(true);
+    expect(r.reply).toBe("A teammate will help.");
+    expect(metered).toEqual(["ai", "handoff"]);
+  });
+
   test("Telegram mirror throws → AI reply still returns (mirror best-effort, P2)", async () => {
     // ensureTopic + toTopic both simulate a Telegram outage; the visitor must still get the reply.
     const { base } = deps({
@@ -882,7 +919,7 @@ describe("workersAiRunner max_tokens", () => {
       },
       ...over,
     } as unknown as Env;
-    return { env, input: () => seen as { max_tokens?: number } };
+    return { env, input: () => seen as { max_tokens?: number; temperature?: number } };
   };
 
   test("caps output at MAX_OUTPUT_TOKENS by default", async () => {
@@ -896,6 +933,18 @@ describe("workersAiRunner max_tokens", () => {
     const { env, input } = fakeAiEnv({ MAX_OUTPUT_TOKENS: "128" });
     await workersAiRunner(env)([{ role: "user", content: "hey" }]);
     expect(input().max_tokens).toBe(128);
+  });
+
+  test("temperature 0 is sent only for the selected 8B candidate", async () => {
+    const candidate = fakeAiEnv();
+    await workersAiRunner(
+      candidate.env,
+      FAST_MULTILINGUAL_MODEL,
+    )([{ role: "user", content: "hey" }]);
+    expect(candidate.input().temperature).toBe(0);
+    const defaultModel = fakeAiEnv();
+    await workersAiRunner(defaultModel.env)([{ role: "user", content: "hey" }]);
+    expect(defaultModel.input().temperature).toBeUndefined();
   });
 });
 
