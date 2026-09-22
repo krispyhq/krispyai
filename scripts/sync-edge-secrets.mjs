@@ -20,9 +20,9 @@ if (!["preview", "production"].includes(ENV)) {
 }
 
 // The edge Env's secret-shaped bindings (src/types.ts). Plain config vars
-// (ALLOWED_ORIGIN, API_ORIGIN, AI_MODEL, …) stay in wrangler.toml [vars] — except the
-// optional private knowledge gateway settings below, which are intentionally sourced
-// from Infisical so a hosted preview can be enabled without hardcoding an endpoint.
+// (ALLOWED_ORIGIN, API_ORIGIN, AI_MODEL, …) stay in wrangler.toml [vars]. The optional
+// private knowledge gateway settings below use the same per-key secret API so this
+// deploy step can source them from Infisical without touching unrelated bindings.
 const EDGE_SECRET_KEYS = [
   "ADMIN_USAGE_SECRET",
   "AI_API_KEY",
@@ -93,68 +93,31 @@ for (const key of present) {
   console.log(`  ✔ ${key}`);
 }
 if (absent.length) console.log(`  ⚠ skipped (absent in .env.local): ${absent.join(", ")}`);
-if (DRY) {
-  console.log(
-    `→ ${worker}: syncing ${presentKnowledgeConfig.length} knowledge config binding(s) (dry-run)`,
-  );
-  for (const key of presentKnowledgeConfig) console.log(`  · ${key} (would PUT plain_text)`);
-  for (const key of absentKnowledgeConfig) console.log(`  · ${key} (would remove / keep disabled)`);
-  console.log(`✔ edge secret sync complete (${ENV}).`);
-  process.exit(0);
-}
-
-// Worker-side vars are version bindings rather than secrets. Read the current binding
-// set and merge the optional gateway keys so this sync never drops AI, DO, KV, or other
-// wrangler-managed bindings. Missing gateway keys are removed, preserving the default
-// disabled state instead of leaving a stale endpoint active after Infisical clears it.
-const settingsPath = `/workers/scripts/${worker}/settings`;
-const settingsResponse = await fetch(
-  `https://api.cloudflare.com/client/v4/accounts/${ACCT}${settingsPath}`,
-  {
-    headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
-  },
-);
-const settingsBody = await settingsResponse.json().catch(() => ({}));
-if (!settingsResponse.ok || !settingsBody.success) {
-  console.error(`✘ ${worker}: could not read Worker bindings (CF API ${settingsResponse.status})`);
-  process.exit(1);
-}
-const existingBindings = Array.isArray(settingsBody.result?.bindings)
-  ? settingsBody.result.bindings
-  : [];
-const gatewayBindings = new Map(
-  presentKnowledgeConfig.map((key) => [key, { name: key, text: L[key], type: "plain_text" }]),
-);
-const mergedBindings = existingBindings
-  .filter((binding) => !EDGE_KNOWLEDGE_CONFIG_KEYS.includes(binding?.name))
-  .concat([...gatewayBindings.values()]);
-const changedBindings =
-  existingBindings.length !== mergedBindings.length ||
-  EDGE_KNOWLEDGE_CONFIG_KEYS.some((key) => {
-    const before = existingBindings.find((binding) => binding?.name === key)?.text;
-    return before !== (L[key] ?? undefined);
-  });
 console.log(
   `→ ${worker}: syncing ${presentKnowledgeConfig.length} knowledge config binding(s)${DRY ? " (dry-run)" : ""}`,
 );
-if (changedBindings) {
-  const update = await fetch(
-    `https://api.cloudflare.com/client/v4/accounts/${ACCT}${settingsPath}`,
+for (const key of presentKnowledgeConfig) {
+  if (DRY) {
+    console.log(`  · ${key} (would PUT)`);
+    continue;
+  }
+  const res = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${ACCT}/workers/scripts/${worker}/secrets`,
     {
-      method: "PATCH",
+      method: "PUT",
       headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ bindings: mergedBindings }),
+      body: JSON.stringify({ name: key, text: L[key], type: "secret_text" }),
     },
   );
-  const updateBody = await update.json().catch(() => ({}));
-  if (!update.ok || !updateBody.success) {
-    console.error(`✘ ${worker}: knowledge config sync failed (CF API ${update.status})`);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body.success) {
+    console.error(`  ✘ ${key} — CF API ${res.status}`);
     process.exit(1);
   }
-  console.log(
-    `  ✔ knowledge config bindings (${presentKnowledgeConfig.length} present, ${absentKnowledgeConfig.length} absent)`,
-  );
-} else {
-  console.log("  ✔ knowledge config bindings already current");
+  console.log(`  ✔ ${key}`);
 }
+if (absentKnowledgeConfig.length)
+  console.log(
+    `  ⚠ skipped (absent in .env.local; existing binding unchanged): ${absentKnowledgeConfig.join(", ")}`,
+  );
 console.log(`✔ edge secret sync complete (${ENV}).`);
