@@ -12,6 +12,10 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Changed
 
+- Deploy: the edge sync now transfers optional knowledge gateway configuration from
+  Infisical into generic Worker bindings while preserving all existing bindings; absent
+  gateway keys remove the optional bindings and keep the feature disabled.
+
 - Hosted preview now configures the operator push-token endpoint so handoffs can
   notify registered Buttr devices instead of silently skipping push.
 
