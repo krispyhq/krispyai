@@ -221,12 +221,12 @@ function doFetch(
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    return finalizeCors(request, await route(request, env), env);
+  async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
+    return finalizeCors(request, await route(request, env, ctx), env);
   },
 };
 
-async function route(request: Request, env: Env): Promise<Response> {
+async function route(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
   {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -235,7 +235,7 @@ async function route(request: Request, env: Env): Promise<Response> {
       return new Response(null, { status: 204, headers: cors(env) });
     if (path === "/health") return json(env, { status: "ok", service: "edge" });
 
-    if (request.method === "POST" && path === "/api/chat") return handleChat(request, env);
+    if (request.method === "POST" && path === "/api/chat") return handleChat(request, env, ctx);
     if (request.method === "POST" && path === "/api/contact") return handleContact(request, env);
     if (request.method === "POST" && path === "/api/lead") return handleLead(request, env);
     if (request.method === "POST" && path === "/api/attachment")
@@ -301,7 +301,11 @@ async function route(request: Request, env: Env): Promise<Response> {
 }
 
 // ── POST /api/chat ───────────────────────────────────────────────────────────
-async function handleChat(request: Request, env: Env): Promise<Response> {
+async function handleChat(
+  request: Request,
+  env: Env,
+  executionCtx?: ExecutionContext,
+): Promise<Response> {
   const body = (await request.json().catch(() => null)) as {
     sessionId?: string;
     message?: string;
@@ -339,7 +343,9 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
   }
   // Index only after entitlement and usage gates succeed. This dedicated namespace
   // cannot overwrite the legacy Telegram session→thread map.
-  await indexConversationSession(env, tenantId, body.sessionId);
+  const indexPromise = indexConversationSession(env, tenantId, body.sessionId);
+  if (executionCtx) executionCtx.waitUntil(indexPromise);
+  else await indexPromise;
 
   const tenant = await getTenant(env, tenantId, siteId);
 
