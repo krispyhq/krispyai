@@ -40,6 +40,7 @@ import {
   resolveSiteId,
   getThreadForSession,
   getSessionForThread,
+  indexConversationSession,
   indexHandoffSession,
   linkThreadSession,
   meter,
@@ -66,6 +67,10 @@ import {
 } from "./store";
 
 export { SessionDO };
+
+interface WaitUntilContext {
+  waitUntil(promise: Promise<unknown>): void;
+}
 
 const DEFAULT_TENANT = "self";
 
@@ -220,12 +225,12 @@ function doFetch(
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    return finalizeCors(request, await route(request, env), env);
+  async fetch(request: Request, env: Env, ctx?: WaitUntilContext): Promise<Response> {
+    return finalizeCors(request, await route(request, env, ctx), env);
   },
 };
 
-async function route(request: Request, env: Env): Promise<Response> {
+async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promise<Response> {
   {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -234,7 +239,7 @@ async function route(request: Request, env: Env): Promise<Response> {
       return new Response(null, { status: 204, headers: cors(env) });
     if (path === "/health") return json(env, { status: "ok", service: "edge" });
 
-    if (request.method === "POST" && path === "/api/chat") return handleChat(request, env);
+    if (request.method === "POST" && path === "/api/chat") return handleChat(request, env, ctx);
     if (request.method === "POST" && path === "/api/contact") return handleContact(request, env);
     if (request.method === "POST" && path === "/api/lead") return handleLead(request, env);
     if (request.method === "POST" && path === "/api/attachment")
@@ -300,7 +305,11 @@ async function route(request: Request, env: Env): Promise<Response> {
 }
 
 // ── POST /api/chat ───────────────────────────────────────────────────────────
-async function handleChat(request: Request, env: Env): Promise<Response> {
+async function handleChat(
+  request: Request,
+  env: Env,
+  executionCtx?: WaitUntilContext,
+): Promise<Response> {
   const body = (await request.json().catch(() => null)) as {
     sessionId?: string;
     message?: string;
@@ -336,6 +345,11 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
   if (!withinPlan(await getUsage(env, tenantId), ent.plan_limits)) {
     return json(env, { error: "usage_limit_reached", plan: ent.plan }, 429);
   }
+  // Index only after entitlement and usage gates succeed. This dedicated namespace
+  // cannot overwrite the legacy Telegram session→thread map.
+  const indexPromise = indexConversationSession(env, tenantId, body.sessionId);
+  if (executionCtx) executionCtx.waitUntil(indexPromise);
+  else await indexPromise;
 
   const tenant = await getTenant(env, tenantId, siteId);
 
@@ -835,9 +849,9 @@ async function handleOperatorReply(request: Request, env: Env): Promise<Response
   return json(env, { ok: true, delivered: true });
 }
 
-// POST /api/operator/handoffs { tenantId, includeResolved? } → the operator app's
-// inbox. Resolved sessions are EXCLUDED by default (inbox hygiene); pass
-// { includeResolved: true } to list them too (each row carries `resolved`).
+// POST /api/operator/handoffs { tenantId, includeResolved?, includeActive? } → the
+// operator app's inbox. includeActive also lists unresolved AI-only conversations;
+// push notifications remain reserved for real handoffs.
 // New handoffs use their own Telegram-independent KV index. Union the legacy
 // session→thread keys so already-deployed conversations remain visible, then ask
 // each distinct session's DO for one /summary (handoff state + ring tail).
@@ -847,20 +861,29 @@ async function handleOperatorHandoffs(request: Request, env: Env): Promise<Respo
   const b = (await request.json().catch(() => null)) as {
     tenantId?: string;
     includeResolved?: boolean;
+    includeActive?: boolean;
   } | null;
   if (!b?.tenantId) return json(env, { error: "tenantId required" }, 400);
   const denied = await authorizeOperator(request, env, b.tenantId);
   if (denied) return json(env, { error: denied.error }, denied.status);
   const tenantId = b.tenantId;
   const includeResolved = b.includeResolved === true;
+  const includeActive = b.includeActive === true;
+  const conversationPrefix = `conversation:${encodeURIComponent(tenantId)}:`;
   const handoffPrefix = `handoff:${tenantId}:`;
   const legacyPrefix = `session:${tenantId}:`;
-  const [handoffList, legacyList] = await Promise.all([
+  const [conversationList, handoffList, legacyList] = await Promise.all([
+    env.KRISPY_KV.list({ prefix: conversationPrefix }),
     env.KRISPY_KV.list({ prefix: handoffPrefix }),
     env.KRISPY_KV.list({ prefix: legacyPrefix }),
   ]);
   const sessionIds = [
     ...new Set([
+      ...(includeActive
+        ? conversationList.keys.map(({ name }) =>
+            decodeURIComponent(name.slice(conversationPrefix.length)),
+          )
+        : []),
       ...handoffList.keys.map(({ name }) => name.slice(handoffPrefix.length)),
       ...legacyList.keys.map(({ name }) => name.slice(legacyPrefix.length)),
     ]),
@@ -880,7 +903,7 @@ async function handleOperatorHandoffs(request: Request, env: Env): Promise<Respo
       // Default inbox = waiting/operator & unresolved. Resolving hands the session back to
       // the AI, so resolved rows are listed by their resolved
       // flag instead — includeResolved keeps the app's history/undo-swipe view alive.
-      const listed = resolved ? includeResolved : handoffState !== "ai";
+      const listed = resolved ? includeResolved : includeActive || handoffState !== "ai";
       return listed
         ? {
             sessionId,

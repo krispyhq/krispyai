@@ -43,7 +43,9 @@ to its nonempty `id`; malformed identity fields fail closed with `401`. Verified
 are cached per Worker isolate for 60 seconds.
 
 Telegram is optional for the Buttr inbox. Before moving a session to `pending`, the Worker writes
-`handoff:<tenant>:<session>` to KV. Topic links keep their separate legacy `session:` keys, so
+`handoff:<tenant>:<session>` to KV. With `includeActive: true`, the operator inbox also lists
+unresolved AI-only conversations indexed under `conversation:<tenant>:<session>`. Topic links
+keep their separate legacy `session:` keys, so
 enabling Telegram later cannot overwrite discovery state. The inbox unions and de-duplicates both
 prefixes so conversations created before this index remain visible.
 
