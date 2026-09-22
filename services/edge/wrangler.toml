@@ -47,6 +47,7 @@ ALLOWED_ORIGIN = "*" # lock to your site origin in production
 # its OWN KV namespace id so preview and prod don't share tenant config/usage.
 [env.preview]
 name = "krispy-edge-preview"
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 [env.preview.ai]
 binding = "AI"
 [[env.preview.durable_objects.bindings]]

@@ -53,6 +53,10 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Fixed
 
+- Edge preview: allow fetches to the separately deployed private knowledge Worker when
+  both Workers share a Cloudflare zone; the compatibility flag is preview-only and does
+  not alter production fetch behavior.
+
 - Edge: the private knowledge gateway now uses the Workers-supported manual redirect
   mode and rejects redirect responses without following them, preserving the existing
   fallback path for misconfigured or redirected endpoints.
