@@ -68,6 +68,10 @@ import {
 
 export { SessionDO };
 
+interface WaitUntilContext {
+  waitUntil(promise: Promise<unknown>): void;
+}
+
 const DEFAULT_TENANT = "self";
 
 // ── DO-ring memory (chat context) ────────────────────────────────────────────
@@ -221,12 +225,12 @@ function doFetch(
 }
 
 export default {
-  async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx?: WaitUntilContext): Promise<Response> {
     return finalizeCors(request, await route(request, env, ctx), env);
   },
 };
 
-async function route(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
+async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promise<Response> {
   {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -304,7 +308,7 @@ async function route(request: Request, env: Env, ctx?: ExecutionContext): Promis
 async function handleChat(
   request: Request,
   env: Env,
-  executionCtx?: ExecutionContext,
+  executionCtx?: WaitUntilContext,
 ): Promise<Response> {
   const body = (await request.json().catch(() => null)) as {
     sessionId?: string;
