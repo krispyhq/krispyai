@@ -933,9 +933,13 @@ describe("workersAiRunner max_tokens", () => {
         }),
       },
     } as unknown as Env;
-    await expect(workersAiRunner(env)([{ role: "user", content: "hey" }])).rejects.toThrow(
-      "empty AI response",
-    );
+    let message = "";
+    try {
+      await workersAiRunner(env)([{ role: "user", content: "hey" }]);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toBe("empty AI response");
   });
 });
 
