@@ -286,11 +286,11 @@ export function knowledgeGatewayRunner(
       const response = await fetcher(endpoint, {
         method: "POST",
         headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
-        redirect: "error",
+        redirect: "manual",
         body,
         signal,
       });
-      if (response.ok) {
+      if (response.ok && response.status >= 200 && response.status < 300) {
         const parsed = parseResponse(await readBoundedJson(response, signal));
         if (parsed && (parsed.evidence.length || parsed.guidance.length))
           messages = withKnowledge(messages, parsed.evidence, parsed.guidance, now());

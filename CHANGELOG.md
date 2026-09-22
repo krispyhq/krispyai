@@ -53,6 +53,10 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Fixed
 
+- Edge: the private knowledge gateway now uses the Workers-supported manual redirect
+  mode and rejects redirect responses without following them, preserving the existing
+  fallback path for misconfigured or redirected endpoints.
+
 - Edge operator bearer verification now authorizes against the cloud API's server-resolved
   tenant instead of always treating the user id as the tenant. Verified teammates can reach
   the owner's handoff inbox, other tenants remain denied, and malformed identities fail closed;

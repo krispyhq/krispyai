@@ -107,6 +107,29 @@ describe("optional knowledge gateway", () => {
     expect(await received?.json()).toMatchObject({ tenantId: "tenant-a", siteId: "site-a" });
   });
 
+  test("does not follow gateway redirects and falls back on a redirect response", async () => {
+    let receivedInit: RequestInit | undefined;
+    let baseCalls = 0;
+    const runner = knowledgeGatewayRunner(
+      async (input) => {
+        baseCalls += 1;
+        expect(input).toEqual(messages);
+        return answer("base");
+      },
+      env(),
+      "tenant-a",
+      "site-a",
+      async (_input, init) => {
+        receivedInit = init;
+        return new Response(null, { status: 302, headers: { location: "https://other.example" } });
+      },
+    );
+
+    expect(await runner(messages)).toEqual(answer("base"));
+    expect(receivedInit?.redirect).toBe("manual");
+    expect(baseCalls).toBe(1);
+  });
+
   test("adds one bounded professional method reference without changing evidence semantics", async () => {
     const method = "Use a clear value equation as a professional method reference.";
     const runner = knowledgeGatewayRunner(
