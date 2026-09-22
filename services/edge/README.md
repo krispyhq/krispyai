@@ -69,10 +69,14 @@ model call. Set `KNOWLEDGE_GATEWAY_URL`, `KNOWLEDGE_GATEWAY_SECRET`, and the exa
 `KNOWLEDGE_TENANT_ID`; `KNOWLEDGE_SITE_ID` defaults to the default site and
 `KNOWLEDGE_TIMEOUT_MS` defaults to 250. These are Worker settings only and never enter
 the public widget config. The gateway receives `{ requestId, tenantId, siteId, question }`
-with a bearer secret and must return `{ evidence: [{ text, sourceId, revision, title?, url? }] }`.
-The edge rejects cross-scope, malformed, oversized, or unsafe evidence. Evidence is treated
-as reference data below the existing security and handoff rules. Missing configuration,
-operator-owned sessions, timeouts, errors, or no evidence use the existing AI path unchanged.
+with a bearer secret and must return `{ evidence: [{ text, sourceId, revision, title?, url? }], guidance?: [{ text, sourceId, revision, title? }] }`.
+Evidence is business reference data. Optional guidance is one bounded professional-method
+reference (20,000 characters total); it is never a business claim or an instruction that
+overrides security, privacy, tenant scope, handoff, or human-review rules. The edge rejects
+cross-scope, malformed, oversized, or unsafe responses and caps the request body at 64 KiB.
+It adds the trusted current UTC time when composing a retrieved reference. Missing
+configuration, operator-owned sessions, timeouts, errors, or no usable retrieval use the
+existing AI path unchanged.
 The private gateway owns provider credentials and Longstory-specific code.
 
 The browser widget sends its current visitor line at the end of `history` before posting
