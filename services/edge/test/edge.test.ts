@@ -49,6 +49,7 @@ import {
   getThreadForSession,
   getSessionForThread,
   indexHandoffSession,
+  indexConversationSession,
   linkThreadSession,
   getTenant,
   withinPlan,
@@ -1861,6 +1862,17 @@ describe("operator app routes", () => {
     );
     expect(conversations.map((c) => c.sessionId)).not.toContain("s-foreign-ai");
     expect((await env.KRISPY_KV.list({ prefix: "conversation:other:" })).keys).toHaveLength(0);
+
+    await indexConversationSession(env, "self:child", "s-collision");
+    const isolated = await worker.fetch(
+      post("/api/operator/handoffs", { tenantId: "self", includeActive: true }),
+      env,
+    );
+    expect(
+      ((await isolated.json()) as { conversations: { sessionId: string }[] }).conversations.map(
+        (conversation) => conversation.sessionId,
+      ),
+    ).not.toContain("s-collision");
 
     const thread = await worker.fetch(
       post("/api/operator/thread", { tenantId: "self", sessionId: "s-ai" }),

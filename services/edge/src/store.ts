@@ -150,7 +150,7 @@ export const kThreadToSession = (t: string, threadId: number) => `thread:${t}:${
 export const kSessionToThread = (t: string, sessionId: string) => `session:${t}:${sessionId}`;
 export const kHandoffSession = (t: string, sessionId: string) => `handoff:${t}:${sessionId}`;
 export const kConversationSession = (t: string, sessionId: string) =>
-  `conversation:${t}:${sessionId}`;
+  `conversation:${encodeURIComponent(t)}:${encodeURIComponent(sessionId)}`;
 // Config blob is per-site: an unsuffixed tenant keeps `tenant:<t>` exactly.
 export const kTenant = (t: string, siteId?: string) => `tenant:${ns(t, siteId)}`;
 // Relearning suggestions live under their OWN per-site key — NOT the config blob — so a

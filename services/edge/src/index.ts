@@ -869,7 +869,7 @@ async function handleOperatorHandoffs(request: Request, env: Env): Promise<Respo
   const tenantId = b.tenantId;
   const includeResolved = b.includeResolved === true;
   const includeActive = b.includeActive === true;
-  const conversationPrefix = `conversation:${tenantId}:`;
+  const conversationPrefix = `conversation:${encodeURIComponent(tenantId)}:`;
   const handoffPrefix = `handoff:${tenantId}:`;
   const legacyPrefix = `session:${tenantId}:`;
   const [conversationList, handoffList, legacyList] = await Promise.all([
@@ -880,7 +880,9 @@ async function handleOperatorHandoffs(request: Request, env: Env): Promise<Respo
   const sessionIds = [
     ...new Set([
       ...(includeActive
-        ? conversationList.keys.map(({ name }) => name.slice(conversationPrefix.length))
+        ? conversationList.keys.map(({ name }) =>
+            decodeURIComponent(name.slice(conversationPrefix.length)),
+          )
         : []),
       ...handoffList.keys.map(({ name }) => name.slice(handoffPrefix.length)),
       ...legacyList.keys.map(({ name }) => name.slice(legacyPrefix.length)),
