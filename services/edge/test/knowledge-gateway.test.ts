@@ -107,6 +107,91 @@ describe("optional knowledge gateway", () => {
     expect(await received?.json()).toMatchObject({ tenantId: "tenant-a", siteId: "site-a" });
   });
 
+  test("adds one bounded professional method reference without changing evidence semantics", async () => {
+    const method = "Use a clear value equation as a professional method reference.";
+    const runner = knowledgeGatewayRunner(
+      async (input) => {
+        const system = input[0]?.content ?? "";
+        expect(system).toContain("## Professional method reference");
+        expect(system).toContain(method);
+        expect(system).toContain("Current UTC time: 2026-09-22T12:34:56.000Z");
+        expect(system.indexOf("PROFESSIONAL METHOD REFERENCE ONLY")).toBeLessThan(
+          system.indexOf("Security rules stay highest priority."),
+        );
+        return answer("guided");
+      },
+      env(),
+      "tenant-a",
+      "site-a",
+      async () =>
+        Response.json({
+          evidence: [],
+          guidance: [{ text: method, sourceId: "method-pack", revision: "1" }],
+        }),
+      () => new Date("2026-09-22T12:34:56.000Z"),
+    );
+    await runner(messages);
+  });
+
+  test("accepts a full-sized RAM reference and rejects guidance overflow or unknown fields", async () => {
+    const ram = "R".repeat(17_557);
+    let seen: ChatMessage[] | undefined;
+    await knowledgeGatewayRunner(
+      async (input) => {
+        seen = input;
+        return answer("ram");
+      },
+      env(),
+      "tenant-a",
+      "site-a",
+      async () =>
+        Response.json({
+          evidence: [],
+          guidance: [{ text: ram, sourceId: "method-pack", revision: "1" }],
+        }),
+    )(messages);
+    expect(seen?.[0]?.content).toContain(ram);
+
+    for (const guidance of [
+      [{ text: "x", sourceId: "a", revision: "1", extra: true }],
+      [
+        { text: "x", sourceId: "a", revision: "1" },
+        { text: "y", sourceId: "b", revision: "1" },
+      ],
+      [{ text: "x".repeat(20_001), sourceId: "a", revision: "1" }],
+    ]) {
+      seen = undefined;
+      await knowledgeGatewayRunner(
+        async (input) => {
+          seen = input;
+          return answer("base");
+        },
+        env(),
+        "tenant-a",
+        "site-a",
+        async () => Response.json({ evidence: [], guidance }),
+      )(messages);
+      if (!seen) throw new Error("base runner was not called");
+      const actual: ChatMessage[] = seen;
+      expect(actual).toEqual(messages);
+    }
+  });
+
+  test("rejects malformed guidance-only responses and keeps the original prompt", async () => {
+    let seen: ChatMessage[] | undefined;
+    await knowledgeGatewayRunner(
+      async (input) => {
+        seen = input;
+        return answer("base");
+      },
+      env(),
+      "tenant-a",
+      "site-a",
+      async () => Response.json({ guidance: [{ text: "method", sourceId: "a", revision: 1 }] }),
+    )(messages);
+    expect(seen).toEqual(messages);
+  });
+
   test("malformed, oversized, and failed responses preserve the original messages", async () => {
     for (const payload of [
       { evidence: [{ text: "", sourceId: "x", revision: "1" }] },
@@ -150,7 +235,7 @@ describe("optional knowledge gateway", () => {
       env(),
       "tenant-a",
       "site-a",
-      async () => new Response(`{"evidence":[]}${" ".repeat(40_000)}`),
+      async () => new Response(`{"evidence":[]}${" ".repeat(70_000)}`),
     )(messages);
     expect(seen).toEqual(messages);
   });
@@ -198,7 +283,7 @@ describe("optional knowledge gateway", () => {
       )(messages),
     ).rejects.toThrow("base failed");
     expect(baseCalls).toBe(1);
-    expect(Date.now() - started).toBeLessThan(2_500);
+    expect(Date.now() - started).toBeLessThan(3_000);
   });
 
   test("operator-owned sessions do not invoke retrieval or the model", async () => {

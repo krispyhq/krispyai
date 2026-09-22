@@ -34,6 +34,11 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Added
 
+- Edge: the optional private knowledge gateway can now return one bounded professional-method
+  reference alongside cited business evidence. Guidance is clearly separated from business
+  facts, remains below the existing security and handoff rules, and receives trusted current
+  UTC time during prompt composition; malformed or oversized guidance falls back unchanged.
+
 - Edge: an optional server-only knowledge gateway can add bounded, cited support evidence
   to an AI turn for one exact tenant/site binding. It is disabled unless all gateway settings
   are present, never runs for operator-owned sessions, and any timeout, scope mismatch, bad

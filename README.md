@@ -67,6 +67,11 @@ visitor ──▶ AI answers (Cloudflare Workers AI) ──▶ visitor
   handoff seeds only the prior turns, then records that live line once. Earlier repeated
   questions remain real conversation turns.
 
+An optional private knowledge gateway can add cited business evidence and, when configured,
+one bounded professional-method reference before the model call. Method references are
+separate from business facts and cannot override security or human handoff. The feature is
+server-only and leaves the default self-hosted path unchanged.
+
 Under the hood it's **one Cloudflare Worker** plus a **hibernatable Durable Object** (`SessionDO`)
 that holds the strongly-consistent `ai` / `pending` / `operator` state and keeps idle sockets
 free. That's the whole backend.
