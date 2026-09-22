@@ -10,6 +10,12 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+### Added
+
+- Edge operator inbox: `includeActive: true` lists every unresolved conversation,
+  including AI-only chats. Entitled chats use a dedicated tenant-scoped index while
+  legacy Telegram mappings and handoff-only notifications remain unchanged.
+
 ### Changed
 
 - Deploy: the edge sync now transfers present optional knowledge gateway configuration

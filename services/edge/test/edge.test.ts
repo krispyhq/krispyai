@@ -1829,6 +1829,52 @@ describe("operator app routes", () => {
     expect(typeof conversations[0]!.ts).toBe("number");
   });
 
+  test("includeActive lists an AI conversation and preserves tenant isolation", async () => {
+    const env = opEnv({
+      AI: { run: async () => ({ response: "Installments are available." }) } as unknown as Ai,
+    });
+    const chat = (tenantId: string, sessionId: string, message: string) =>
+      worker.fetch(
+        new Request("https://edge.test/api/chat", {
+          method: "POST",
+          body: JSON.stringify({ tenantId, sessionId, message }),
+        }),
+        env,
+      );
+    expect((await chat("self", "s-ai", "what are the installments?")).status).toBe(200);
+    expect((await chat("self", "s-ai", "and can I check out today?")).status).toBe(200);
+    expect((await chat("other", "s-foreign-ai", "private conversation")).status).toBe(402);
+
+    const res = await worker.fetch(
+      post("/api/operator/handoffs", { tenantId: "self", includeActive: true }),
+      env,
+    );
+    const { conversations } = (await res.json()) as {
+      conversations: { sessionId: string; lastMessage: string | null; handoffState: string }[];
+    };
+    expect(conversations).toContainEqual(
+      expect.objectContaining({
+        sessionId: "s-ai",
+        lastMessage: "Installments are available.",
+        handoffState: "ai",
+      }),
+    );
+    expect(conversations.map((c) => c.sessionId)).not.toContain("s-foreign-ai");
+    expect((await env.KRISPY_KV.list({ prefix: "conversation:other:" })).keys).toHaveLength(0);
+
+    const thread = await worker.fetch(
+      post("/api/operator/thread", { tenantId: "self", sessionId: "s-ai" }),
+      env,
+    );
+    const { messages } = (await thread.json()) as { messages: { text: string }[] };
+    expect(messages.map((message) => message.text)).toEqual([
+      "what are the installments?",
+      "Installments are available.",
+      "and can I check out today?",
+      "Installments are available.",
+    ]);
+  });
+
   test("resolve drops a session from the default inbox; includeResolved returns it; a new visitor message revives it", async () => {
     const env = opEnv({
       AI: { run: async () => ({ response: "Welcome back." }) } as unknown as Ai,
