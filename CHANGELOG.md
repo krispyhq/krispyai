@@ -10,6 +10,11 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+### Changed
+
+- Instagram chat CTAs use Adi's recognizable filled Instagram glyph on the existing
+  network gradient, with a 44px mobile tap target.
+
 ### Fixed
 
 - Edge deployments now sync the configured lead-email sender from Infisical alongside

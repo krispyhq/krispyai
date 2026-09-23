@@ -69,12 +69,12 @@ chat. you don't wire this by hand — configuring a form is enough.
 }
 ```
 
-| type        | fields                           | behavior                                                                              |
-| ----------- | -------------------------------- | ------------------------------------------------------------------------------------- |
-| `telegram`  | — (uses the top-level bot token) | the lead is posted into the visitor's topic                                           |
-| `email`     | `toAddress`                      | rendered + sent via Resend (silent no-op without `RESEND_API_KEY`)                    |
-| `whatsapp`  | `phone` (E.164 digits, no `+`)   | a `wa.me` CTA link in the widget; also a "Reply on WhatsApp" button in the lead email |
-| `instagram` | `profileUrl`                     | a profile-link CTA in the widget                                                      |
+| type        | fields                           | behavior                                                                               |
+| ----------- | -------------------------------- | -------------------------------------------------------------------------------------- |
+| `telegram`  | — (uses the top-level bot token) | the lead is posted into the visitor's topic                                            |
+| `email`     | `toAddress`                      | rendered + sent via Resend (silent no-op without `RESEND_API_KEY`)                     |
+| `whatsapp`  | `phone` (E.164 digits, no `+`)   | a `wa.me` CTA link in the widget; also a "Reply on WhatsApp" button in the lead email  |
+| `instagram` | `profileUrl`                     | a profile-link CTA with the filled Instagram glyph and a comfortable mobile tap target |
 
 `telegram` and `email` are **delivery** channels — the lead is sent for you. `whatsapp` and
 `instagram` are **CTA-only**: the widget renders them as links for the visitor to tap;

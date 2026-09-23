@@ -127,6 +127,8 @@ When a business adds a lead form and email connector, Krispy sends the captured
 details and recent conversation to the configured inbox. The widget confirms
 submission only after the email provider accepts it; on failure the visitor keeps
 their entries and can retry.
+Instagram connectors render as clear, tappable chat buttons with the familiar
+Instagram glyph; the business chooses their label, link, and reveal timing.
 
 <details>
 <summary>Or set it up by hand (wrangler secrets)</summary>
