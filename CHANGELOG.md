@@ -10,6 +10,13 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+### Fixed
+
+- Edge deployments now sync the configured lead-email sender from Infisical alongside
+  the Resend key, so lead delivery uses the verified address selected for the environment.
+- Lead forms now show success only after the server confirms email delivery. A failed
+  submission keeps the visitor's form filled and offers a retry.
+
 ### Changed
 
 - Edge accepts a bare terminal `!HANDOFF` compatibility token only when it is a

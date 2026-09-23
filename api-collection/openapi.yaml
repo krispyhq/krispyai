@@ -137,7 +137,9 @@ paths:
         The generalized lead endpoint: a data-driven form's `values` fan out to the tenant's
         DELIVERY connectors (Telegram topic + email via Resend). `whatsapp`/`instagram`
         connectors are CTA-only — nothing is delivered server-side for them. Rate-limited per
-        (tenant, session).
+        (tenant, session). For a configured form with an email delivery connector,
+        success requires an accepted email delivery; a failed delivery returns 502
+        so the widget keeps the form available for retry.
       security: [] # public — no auth
       requestBody:
         required: true
@@ -157,6 +159,11 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
           description: rate_limited — too many lead submissions for this (tenant, session).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: delivery_failed — the configured form's email was not accepted for delivery.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

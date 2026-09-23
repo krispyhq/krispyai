@@ -697,7 +697,7 @@ async function handleLead(request: Request, env: Env): Promise<Response> {
   if (siteId instanceof Response) return siteId;
   if (!(await checkLeadRate(env, tenantId, b.sessionId)))
     return json(env, { error: "rate_limited" }, 429);
-  await deliverLead(env, {
+  const delivered = await deliverLead(env, {
     tenantId,
     siteId,
     sessionId: b.sessionId,
@@ -705,6 +705,7 @@ async function handleLead(request: Request, env: Env): Promise<Response> {
     values: b.values || {},
     history: Array.isArray(b.history) ? b.history : [],
   });
+  if (!delivered) return json(env, { error: "delivery_failed" }, 502);
   return json(env, { ok: true });
 }
 
@@ -714,7 +715,7 @@ async function handleLead(request: Request, env: Env): Promise<Response> {
  *   • Email    — Resend, silent no-op without a key (email.ts)
  * whatsapp/instagram connectors are never delivered here (CTA-only in the widget).
  */
-export async function deliverLead(env: Env, lead: LeadPayload): Promise<void> {
+export async function deliverLead(env: Env, lead: LeadPayload): Promise<boolean> {
   const tenant = await getTenant(env, lead.tenantId, lead.siteId);
   const form = tenant?.forms?.find((f) => f.id === lead.formId) ?? null;
   const connectors = tenant?.connectors ?? [];
@@ -745,10 +746,17 @@ export async function deliverLead(env: Env, lead: LeadPayload): Promise<void> {
   // rely on Telegram only).
   const waPhone = targets.find((c) => c.type === "whatsapp")?.phone;
   const emailTargets = targets.filter((c) => c.type === "email" && c.toAddress);
+  let emailDelivered = false;
   for (const c of emailTargets) {
     const mail = renderLeadEmail(form, lead.values, lead.history, waPhone);
-    await sendLeadEmail(env.RESEND_API_KEY, env.LEAD_EMAIL_FROM, c.toAddress, mail);
+    emailDelivered =
+      (await sendLeadEmail(env.RESEND_API_KEY, env.LEAD_EMAIL_FROM, c.toAddress, mail)) ||
+      emailDelivered;
   }
+  // A configured form must have a confirmed delivery route before its widget may
+  // show a success state. Legacy contact capture and self-hosts without forms keep
+  // their existing best-effort behavior.
+  return !form || !emailTargets.length || emailDelivered;
 }
 
 // ── POST /api/telegram/webhook ─────────────────────────────────────────────
