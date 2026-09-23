@@ -33,6 +33,11 @@ fires, just without a mention. See `docs → connect Telegram`.
 
 ## Endpoints
 
+Configured lead forms can forward the visitor's recent chat to an email connector.
+Set `RESEND_API_KEY` and a verified `LEAD_EMAIL_FROM` through Infisical; a failed
+email delivery returns `502 delivery_failed` so the widget keeps the form ready
+for another attempt.
+
 | method | path                             | purpose                                                                                                  |
 | ------ | -------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | POST   | `/api/chat`                      | `{sessionId, message, tenantId?, history?}` → `{reply, handoff, handoffState, handedOff, degraded?}`     |

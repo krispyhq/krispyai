@@ -44,8 +44,10 @@ field `type` is one of `text` | `email` | `tel` | `textarea` | `select` (`select
 
 the form renders as a card **inside the message log** — it scrolls with the conversation
 like a bubble (chat continues past it) instead of pinning between the log and the composer.
-on submit it collapses in place to a compact one-line record: `successText` if set, else a
-built-in "Thanks — we'll be in touch."
+on successful delivery it collapses in place to a compact one-line record: `successText` if set,
+else a built-in "Thanks — we'll be in touch." If email delivery fails, the form keeps the
+visitor's values and offers a retry. Up to the ten most recent chat messages accompany the
+lead email, so the visitor need not repeat the question.
 
 ## teach the bot to raise it
 

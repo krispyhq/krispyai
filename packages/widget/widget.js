@@ -1822,6 +1822,7 @@
       Object.keys(inputs).forEach(function (name) {
         values[name] = inputs[name].value.trim();
       });
+      submit.disabled = true;
       fetch(cfg.api + "/api/lead", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -1834,12 +1835,18 @@
           history: history.slice(-10),
           source: openSource || undefined, // popup origin → lead meta (§3.5)
         }),
-      }).catch(function () {});
-      // Collapse in place to a compact transcript record — the card stays in
-      // the log as proof the details were sent (textContent clears the fields).
-      wrap.textContent = form.successText || "Thanks — we'll be in touch.";
-      wrap.classList.add("done");
-      formOpen = false;
+      })
+        .then(function (response) {
+          if (!response.ok) throw new Error("Lead delivery failed");
+          // Keep a compact record in the transcript only after delivery succeeds.
+          wrap.textContent = form.successText || "Thanks — we'll be in touch.";
+          wrap.classList.add("done");
+          formOpen = false;
+        })
+        .catch(function () {
+          submit.disabled = false;
+          submit.textContent = "Couldn’t send — try again";
+        });
     });
 
     log.appendChild(wrap); // into the log — scrolls with the transcript, never a sticky band

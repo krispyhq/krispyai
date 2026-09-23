@@ -1316,6 +1316,57 @@ describe("deliverLead fan-out", () => {
     expect(urls.some((u) => u.includes("api.resend.com"))).toBe(false);
     expect(urls.some((u) => u.includes("api.telegram.org"))).toBe(true);
   });
+
+  test("configured inquiry includes the conversation and only acknowledges accepted email", async () => {
+    const env = fakeEnv({ RESEND_API_KEY: "re_test", LEAD_EMAIL_FROM: "hello@example.test" });
+    await mergeTenantConfig(env, "acme", {
+      forms: [
+        {
+          id: "inquiry",
+          title: "Send this chat",
+          fields: [{ name: "email", label: "Email", type: "email", required: true }],
+          connectorIds: ["owner"],
+        },
+      ],
+      connectors: [{ id: "owner", type: "email", toAddress: "owner@example.test" }],
+    });
+    const request = (sessionId: string) =>
+      worker.fetch(
+        new Request("https://edge.test/api/lead", {
+          method: "POST",
+          body: JSON.stringify({
+            tenantId: "acme",
+            sessionId,
+            formId: "inquiry",
+            values: { email: "visitor@example.test" },
+            history: [{ role: "user", content: "Can you help with a business inquiry?" }],
+          }),
+        }),
+        env,
+      );
+    const originalFetch = globalThis.fetch;
+    const sent: unknown[] = [];
+    try {
+      globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+        sent.push(JSON.parse(String(init?.body)));
+        return new Response("rejected", { status: 422 });
+      }) as typeof fetch;
+      const rejected = await request("rejected");
+      expect(rejected.status).toBe(502);
+      expect(await rejected.json()).toEqual({ error: "delivery_failed" });
+      expect(JSON.stringify(sent[0])).toContain("Can you help with a business inquiry?");
+
+      globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+        sent.push(JSON.parse(String(init?.body)));
+        return Response.json({ id: "email_accepted" });
+      }) as typeof fetch;
+      const accepted = await request("accepted");
+      expect(accepted.status).toBe(200);
+      expect(await accepted.json()).toEqual({ ok: true });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 // ── lead rate limit (anti-spam / cost on the unauth lead routes) ─────────────

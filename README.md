@@ -123,6 +123,11 @@ before `</body>`), and **④ Next steps** (`krispy dev` / `wrangler deploy`, and
 the loop). Each step persists as you go via `POST /api/tenant/config`. Re-run it any time;
 it never clobbers what you've already set.
 
+When a business adds a lead form and email connector, Krispy sends the captured
+details and recent conversation to the configured inbox. The widget confirms
+submission only after the email provider accepts it; on failure the visitor keeps
+their entries and can retry.
+
 <details>
 <summary>Or set it up by hand (wrangler secrets)</summary>
 
