@@ -17,7 +17,7 @@
 //   GET  /api/usage?t=<tenant>         metering readout (plan/usage hooks)
 //   GET  /health
 import type { ChatMessage } from "./ai";
-import { workersAiRunner, DEFAULT_MODEL } from "./ai";
+import { configuredAiRunner, DEFAULT_MODEL } from "./ai";
 import { knowledgeGatewayRunner } from "./knowledge-gateway";
 import { chatFlow } from "./chat";
 import { SessionDO, type RingMsg } from "./session-do";
@@ -392,7 +392,7 @@ async function handleChat(
   let aiMs = 0;
   let meterMs = 0;
   const aiRunner = knowledgeGatewayRunner(
-    workersAiRunner(env, tenant?.model || env.AI_MODEL),
+    configuredAiRunner(env, tenant?.model || env.AI_MODEL),
     env,
     tenantId,
     siteId,

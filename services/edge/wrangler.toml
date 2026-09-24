@@ -33,6 +33,7 @@ id = "120c1cccc84c455eab7b9e30ca346379" # `bunx wrangler kv namespace create KRI
 [vars]
 ALLOWED_ORIGIN = "*" # lock to your site origin in production
 # AI_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+# AI_MODEL = "gemini-3.1-flash-lite" # requires server-only GEMINI_API_KEY secret
 # SYSTEM_PROMPT = "You are ..."
 # Cloud API origin that verifies operator bearer tokens (GET /me) for the
 # /api/operator/* routes + the ?role=operator WS upgrade. Unset → operator

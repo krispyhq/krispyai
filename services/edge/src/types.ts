@@ -195,6 +195,8 @@ export interface Env {
   TELEGRAM_WEBHOOK_SECRET?: string;
   SYSTEM_PROMPT?: string;
   AI_MODEL?: string;
+  /** Server-only Gemini API key. Needed only when AI_MODEL selects Gemini. */
+  GEMINI_API_KEY?: string;
   // --- turn-tax cost knobs (all optional; sensible defaults in code) ---
   /** Sliding-window size the AI sees, default MAX_HISTORY_MSGS (8). */
   MAX_HISTORY_MSGS?: string;
@@ -214,8 +216,6 @@ export interface Env {
    * Origin is echoed back when it matches an entry (the CORS header can only
    * carry one origin), the first entry otherwise. */
   ALLOWED_ORIGIN?: string;
-  /** BYO AI provider key (future adapter). */
-  AI_API_KEY?: string;
   /** Optional private retrieval gateway. Never projected to widget config. */
   KNOWLEDGE_GATEWAY_URL?: string;
   /** Server-only bearer credential for the retrieval gateway. */

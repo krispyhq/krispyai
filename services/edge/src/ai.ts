@@ -1,6 +1,5 @@
-// AI-provider adapter. Workers AI is the default (free tier, zero-config on CF).
-// The seam is a single function type — swap in a BYO-key provider later without
-// touching the chat flow.
+// AI-provider adapter. Workers AI remains the default; a tenant can opt into
+// Google's Gemini API with a server-only key without changing the chat flow.
 import type { Env } from "./types";
 
 export type ChatRole = "system" | "user" | "assistant";
@@ -36,6 +35,56 @@ export const FAST_MULTILINGUAL_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast";
 // pricey side (4–5× input). Capping here bounds per-turn cost hard. Env override:
 // MAX_OUTPUT_TOKENS. The system prompt also asks for brevity so the cap rarely bites.
 export const MAX_OUTPUT_TOKENS = 256;
+export const GEMINI_MODEL = "gemini-3.1-flash-lite";
+const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+type AiFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+/** Direct Gemini is opt-in. Keep its credential on the Worker, never in tenant KV. */
+export function configuredAiRunner(
+  env: Env,
+  model = env.AI_MODEL || DEFAULT_MODEL,
+  fetcher: AiFetch = fetch,
+): AiRunner {
+  return model === GEMINI_MODEL ? geminiAiRunner(env, fetcher) : workersAiRunner(env, model);
+}
+
+/** Google OpenAI-compatible API, using the same chat message contract as Workers AI. */
+export function geminiAiRunner(env: Env, fetcher: AiFetch = fetch): AiRunner {
+  return async (messages) => {
+    const key = env.GEMINI_API_KEY?.trim();
+    if (!key) throw new Error("Gemini API key is not configured");
+    const response = await fetcher(GEMINI_API_URL, {
+      method: "POST",
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        model: GEMINI_MODEL,
+        messages,
+        max_tokens: Number(env.MAX_OUTPUT_TOKENS) || MAX_OUTPUT_TOKENS,
+        reasoning_effort: "minimal",
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error(`Gemini API error: ${response.status}`);
+    const result = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+    };
+    const text = result.choices?.[0]?.message?.content?.trim();
+    if (!text) throw new Error("empty AI response");
+    const counts = result.usage;
+    const usage: TokenUsage | undefined =
+      counts &&
+      typeof counts.prompt_tokens === "number" &&
+      typeof counts.completion_tokens === "number"
+        ? {
+            promptTokens: counts.prompt_tokens,
+            completionTokens: counts.completion_tokens,
+            estimated: false,
+          }
+        : undefined;
+    return { text, usage };
+  };
+}
 
 /** Workers AI runner — the default provider, bound as env.AI. */
 export function workersAiRunner(env: Env, model = env.AI_MODEL || DEFAULT_MODEL): AiRunner {
@@ -62,9 +111,5 @@ export function workersAiRunner(env: Env, model = env.AI_MODEL || DEFAULT_MODEL)
   };
 }
 
-// Prompt caching: N/A for Workers AI — it exposes no cache_control / prefix-cache knob,
-// so the static system prompt is re-billed each turn (the sliding window in chat.ts is
-// what bounds that cost). ponytail: when a BYO-key provider adapter lands here (selected
-// by env.AI_API_KEY), enable its prompt caching on the system-prompt prefix — Anthropic
-// via a `cache_control: {type:"ephemeral"}` block on the system message, OpenAI's is
-// automatic on repeated prefixes. Not built until a self-hoster leaves Workers AI.
+// Prompt caching is provider-managed here. The sliding window in chat.ts bounds
+// repeated input even when no prefix cache is available.

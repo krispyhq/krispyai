@@ -127,8 +127,12 @@ malformed identity fields fail closed.
 - **Graceful degradation** — AI down → still hands off to a human (never drops the
   visitor); Telegram unconfigured → chat and Buttr handoff still work, topic operations
   no-op, and screenshot paste/drop stays disabled.
-- **AI adapter** — Workers AI default (`workersAiRunner`); the `AiRunner` type is the
-  BYO-key seam. The bracketed `[!HANDOFF]` marker remains canonical; a bare terminal
+- **AI adapter** — Workers AI remains the default. Set a tenant's model or `AI_MODEL`
+  to `gemini-3.1-flash-lite` and configure the Worker secret `GEMINI_API_KEY` to
+  opt into Google's paid Gemini API. The key stays server-side. If it is missing
+  or the API fails, the existing human-handoff fallback applies. No tenant is
+  switched by merely deploying the adapter. The bracketed `[!HANDOFF]` marker
+  remains canonical; a bare terminal
   `!HANDOFF` is accepted only as a compatibility variant when sentence-standalone.
   The explicitly selected `@cf/meta/llama-3.1-8b-instruct-fast` candidate uses temperature
   0 for repeatability; the default 70B model is unchanged. A control-only handoff still
