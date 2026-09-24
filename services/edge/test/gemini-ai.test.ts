@@ -7,13 +7,21 @@ const messages: ChatMessage[] = [
   { role: "user", content: "Do I keep the modules for life?" },
 ];
 const env = (extra: Partial<Env> = {}) =>
-  ({ GEMINI_API_KEY: "server-only-test-key", MAX_OUTPUT_TOKENS: "256", ...extra }) as Env;
+  ({
+    GEMINI_API_KEY: "server-only-test-key",
+    KNOWLEDGE_TENANT_ID: "delulus-tenant",
+    KNOWLEDGE_SITE_ID: "",
+    MAX_OUTPUT_TOKENS: "256",
+    ...extra,
+  }) as Env;
 
 describe("Gemini opt-in adapter", () => {
   test("sends ordered roles and returns real usage without exposing the key in the body", async () => {
     let called = false;
     const runner = configuredAiRunner(
       env(),
+      "delulus-tenant",
+      undefined,
       GEMINI_MODEL,
       (async (url: RequestInfo | URL, init?: RequestInit) => {
         called = true;
@@ -45,10 +53,17 @@ describe("Gemini opt-in adapter", () => {
   });
 
   test("missing key and provider errors reject inside the runner for human fallback", async () => {
-    const missing = configuredAiRunner(env({ GEMINI_API_KEY: undefined }), GEMINI_MODEL);
+    const missing = configuredAiRunner(
+      env({ GEMINI_API_KEY: undefined }),
+      "delulus-tenant",
+      undefined,
+      GEMINI_MODEL,
+    );
     await expect(missing(messages)).rejects.toThrow("Gemini API key is not configured");
     const failing = configuredAiRunner(
       env(),
+      "delulus-tenant",
+      "default",
       GEMINI_MODEL,
       async () => new Response("provider detail must stay private", { status: 429 }),
     );
@@ -61,9 +76,28 @@ describe("Gemini opt-in adapter", () => {
         run: async () => ({ response: "The course includes six hours of lessons." }),
       } as unknown as Ai,
     });
-    const runner = configuredAiRunner(worker, undefined, (async () => {
+    const runner = configuredAiRunner(worker, "delulus-tenant", undefined, undefined, (async () => {
       throw new Error("Google must not be called");
     }));
     expect((await runner(messages)).text).toBe("The course includes six hours of lessons.");
+  });
+
+  test("other tenant or site cannot spend the pilot Gemini key", async () => {
+    let googleCalls = 0;
+    const worker = env({
+      AI: { run: async () => ({ response: "Cloudflare reply" }) } as unknown as Ai,
+    });
+    const google = async () => {
+      googleCalls += 1;
+      return Response.json({ choices: [{ message: { content: "Google reply" } }] });
+    };
+    for (const [tenant, site] of [
+      ["another-tenant", "default"],
+      ["delulus-tenant", "another-site"],
+    ]) {
+      const reply = await configuredAiRunner(worker, tenant!, site, GEMINI_MODEL, google)(messages);
+      expect(reply.text).toBe("Cloudflare reply");
+    }
+    expect(googleCalls).toBe(0);
   });
 });

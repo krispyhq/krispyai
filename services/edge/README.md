@@ -127,9 +127,12 @@ malformed identity fields fail closed.
 - **Graceful degradation** — AI down → still hands off to a human (never drops the
   visitor); Telegram unconfigured → chat and Buttr handoff still work, topic operations
   no-op, and screenshot paste/drop stays disabled.
-- **AI adapter** — Workers AI remains the default. Set a tenant's model or `AI_MODEL`
-  to `gemini-3.1-flash-lite` and configure the Worker secret `GEMINI_API_KEY` to
-  opt into Google's paid Gemini API. The key stays server-side. If it is missing
+- **AI adapter** — Workers AI remains the default. For the Delulus pilot only,
+  set its model to `gemini-3.1-flash-lite` and configure the Worker secret
+  `GEMINI_API_KEY`. The Gemini runner requires an exact match to the existing
+  `KNOWLEDGE_TENANT_ID` and `KNOWLEDGE_SITE_ID` (empty/default is the same site).
+  Other tenants stay on Workers AI even if their model setting names Gemini.
+  The key stays server-side. If it is missing
   or the API fails, the existing human-handoff fallback applies. No tenant is
   switched by merely deploying the adapter. The bracketed `[!HANDOFF]` marker
   remains canonical; a bare terminal

@@ -39,13 +39,21 @@ export const GEMINI_MODEL = "gemini-3.1-flash-lite";
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
 type AiFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-/** Direct Gemini is opt-in. Keep its credential on the Worker, never in tenant KV. */
+/** Direct Gemini is confined to the exact Longstory pilot installation. A
+ * tenant model setting alone must never spend the shared Google credential. */
 export function configuredAiRunner(
   env: Env,
+  tenantId: string,
+  siteId?: string,
   model = env.AI_MODEL || DEFAULT_MODEL,
   fetcher: AiFetch = fetch,
 ): AiRunner {
-  return model === GEMINI_MODEL ? geminiAiRunner(env, fetcher) : workersAiRunner(env, model);
+  if (model !== GEMINI_MODEL) return workersAiRunner(env, model);
+  const pilotSite = env.KNOWLEDGE_SITE_ID || "default";
+  const selectedSite = siteId || "default";
+  if (env.KNOWLEDGE_TENANT_ID && tenantId === env.KNOWLEDGE_TENANT_ID && selectedSite === pilotSite)
+    return geminiAiRunner(env, fetcher);
+  return workersAiRunner(env, DEFAULT_MODEL);
 }
 
 /** Google OpenAI-compatible API, using the same chat message contract as Workers AI. */

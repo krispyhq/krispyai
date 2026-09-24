@@ -392,7 +392,7 @@ async function handleChat(
   let aiMs = 0;
   let meterMs = 0;
   const aiRunner = knowledgeGatewayRunner(
-    configuredAiRunner(env, tenant?.model || env.AI_MODEL),
+    configuredAiRunner(env, tenantId, siteId, tenant?.model || env.AI_MODEL),
     env,
     tenantId,
     siteId,

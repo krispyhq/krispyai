@@ -195,7 +195,7 @@ export interface Env {
   TELEGRAM_WEBHOOK_SECRET?: string;
   SYSTEM_PROMPT?: string;
   AI_MODEL?: string;
-  /** Server-only Gemini API key. Needed only when AI_MODEL selects Gemini. */
+  /** Server-only Gemini API key for the exact KNOWLEDGE_TENANT_ID/SITE_ID pilot. */
   GEMINI_API_KEY?: string;
   // --- turn-tax cost knobs (all optional; sensible defaults in code) ---
   /** Sliding-window size the AI sees, default MAX_HISTORY_MSGS (8). */
