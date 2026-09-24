@@ -59,6 +59,8 @@ describe("Gemini opt-in adapter", () => {
       undefined,
       GEMINI_MODEL,
     );
+    // Bun's rejects matcher is awaitable at runtime despite its narrower TS type.
+    // oxlint-disable-next-line typescript/await-thenable
     await expect(missing(messages)).rejects.toThrow("Gemini API key is not configured");
     const failing = configuredAiRunner(
       env(),
@@ -67,6 +69,7 @@ describe("Gemini opt-in adapter", () => {
       GEMINI_MODEL,
       async () => new Response("provider detail must stay private", { status: 429 }),
     );
+    // oxlint-disable-next-line typescript/await-thenable
     await expect(failing(messages)).rejects.toThrow("Gemini API error: 429");
   });
 
