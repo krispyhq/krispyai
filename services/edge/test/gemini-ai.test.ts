@@ -23,7 +23,7 @@ describe("Gemini opt-in adapter", () => {
       "delulus-tenant",
       undefined,
       GEMINI_MODEL,
-      (async (url: RequestInfo | URL, init?: RequestInit) => {
+      async (url: RequestInfo | URL, init?: RequestInit) => {
         called = true;
         expect(String(url)).toBe(
           "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
@@ -43,7 +43,7 @@ describe("Gemini opt-in adapter", () => {
           choices: [{ message: { content: "  Yes, lifetime access to the course modules.  " } }],
           usage: { prompt_tokens: 310, completion_tokens: 27 },
         });
-      }),
+      },
     );
     expect(await runner(messages)).toEqual({
       text: "Yes, lifetime access to the course modules.",
@@ -79,9 +79,9 @@ describe("Gemini opt-in adapter", () => {
         run: async () => ({ response: "The course includes six hours of lessons." }),
       } as unknown as Ai,
     });
-    const runner = configuredAiRunner(worker, "delulus-tenant", undefined, undefined, (async () => {
+    const runner = configuredAiRunner(worker, "delulus-tenant", undefined, undefined, async () => {
       throw new Error("Google must not be called");
-    }));
+    });
     expect((await runner(messages)).text).toBe("The course includes six hours of lessons.");
   });
 
