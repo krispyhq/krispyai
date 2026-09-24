@@ -127,8 +127,16 @@ malformed identity fields fail closed.
 - **Graceful degradation** — AI down → still hands off to a human (never drops the
   visitor); Telegram unconfigured → chat and Buttr handoff still work, topic operations
   no-op, and screenshot paste/drop stays disabled.
-- **AI adapter** — Workers AI default (`workersAiRunner`); the `AiRunner` type is the
-  BYO-key seam. The bracketed `[!HANDOFF]` marker remains canonical; a bare terminal
+- **AI adapter** — Workers AI remains the default. For the Delulus pilot only,
+  set its model to `gemini-3.1-flash-lite` and configure the Worker secret
+  `GEMINI_API_KEY`. The Gemini runner requires an exact match to the existing
+  `KNOWLEDGE_TENANT_ID` and `KNOWLEDGE_SITE_ID` (empty/default is the same site).
+  Other tenants stay on Workers AI even if their model setting names Gemini.
+  The key stays server-side. If it is missing or Google fails, that Delulus turn
+  falls back to the existing Cloudflare 70B model; human handoff still applies
+  if both providers fail. No tenant is
+  switched by merely deploying the adapter. The bracketed `[!HANDOFF]` marker
+  remains canonical; a bare terminal
   `!HANDOFF` is accepted only as a compatibility variant when sentence-standalone.
   The explicitly selected `@cf/meta/llama-3.1-8b-instruct-fast` candidate uses temperature
   0 for repeatability; the default 70B model is unchanged. A control-only handoff still

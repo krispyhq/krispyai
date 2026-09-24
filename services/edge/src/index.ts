@@ -17,7 +17,7 @@
 //   GET  /api/usage?t=<tenant>         metering readout (plan/usage hooks)
 //   GET  /health
 import type { ChatMessage } from "./ai";
-import { workersAiRunner, DEFAULT_MODEL } from "./ai";
+import { configuredAiRunner, DEFAULT_MODEL } from "./ai";
 import { knowledgeGatewayRunner } from "./knowledge-gateway";
 import { chatFlow } from "./chat";
 import { SessionDO, type RingMsg } from "./session-do";
@@ -310,6 +310,7 @@ async function handleChat(
   env: Env,
   executionCtx?: WaitUntilContext,
 ): Promise<Response> {
+  const startedAt = performance.now();
   const body = (await request.json().catch(() => null)) as {
     sessionId?: string;
     message?: string;
@@ -385,6 +386,18 @@ async function handleChat(
   // legacy session) or when the ring read failed (fallback path above).
   const history = ctx?.messages.length ? ringToHistory(ctx.messages) : clientHistory;
 
+  // Stage timings contain no visitor text or credentials. Preview can log them to
+  // distinguish retrieval/inference from KV and DO work when a reply stalls.
+  const flowStartedAt = performance.now();
+  let aiMs = 0;
+  let meterMs = 0;
+  const aiRunner = knowledgeGatewayRunner(
+    configuredAiRunner(env, tenantId, siteId, tenant?.model || env.AI_MODEL),
+    env,
+    tenantId,
+    siteId,
+  );
+
   // Telegram is optional: no config → topic ops no-op, chat still answers.
   const result = await chatFlow(
     {
@@ -402,27 +415,41 @@ async function handleChat(
       history,
       maxHistoryMsgs: numEnv(env.MAX_HISTORY_MSGS),
       maxAiTurns: numEnv(env.MAX_AI_TURNS),
-      ai: knowledgeGatewayRunner(
-        workersAiRunner(env, tenant?.model || env.AI_MODEL),
-        env,
-        tenantId,
-        siteId,
-      ),
-      meter: (kind) => meter(env, tenantId, kind),
+      ai: async (messages) => {
+        const start = performance.now();
+        try {
+          return await aiRunner(messages);
+        } finally {
+          aiMs += performance.now() - start;
+        }
+      },
+      meter: async (kind) => {
+        const start = performance.now();
+        try {
+          await meter(env, tenantId, kind);
+        } finally {
+          meterMs += performance.now() - start;
+        }
+      },
       // Real per-turn usage → monthly counters (total + in/out split) AND a structured
       // log line (model + counts + estimated flag) for cost analytics via Logpush/tail.
       meterTokens: async (usage) => {
-        await meterUsage(env, tenantId, usage);
-        console.log(
-          "chat_usage",
-          JSON.stringify({
-            tenant: tenantId,
-            model: tenant?.model || env.AI_MODEL || DEFAULT_MODEL,
-            promptTokens: usage.promptTokens,
-            completionTokens: usage.completionTokens,
-            estimated: usage.estimated,
-          }),
-        );
+        const start = performance.now();
+        try {
+          await meterUsage(env, tenantId, usage);
+          console.log(
+            "chat_usage",
+            JSON.stringify({
+              tenant: tenantId,
+              model: tenant?.model || env.AI_MODEL || DEFAULT_MODEL,
+              promptTokens: usage.promptTokens,
+              completionTokens: usage.completionTokens,
+              estimated: usage.estimated,
+            }),
+          );
+        } finally {
+          meterMs += performance.now() - start;
+        }
       },
       getHandoffState: ctx
         ? async () => ctx.handoffState // already read in the combined /context fetch
@@ -450,11 +477,13 @@ async function handleChat(
     },
     { sessionId: body.sessionId, message },
   );
+  const flowEndedAt = performance.now();
 
   // Mirror the turn into the session's ring buffer (operator-app inbox preview +
   // thread read) — best-effort, same posture as the Telegram mirror. On handoff,
   // seed the ring from the widget's re-sent history FIRST (the DO no-ops the seed
   // unless the ring is still empty), so pre-ring turns aren't lost.
+  const ringStartedAt = performance.now();
   {
     const seed = result.handoff ? historySeed(clientHistory, message) : [];
     const turn: { role: "visitor" | "ai"; text: string }[] = [{ role: "visitor", text: message }];
@@ -470,6 +499,7 @@ async function handleChat(
       body: JSON.stringify({ messages: turn }),
     }).catch((e) => console.error("ring mirror failed (best-effort):", e));
   }
+  const ringEndedAt = performance.now();
 
   // If the AI escalated, nudge the visitor's browser to open contact capture AND fire
   // the ONE loud handoff alert into the topic — @mentioning the tenant's operators so a
@@ -539,6 +569,23 @@ async function handleChat(
       result.formId = null;
       result.form = null;
     }
+  }
+  if (env.CHAT_TIMING_DEBUG === "1") {
+    const endedAt = performance.now();
+    console.log(
+      "chat_timing",
+      JSON.stringify({
+        tenant: tenantId,
+        model: tenant?.model || env.AI_MODEL || DEFAULT_MODEL,
+        preFlowMs: Math.round(flowStartedAt - startedAt),
+        aiMs: Math.round(aiMs),
+        meterMs: Math.round(meterMs),
+        flowOtherMs: Math.round(flowEndedAt - flowStartedAt - aiMs - meterMs),
+        ringMs: Math.round(ringEndedAt - ringStartedAt),
+        postRingMs: Math.round(endedAt - ringEndedAt),
+        totalMs: Math.round(endedAt - startedAt),
+      }),
+    );
   }
   return json(env, result);
 }
