@@ -61,6 +61,7 @@ binding = "KRISPY_KV"
 id = "a018c2ee187c4617ac218f06b83efe97" # `bunx wrangler kv namespace create KRISPY_KV_preview`
 [env.preview.vars]
 ALLOWED_ORIGIN = "*"
+CHAT_TIMING_DEBUG = "1"
 # Preview cloud API custom domain; this is the verifier for Buttr operator bearer
 # tokens. Keep it paired with the dev/preview cloud Worker, never production.
 API_ORIGIN = "https://api-preview.krispyai.com"

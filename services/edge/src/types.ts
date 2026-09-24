@@ -202,6 +202,8 @@ export interface Env {
   MAX_AI_TURNS?: string;
   /** Output token cap per reply, default MAX_OUTPUT_TOKENS (256). */
   MAX_OUTPUT_TOKENS?: string;
+  /** Preview-only stage timing logs for diagnosing slow chat replies. */
+  CHAT_TIMING_DEBUG?: string;
   /** Operator-silence minutes before a handed-off session hands back to the AI,
    * default HANDBACK_SILENCE_MINUTES (5). */
   HANDBACK_SILENCE_MINUTES?: string;
