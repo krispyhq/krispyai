@@ -132,8 +132,9 @@ malformed identity fields fail closed.
   `GEMINI_API_KEY`. The Gemini runner requires an exact match to the existing
   `KNOWLEDGE_TENANT_ID` and `KNOWLEDGE_SITE_ID` (empty/default is the same site).
   Other tenants stay on Workers AI even if their model setting names Gemini.
-  The key stays server-side. If it is missing
-  or the API fails, the existing human-handoff fallback applies. No tenant is
+  The key stays server-side. If it is missing or Google fails, that Delulus turn
+  falls back to the existing Cloudflare 70B model; human handoff still applies
+  if both providers fail. No tenant is
   switched by merely deploying the adapter. The bracketed `[!HANDOFF]` marker
   remains canonical; a bare terminal
   `!HANDOFF` is accepted only as a compatibility variant when sentence-standalone.

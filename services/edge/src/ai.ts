@@ -51,8 +51,24 @@ export function configuredAiRunner(
   if (model !== GEMINI_MODEL) return workersAiRunner(env, model);
   const pilotSite = env.KNOWLEDGE_SITE_ID || "default";
   const selectedSite = siteId || "default";
-  if (env.KNOWLEDGE_TENANT_ID && tenantId === env.KNOWLEDGE_TENANT_ID && selectedSite === pilotSite)
-    return geminiAiRunner(env, fetcher);
+  if (
+    env.KNOWLEDGE_TENANT_ID &&
+    tenantId === env.KNOWLEDGE_TENANT_ID &&
+    selectedSite === pilotSite
+  ) {
+    const google = geminiAiRunner(env, fetcher);
+    const fallback = workersAiRunner(env, DEFAULT_MODEL);
+    return async (messages) => {
+      try {
+        return await google(messages);
+      } catch {
+        // A transient Google outage should not turn an answerable visitor question
+        // into a human handoff. The existing 70B path remains the safety net.
+        console.warn("Gemini pilot unavailable; using Workers AI fallback");
+        return fallback(messages);
+      }
+    };
+  }
   return workersAiRunner(env, DEFAULT_MODEL);
 }
 

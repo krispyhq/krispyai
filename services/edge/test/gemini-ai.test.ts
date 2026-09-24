@@ -52,25 +52,47 @@ describe("Gemini opt-in adapter", () => {
     expect(called).toBe(true);
   });
 
-  test("missing key and provider errors reject inside the runner for human fallback", async () => {
+  test("missing key and provider errors use 70B; both providers failing still rejects", async () => {
+    let fallbackCalls = 0;
+    const ai = {
+      run: async (model: string) => {
+        fallbackCalls += 1;
+        expect(model).toBe("@cf/meta/llama-3.3-70b-instruct-fp8-fast");
+        return { response: "Cloudflare fallback" };
+      },
+    } as unknown as Ai;
     const missing = configuredAiRunner(
-      env({ GEMINI_API_KEY: undefined }),
+      env({ GEMINI_API_KEY: undefined, AI: ai }),
       "delulus-tenant",
       undefined,
       GEMINI_MODEL,
     );
-    // Bun's rejects matcher is awaitable at runtime despite its narrower TS type.
-    // oxlint-disable-next-line typescript/await-thenable
-    await expect(missing(messages)).rejects.toThrow("Gemini API key is not configured");
+    expect((await missing(messages)).text).toBe("Cloudflare fallback");
     const failing = configuredAiRunner(
-      env(),
+      env({ AI: ai }),
       "delulus-tenant",
       "default",
       GEMINI_MODEL,
       async () => new Response("provider detail must stay private", { status: 429 }),
     );
+    expect((await failing(messages)).text).toBe("Cloudflare fallback");
+    expect(fallbackCalls).toBe(2);
+    const bothFail = configuredAiRunner(
+      env({
+        AI: {
+          run: async () => {
+            throw new Error("70B down");
+          },
+        } as unknown as Ai,
+      }),
+      "delulus-tenant",
+      undefined,
+      GEMINI_MODEL,
+      async () => new Response("Google down", { status: 503 }),
+    );
+    // Bun's rejects matcher is awaitable at runtime despite its narrower TS type.
     // oxlint-disable-next-line typescript/await-thenable
-    await expect(failing(messages)).rejects.toThrow("Gemini API error: 429");
+    await expect(bothFail(messages)).rejects.toThrow("70B down");
   });
 
   test("Cloudflare model remains the default and never calls Google", async () => {
