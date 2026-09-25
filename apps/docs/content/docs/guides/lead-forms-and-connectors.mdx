@@ -86,6 +86,11 @@ conversation's site. Selecting one places a card in the chat transcript. The for
 uses the same `/api/lead` delivery path as a bot-offered form, and the Instagram
 button uses the connector's configured HTTPS profile URL. Cards survive reconnects.
 
+Lead emails show labeled fields and the recent conversation. To include Buttr
+beside the Krispy wordmark, set the edge Worker's `EMAIL_ASSET_ORIGIN` to a public
+HTTPS host serving `/brand/buttr-chill.png`. Email clients that block images still
+show the text wordmark; unset or non-HTTPS origins omit the image.
+
 While a conversation waits for a team member, the widget offers a compact
 "Talk to the team" card using only the site's configured forms and visitor-facing
 CTAs. A form choice expands the existing form in the chat transcript; `/api/lead`

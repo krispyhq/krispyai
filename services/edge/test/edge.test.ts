@@ -1230,6 +1230,28 @@ describe("renderLeadEmail", () => {
     expect(mail.html).not.toContain("<script>x</script>");
     expect(mail.html).toContain("&lt;script&gt;");
   });
+  test("uses only a public HTTPS mascot image with text and alt fallback", () => {
+    const mail = renderLeadEmail(
+      form,
+      { name: "Dana" },
+      [],
+      undefined,
+      undefined,
+      "https://app-preview.example.com/ignored/path?x=1",
+    );
+    expect(mail.html).toContain('src="https://app-preview.example.com/brand/buttr-chill.png"');
+    expect(mail.html).toContain('alt="Buttr, the Krispy croissant mascot"');
+    expect(mail.html).toContain('width="58" height="58"');
+    expect(mail.html).toContain("krispy");
+    expect(renderLeadEmail(form, { name: "Dana" }, []).html).not.toContain("<img");
+    expect(
+      renderLeadEmail(form, { name: "Dana" }, [], undefined, undefined, "http://localhost:3000")
+        .html,
+    ).not.toContain("<img");
+    expect(
+      renderLeadEmail(form, { name: "Dana" }, [], undefined, undefined, "javascript:alert(1)").html,
+    ).not.toContain("<img");
+  });
 });
 
 // ── sendLeadEmail reply_to (tenant hits Reply → talks to the lead) ───────────
@@ -1277,24 +1299,32 @@ describe("sendLeadEmail reply_to", () => {
 // ── deliverLead fan-out (telegram + email; wa/ig are CTA-only) ───────────────
 describe("deliverLead fan-out", () => {
   // Capture every outbound fetch so we can assert which channels fired.
-  function withCapturedFetch<T>(run: () => Promise<T>): Promise<{ urls: string[]; result: T }> {
+  function withCapturedFetch<T>(
+    run: () => Promise<T>,
+  ): Promise<{ urls: string[]; bodies: string[]; result: T }> {
     const urls: string[] = [];
+    const bodies: string[] = [];
     const orig = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       urls.push(String(input));
+      bodies.push(String(init?.body ?? ""));
       return new Response(JSON.stringify({ ok: true, result: {} }), {
         headers: { "content-type": "application/json" },
       });
     }) as typeof fetch;
     return run()
-      .then((result) => ({ urls, result }))
+      .then((result) => ({ urls, bodies, result }))
       .finally(() => {
         globalThis.fetch = orig;
       });
   }
 
   test("fans out to Telegram + email; whatsapp/instagram never delivered server-side", async () => {
-    const env = fakeEnv({ RESEND_API_KEY: "re_x", LEAD_EMAIL_FROM: "leads@x.co" });
+    const env = fakeEnv({
+      RESEND_API_KEY: "re_x",
+      LEAD_EMAIL_FROM: "leads@x.co",
+      EMAIL_ASSET_ORIGIN: "https://app-preview.example.com",
+    });
     await mergeTenantConfig(env, "acme", {
       botToken: "tok",
       chatId: "-100",
@@ -1307,7 +1337,7 @@ describe("deliverLead fan-out", () => {
     });
     await linkThreadSession(env, "acme", 42, "sess-1"); // gives getThreadForSession a hit
 
-    const { urls } = await withCapturedFetch(() =>
+    const { urls, bodies } = await withCapturedFetch(() =>
       deliverLead(env, {
         tenantId: "acme",
         sessionId: "sess-1",
@@ -1322,6 +1352,10 @@ describe("deliverLead fan-out", () => {
     );
     // …and exactly one Resend email…
     expect(urls.filter((u) => u.includes("api.resend.com")).length).toBe(1);
+    const resendIndex = urls.findIndex((url) => url.includes("api.resend.com"));
+    expect(JSON.parse(bodies[resendIndex]!).html).toContain(
+      'src="https://app-preview.example.com/brand/buttr-chill.png"',
+    );
     // …and NO wa.me / instagram delivery leaked to the server side.
     expect(urls.some((u) => u.includes("wa.me") || u.includes("instagram.com"))).toBe(false);
   });

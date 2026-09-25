@@ -272,6 +272,8 @@ export interface Env {
   LEAD_EMAIL_FROM?: string;
   /** Optional HTTPS inbox URL for the lead email's Open in Buttr action. */
   BUTTR_INBOX_URL?: string;
+  /** Public HTTPS origin serving /brand/buttr-chill.png in lead emails. */
+  EMAIL_ASSET_ORIGIN?: string;
 }
 
 /** Strongly-consistent owner of the next reply for one chat session. */
