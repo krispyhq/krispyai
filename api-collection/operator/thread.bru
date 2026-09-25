@@ -46,6 +46,6 @@ docs {
   turns; on handoff it is seeded from the history the widget re-sends on /api/chat.
   Missing `tenantId`/`sessionId` → 400. Response:
   `{ messages: [{ role: "visitor" | "ai" | "operator", text, ts }],
-     callReceipts: [{ callId, sessionId, startedAt, connectedAt, endedAt,
+     callReceipts: [{ callId, sessionId, startedAt, connectedAt, connectedTimeProvenance, endedAt,
        connectedDurationMs, outcome, endTimeProvenance, revision }] }`.
 }

@@ -57,8 +57,8 @@ reaches a terminal state. `/api/operator/thread` returns `callReceipts` separate
 from its 20-message ring; the guest and operator sockets receive
 `{ type: "call_receipt", receipt }` live and on reconnect. Each receipt includes
 server timestamps, duration measured from verified two-party media connection,
-an `ended`/`missed`/`declined`/`canceled` outcome, and whether the end time came
-from a signed event or a later room observation. It contains no recording or
+an `ended`/`missed`/`declined`/`canceled` outcome, and whether the connection
+and end times came from signed events or later room observations. It contains no recording or
 conversation summary. Runtime 0.4 call routes do not create these receipts.
 
 ### Operator bearer authorization

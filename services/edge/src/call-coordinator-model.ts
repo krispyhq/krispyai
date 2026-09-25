@@ -43,6 +43,7 @@ export interface CoordinatedCall {
   joinDueAt?: number;
   /** Set only after the server verifies BOTH LiveKit participants present. */
   mediaConnectedAt?: number;
+  mediaStartProvenance?: "signed_event" | "observed_room_present";
   /** Verified media end; may precede a delayed room-cleanup confirmation. */
   mediaDisconnectedAt?: number;
   mediaEndProvenance?: "signed_event" | "observed_room_absent" | "confirmed_room_delete";
@@ -76,6 +77,7 @@ export interface CallTimelineReceipt {
   sessionId: string;
   startedAt: number;
   connectedAt: number | null;
+  connectedTimeProvenance: "signed_event" | "observed_room_present" | null;
   endedAt: number;
   connectedDurationMs: number;
   outcome: "ended" | "missed" | "declined" | "canceled";
@@ -88,34 +90,50 @@ export interface CallTimelineReceipt {
 }
 
 const CALL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const validCallTime = (value: unknown): value is number =>
+  typeof value === "number" &&
+  Number.isInteger(value) &&
+  value >= 0 &&
+  value <= 8_640_000_000_000_000;
 
 export function isCallTimelineReceipt(value: unknown): value is CallTimelineReceipt {
   if (!value || typeof value !== "object") return false;
   const fields = new Map<string, unknown>(Object.entries(value));
+  const callId = fields.get("callId");
+  const sessionId = fields.get("sessionId");
   const connectedAt = fields.get("connectedAt");
+  const startedAt = fields.get("startedAt");
   const endedAt = fields.get("endedAt");
   const duration = fields.get("connectedDurationMs");
+  const startSource = fields.get("connectedTimeProvenance");
+  const outcome = fields.get("outcome");
+  const revision = fields.get("revision");
   return (
-    typeof fields.get("callId") === "string" &&
-    CALL_UUID.test(fields.get("callId") as string) &&
-    typeof fields.get("sessionId") === "string" &&
-    (fields.get("sessionId") as string).length > 0 &&
-    (fields.get("sessionId") as string).length <= 200 &&
-    typeof fields.get("startedAt") === "number" &&
-    Number.isFinite(fields.get("startedAt")) &&
-    (connectedAt === null || (typeof connectedAt === "number" && Number.isFinite(connectedAt))) &&
-    typeof endedAt === "number" &&
-    Number.isFinite(endedAt) &&
+    typeof callId === "string" &&
+    CALL_UUID.test(callId) &&
+    typeof sessionId === "string" &&
+    sessionId.length > 0 &&
+    sessionId.length <= 200 &&
+    validCallTime(startedAt) &&
+    (connectedAt === null || validCallTime(connectedAt)) &&
+    validCallTime(endedAt) &&
+    startedAt <= endedAt &&
+    (connectedAt === null || (connectedAt >= startedAt && connectedAt <= endedAt)) &&
+    (connectedAt === null
+      ? startSource === null
+      : ["signed_event", "observed_room_present"].includes(String(startSource))) &&
     typeof duration === "number" &&
     Number.isFinite(duration) &&
     duration >= 0 &&
     (connectedAt === null ? duration === 0 : duration === endedAt - connectedAt) &&
-    ["ended", "missed", "declined", "canceled"].includes(String(fields.get("outcome"))) &&
+    ["ended", "missed", "declined", "canceled"].includes(String(outcome)) &&
+    (connectedAt === null ? outcome !== "ended" : outcome === "ended") &&
     ["signed_event", "observed_room_absent", "confirmed_room_delete", "server_transition"].includes(
       String(fields.get("endTimeProvenance")),
     ) &&
-    Number.isInteger(fields.get("revision")) &&
-    (fields.get("revision") as number) > 0
+    typeof revision === "number" &&
+    Number.isInteger(revision) &&
+    revision > 0
   );
 }
 
@@ -206,6 +224,8 @@ export type CallCommand =
       operator: VerifiedCallOperator;
       /** An authenticated client intent alone is insufficient. */
       source: "signed_livekit_event" | "verified_room_query";
+      /** Signed time of verified two-party presence, when available. */
+      occurredAt?: number;
     }
   | { type: "revoke_device"; deviceInstanceId: string; eventId: string; now: number }
   | { type: "revoke_operator"; operatorId: string; eventId: string; now: number };
@@ -330,8 +350,9 @@ function recordTerminalReceipts(state: CoordinatorState): void {
       sessionId: call.sessionId,
       startedAt: call.createdAt,
       connectedAt: call.mediaConnectedAt ?? null,
+      connectedTimeProvenance: call.mediaStartProvenance ?? null,
       endedAt: mediaEnd,
-      connectedDurationMs: connected ? Math.max(0, mediaEnd - call.mediaConnectedAt!) : 0,
+      connectedDurationMs: call.mediaConnectedAt != null ? mediaEnd - call.mediaConnectedAt : 0,
       outcome,
       endTimeProvenance: call.mediaEndProvenance ?? "server_transition",
       revision: call.revision,
@@ -630,20 +651,19 @@ export function applyCallCommand(
       return finish(receipt(call, "unavailable", call.callId));
     call.status = "ended";
     call.endedAt = command.now;
-    const verifiedAt =
+    const exactSignedEnd =
+      command.source === "signed_room_finished" &&
       command.occurredAt != null &&
       Number.isFinite(command.occurredAt) &&
-      command.occurredAt >= call.createdAt &&
-      command.occurredAt <= command.now
-        ? command.occurredAt
-        : command.now;
+      command.occurredAt >= (call.mediaConnectedAt ?? call.createdAt) &&
+      command.occurredAt <= command.now;
+    const verifiedAt = exactSignedEnd ? command.occurredAt! : command.now;
     call.mediaDisconnectedAt = verifiedAt;
-    call.mediaEndProvenance =
-      command.source === "signed_room_finished"
-        ? "signed_event"
-        : command.source === "verified_room_absent"
-          ? "observed_room_absent"
-          : "confirmed_room_delete";
+    call.mediaEndProvenance = exactSignedEnd
+      ? "signed_event"
+      : command.source === "close_room_response"
+        ? "confirmed_room_delete"
+        : "observed_room_absent";
     call.revision++;
     emit(state, call, "status");
     dispatchNextWaiting(state, command.now);
@@ -659,7 +679,14 @@ export function applyCallCommand(
     )
       return finish(receipt(call, "unavailable", call.callId));
     if (!call.mediaConnectedAt) {
-      call.mediaConnectedAt = command.now;
+      const exactSignedStart =
+        command.source === "signed_livekit_event" &&
+        command.occurredAt != null &&
+        Number.isFinite(command.occurredAt) &&
+        command.occurredAt >= (call.acceptedAt ?? call.createdAt) &&
+        command.occurredAt <= command.now;
+      call.mediaConnectedAt = exactSignedStart ? command.occurredAt : command.now;
+      call.mediaStartProvenance = exactSignedStart ? "signed_event" : "observed_room_present";
       call.revision++;
       emit(state, call, "status");
     }

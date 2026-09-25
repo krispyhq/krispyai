@@ -1117,6 +1117,7 @@ components:
           sessionId,
           startedAt,
           connectedAt,
+          connectedTimeProvenance,
           endedAt,
           connectedDurationMs,
           outcome,
@@ -1132,6 +1133,8 @@ components:
             type: [integer, "null"],
             description: Server-verified time both participants were present.,
           }
+        connectedTimeProvenance:
+          { type: [string, "null"], enum: [signed_event, observed_room_present, null] }
         endedAt:
           { type: integer, description: Verified media end or server-observed terminal time. }
         connectedDurationMs: { type: integer, minimum: 0 }

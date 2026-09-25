@@ -9,6 +9,7 @@ const receipt: CallTimelineReceipt = {
   sessionId: "session-one",
   startedAt: 1,
   connectedAt: 10,
+  connectedTimeProvenance: "signed_event",
   endedAt: 25,
   connectedDurationMs: 15,
   outcome: "ended",
@@ -67,7 +68,7 @@ test("SessionDO stores one typed call receipt outside its bounded chat ring", as
     tenantId: "tenant",
     receipt: { ...receipt, outcome: "missed" },
   });
-  expect((await duplicate.json()).stored).toBe(false);
+  expect(duplicate.status).toBe(400);
   expect(frames.filter((frame) => JSON.parse(frame).type === "call_receipt")).toHaveLength(1);
   expect((await post("/call/receipt", { tenantId: "other", receipt })).status).toBe(403);
   expect(

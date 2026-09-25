@@ -6,6 +6,7 @@ import {
   expireCoordinatedCalls,
   operatorMayReceiveGrant,
   pruneCoordinatorState,
+  isCallTimelineReceipt,
   waitingCalls,
   type CallCommand,
   type CoordinatorState,
@@ -466,6 +467,7 @@ test("one durable timeline receipt uses verified connected duration and end-time
     sessionId: "session-one",
     startedAt: 0,
     connectedAt: 10,
+    connectedTimeProvenance: "observed_room_present",
     endedAt: 25,
     connectedDurationMs: 15,
     outcome: "ended",
@@ -485,6 +487,42 @@ test("one durable timeline receipt uses verified connected duration and end-time
   expect(Object.values(duplicate.outbox).filter((event) => event.kind === "receipt")).toHaveLength(
     1,
   );
+});
+
+test("reordered signed end falls back to observed time without false precision", () => {
+  let state = visitorCall(createCoordinatorState("tenant", { maxPending: 2 }), "one", 0);
+  state = offer(state, "one", a1, 1).state;
+  state = accept(state, "one", a1, "answer", 2).state;
+  state = run(state, {
+    type: "media_joined",
+    callId: "one",
+    eventId: "both-present",
+    now: 10,
+    operator: a1,
+    source: "signed_livekit_event",
+    occurredAt: 8,
+  }).state;
+  state = run(state, {
+    type: "media_ended",
+    callId: "one",
+    eventId: "reordered-end",
+    now: 30,
+    occurredAt: 7,
+    source: "signed_room_finished",
+  }).state;
+  const receipt = state.timelineReceipts.one!;
+  expect(receipt).toMatchObject({
+    connectedAt: 8,
+    connectedTimeProvenance: "signed_event",
+    endedAt: 30,
+    connectedDurationMs: 22,
+    endTimeProvenance: "observed_room_absent",
+  });
+  const validIdReceipt = { ...receipt, callId: "11111111-1111-4111-8111-111111111111" };
+  expect(isCallTimelineReceipt(validIdReceipt)).toBe(true);
+  expect(isCallTimelineReceipt({ ...validIdReceipt, endedAt: 7 })).toBe(false);
+  expect(isCallTimelineReceipt({ ...validIdReceipt, outcome: "missed" })).toBe(false);
+  expect(isCallTimelineReceipt({ ...validIdReceipt, startedAt: -1 })).toBe(false);
 });
 
 test("missed, declined, canceled, and recovered room end have distinct receipts", () => {

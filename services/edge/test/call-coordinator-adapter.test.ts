@@ -113,7 +113,8 @@ test("operator adapter validates IDs and uses verified identity, never body acto
     operatorId: "verified-user",
     deviceInstanceId: "phone",
   });
-  expect(f.writes()).toBe(1);
+  // The wrong-device result is itself durably recorded for idempotent retry.
+  expect(f.writes()).toBe(2);
 });
 
 test("expired or revoked auth fails before storage and room closure needs independent proof", async () => {

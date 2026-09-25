@@ -31,7 +31,8 @@ no route, Durable Object binding, secret, or migration is registered yet.
   transaction, and broadcasts only on the first write. The receipt remains
   outside the bounded chat ring and is returned separately in operator thread
   reads and guest/operator socket replay. `connectedAt` requires both LiveKit
-  participants; `connectedDurationMs` ends at verified media termination, not
+  participants; `connectedTimeProvenance` marks signed vs observed start.
+  `connectedDurationMs` ends at verified media termination, not
   invitation or acceptance. `endTimeProvenance` distinguishes signed exact
   events from later room-absent observation. It contains no recording or chat
   summary. Coordinator retention can prune its projected copy after outbox ack;
