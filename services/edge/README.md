@@ -45,6 +45,10 @@ allowed for development). The Worker adds the session ID as a query parameter;
 the inbox must authenticate the operator and confirm the session belongs to
 their tenant before selecting it. If the URL is unset, the email still includes
 the details and transcript without the action.
+Set `EMAIL_ASSET_ORIGIN` to the public HTTPS origin that serves
+`/brand/buttr-chill.png` to include Buttr in the HTML header. The text wordmark
+remains visible when the image is blocked or the setting is absent. Non-HTTPS
+asset URLs are omitted from outgoing email.
 The authenticated operator action routes list configured forms and Instagram CTAs
 for a session's recorded site, then send a selected ID as a durable typed card.
 The visitor receives it over the session WebSocket and sees it again after reconnecting.

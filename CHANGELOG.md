@@ -44,6 +44,9 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Fixed
 
+- Lead emails show the Buttr mascot beside the Krispy wordmark when a public
+  `EMAIL_ASSET_ORIGIN` is configured; text remains if images are blocked or unset.
+
 - Submitted lead forms now save their labeled phone and note fields in the operator
   thread before showing success. These records survive chat-ring eviction, remain
   visible if email delivery is delayed, and keep callback inquiries out of the

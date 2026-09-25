@@ -1135,6 +1135,7 @@ export async function deliverLead(env: Env, lead: LeadPayload): Promise<boolean>
       lead.history,
       waPhone,
       leadInboxUrl(env.BUTTR_INBOX_URL, lead.sessionId),
+      env.EMAIL_ASSET_ORIGIN,
     );
     const idempotencyKey = lead.submissionId
       ? `lead-${Array.from(

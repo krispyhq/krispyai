@@ -130,6 +130,9 @@ When a business adds a lead form and email connector, Krispy sends the captured
 details and recent conversation to the configured inbox. The widget confirms
 submission only after the email provider accepts it; on failure the visitor keeps
 their entries and can retry.
+Set `EMAIL_ASSET_ORIGIN` to the public HTTPS host serving
+`/brand/buttr-chill.png` to show Buttr beside the lead email's Krispy wordmark.
+The wordmark remains when image loading is blocked or the setting is unset.
 Instagram connectors render as clear, tappable chat buttons with the familiar
 Instagram glyph; the business chooses their label, link, and reveal timing.
 Operators can also send a configured form or Instagram button into an existing
