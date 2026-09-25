@@ -58,6 +58,7 @@ function harness(
   outputSupported = true,
   storage = new Map<string, string>(),
   testSessionId = "session",
+  ringAudio?: unknown,
 ) {
   const callTitle = element(),
     callNote = element(),
@@ -74,9 +75,20 @@ function harness(
   const deviceChanges: { kind: string; id: string }[] = [];
   const rooms: FakeRoom[] = [];
   const listeners = new Map<string, () => void>();
+  const gestures = new Map<
+    string,
+    (event: { isTrusted: boolean; composedPath?: () => object[] }) => void
+  >();
+  const host = {};
   const document = {
     visibilityState: "visible",
     createElement: (_tag: string) => element(),
+    addEventListener(
+      name: string,
+      fn: (event: { isTrusted: boolean; composedPath?: () => object[] }) => void,
+    ) {
+      gestures.set(name, fn);
+    },
   };
   const localStorage = {
     getItem: (key: string) => storage.get(key) ?? null,
@@ -137,6 +149,7 @@ function harness(
   }
   const window = {
     LivekitClient: { Room: FakeRoom, supportsAudioOutputSelection: () => outputSupported },
+    AudioContext: ringAudio,
     addEventListener(name: string, fn: () => void) {
       listeners.set(name, fn);
     },
@@ -168,7 +181,8 @@ function harness(
     "window",
     "fetch",
     "localStorage",
-    `var handoffChoices = null; function refreshHandoffChoices() {} function requestVisitorCall() {}; ${source.slice(start, end)}; return { renderCall, joinCall, stopCallMedia, noteHandoffOffer: typeof noteHandoffOffer === "function" ? noteHandoffOffer : function () {}, setCallOfferDismissed: typeof setCallOfferDismissed === "function" ? setCallOfferDismissed : function () {}, setCallAvailable: function () { callCanRequest = true; callVisitorConnected = true; } };`,
+    "host",
+    `var handoffChoices = null, muted = false, soundEnabled = true; function refreshHandoffChoices() {} function requestVisitorCall() {}; ${source.slice(start, end)}; return { renderCall, joinCall, stopCallMedia, noteHandoffOffer, setCallOfferDismissed, setCallAvailable: function () { callCanRequest = true; callVisitorConnected = true; }, setNotificationMuted: function (value) { muted = value; } };`,
   ) as (...args: unknown[]) => {
     renderCall: (
       call: { id: string; status: string; requestedBy?: string; expiresAt?: number } | null,
@@ -178,6 +192,7 @@ function harness(
     setCallOfferDismissed: (dismissed: boolean) => void;
     noteHandoffOffer: (previousState: string, nextState: string) => void;
     setCallAvailable: () => void;
+    setNotificationMuted: (muted: boolean) => void;
   };
   const controller = factory(
     { api: "https://example.invalid", tenant: "test", site: "course" },
@@ -194,6 +209,7 @@ function harness(
     window,
     fetch,
     localStorage,
+    host,
   );
   const click = (label: string) => {
     const button = callControls.children.find((item) => item.textContent === label);
@@ -217,6 +233,8 @@ function harness(
     requests,
     document,
     listeners,
+    gestures,
+    host,
     storage,
   };
 }
@@ -228,6 +246,169 @@ const tick = async () => {
 };
 
 describe("visitor audio call controller", () => {
+  test("trusted user gesture unlocks ringtone silently before an async invite", async () => {
+    const contexts: Array<{ closed: boolean }> = [];
+    let tones = 0;
+    class RingAudio {
+      currentTime = 0;
+      destination = {};
+      closed = false;
+      constructor() {
+        contexts.push(this);
+      }
+      resume() {
+        return Promise.resolve();
+      }
+      close() {
+        this.closed = true;
+        return Promise.resolve();
+      }
+      createOscillator() {
+        return {
+          type: "",
+          frequency: { value: 0 },
+          connect: (gain: object) => gain,
+          start: () => {
+            tones++;
+          },
+          stop() {},
+        };
+      }
+      createGain() {
+        return {
+          gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+          connect: () => this.destination,
+        };
+      }
+    }
+    const app = harness(true, new Map(), "session", RingAudio);
+    app.gestures.get("click")?.({ isTrusted: false, composedPath: () => [app.host] });
+    expect(contexts).toHaveLength(0);
+    app.gestures.get("click")?.({ isTrusted: true, composedPath: () => [{}] });
+    expect(contexts).toHaveLength(0); // unrelated page click
+    app.gestures.get("click")?.({ isTrusted: true, composedPath: () => [app.host] });
+    await tick();
+    expect(contexts).toHaveLength(1);
+    expect(tones).toBe(0);
+    app.renderCall(null); // routine status refresh keeps the unlocked context
+    expect(contexts[0]!.closed).toBe(false);
+    app.renderCall({
+      id: "operator-invite",
+      status: "ringing",
+      requestedBy: "operator",
+      expiresAt: Date.now() + 60_000,
+    });
+    await tick();
+    expect(contexts).toHaveLength(1);
+    expect(tones).toBe(2);
+    app.renderCall({ id: "operator-invite", status: "accepted" });
+    expect(contexts[0]!.closed).toBe(true);
+  });
+
+  test("only a real incoming invite rings, and delayed autoplay cannot ring a canceled call", async () => {
+    const instances: FakeRingAudio[] = [];
+    let tones = 0;
+    class FakeRingAudio {
+      gate = deferred<void>();
+      currentTime = 0;
+      destination = {};
+      closed = false;
+      constructor() {
+        instances.push(this);
+      }
+      resume() {
+        return this.gate.promise;
+      }
+      close() {
+        this.closed = true;
+        return Promise.resolve();
+      }
+      createOscillator() {
+        return {
+          type: "",
+          frequency: { value: 0 },
+          connect: (gain: object) => gain,
+          start: () => {
+            tones++;
+          },
+          stop() {},
+        };
+      }
+      createGain() {
+        return {
+          gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+          connect: () => this.destination,
+        };
+      }
+    }
+    const app = harness(true, new Map(), "session", FakeRingAudio);
+    app.setCallAvailable();
+    app.renderCall(null); // idle suggestion is silent
+    app.renderCall({
+      id: "visitor-request",
+      status: "ringing",
+      requestedBy: "visitor",
+      expiresAt: Date.now() + 60_000,
+    });
+    expect(instances).toHaveLength(0);
+    app.renderCall({
+      id: "stale-invite",
+      status: "ringing",
+      requestedBy: "operator",
+      expiresAt: Date.now() - 1,
+    });
+    expect(instances).toHaveLength(0);
+    app.renderCall({
+      id: "operator-invite",
+      status: "ringing",
+      requestedBy: "operator",
+      expiresAt: Date.now() + 60_000,
+    });
+    expect(app.callTitle.textContent).toBe("Incoming audio call");
+    expect(instances).toHaveLength(1);
+    await tick(); // resume is pending under autoplay policy
+    app.renderCall(null); // operator canceled before resume completes
+    instances[0]!.gate.resolve();
+    await tick();
+    expect(tones).toBe(0);
+    expect(instances[0]!.closed).toBe(true);
+
+    app.setNotificationMuted(true);
+    app.renderCall({
+      id: "muted-invite",
+      status: "ringing",
+      requestedBy: "operator",
+      expiresAt: Date.now() + 60_000,
+    });
+    expect(instances).toHaveLength(1);
+    expect(app.callTitle.textContent).toBe("Incoming audio call"); // visible if silent
+    app.setNotificationMuted(false);
+    app.renderCall({
+      id: "new-invite",
+      status: "ringing",
+      requestedBy: "operator",
+      expiresAt: Date.now() + 60_000,
+    });
+    expect(instances).toHaveLength(2);
+    instances[1]!.gate.resolve();
+    await tick();
+    expect(tones).toBe(2); // dual-tone ringtone, one pulse
+    app.renderCall({ id: "new-invite", status: "accepted" });
+    expect(instances[1]!.closed).toBe(true);
+    app.renderCall({
+      id: "expiring-invite",
+      status: "ringing",
+      requestedBy: "operator",
+      expiresAt: Date.now() + 30,
+    });
+    expect(instances).toHaveLength(3);
+    instances[2]!.gate.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(instances[2]!.closed).toBe(true); // local deadline, before status fetch
+    expect(app.callTitle.textContent).toBe("Incoming audio call");
+    app.renderCall(null);
+  });
+
   test("idle call offer dismisses across rerenders and reloads without touching a real invite", () => {
     const storage = new Map<string, string>();
     const app = harness(true, storage);

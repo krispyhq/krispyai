@@ -30,6 +30,10 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
   observed from room presence or deletion are labeled approximate; reconnect
   replay preserves chronological placement and the visitor's scroll position.
 
+- Real incoming operator invitations now ring in the visitor widget when browser
+  audio and notification settings permit, while the visible call controls remain
+  available if autoplay blocks playback. The ring stops on call state changes.
+
 - A disabled coordinator adapter validates native call actions, derives the
   operator/device from trusted auth, and requires verified room closure before
   the future tenant Durable Object may release occupancy.

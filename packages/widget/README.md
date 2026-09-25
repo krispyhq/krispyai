@@ -82,6 +82,17 @@ allow `microphone=(self)` in its `Permissions-Policy` for the browser to show
 its consent prompt; `microphone=()` prevents a prompt and blocks capture.
 Permission is still requested only after the visitor chooses Join.
 
+A real incoming team invitation plays a repeating browser ringtone when sound is
+enabled and the browser permits audio. The visible **Accept** and **Decline**
+controls remain available if autoplay blocks sound. The ringtone stops when the
+invitation is accepted, declined, canceled, expires, or the page/socket leaves.
+The idle call suggestion and a visitor's own request stay silent. Hidden tabs do
+not ring; browser autoplay settings may still prevent audible playback until a
+trusted gesture unlocks audio on that page.
+The widget only attempts silent unlock on widget interaction, including an
+embedder's custom launcher opening the panel; unrelated page clicks do not
+create an audio context.
+
 The idle **Speak with a team member** suggestion has a **Dismiss call offer**
 button. Dismissal is remembered for the current tenant, site, and chat session,
 including page reloads; a later new handoff or new chat session may show it again.
