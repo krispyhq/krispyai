@@ -73,6 +73,15 @@ All opt-in. Leave `data-launcher` off and the built-in launcher renders exactly 
 Screenshot paste/drop is enabled only when the public boot config reports a Telegram-backed
 attachment channel. App-only tenants do not present an upload path that would fail at send time.
 
+## Audio call join errors
+
+The visitor chooses **Join call** after accepting an invitation. If the browser
+blocks microphone access, no device is found, or the media connection fails,
+the card returns to Join and shows what to try next. The hosting page must
+allow `microphone=(self)` in its `Permissions-Policy` for the browser to show
+its consent prompt; `microphone=()` prevents a prompt and blocks capture.
+Permission is still requested only after the visitor chooses Join.
+
 ## Local demo
 
 Run the edge Worker (`cd services/edge && bunx wrangler dev`, serves on `:8787`),

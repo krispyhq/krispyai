@@ -116,6 +116,8 @@ function fakeDOState(): DurableObjectState {
     storage: {
       get: async (k: string) => store.get(k),
       put: async (k: string, v: unknown) => void store.set(k, v),
+      list: async ({ prefix }: { prefix?: string } = {}) =>
+        new Map([...store].filter(([key]) => !prefix || key.startsWith(prefix))),
       setAlarm: async (t: number | Date) => void (alarm = typeof t === "number" ? t : t.getTime()),
       deleteAlarm: async () => void (alarm = null),
       getAlarm: async () => alarm,
@@ -1346,7 +1348,9 @@ describe("deliverLead fan-out", () => {
   });
 
   test("configured inquiry includes the conversation and only acknowledges accepted email", async () => {
-    const env = fakeEnv({ RESEND_API_KEY: "re_test", LEAD_EMAIL_FROM: "hello@example.test" });
+    const env = wireSessionNS(
+      fakeEnv({ RESEND_API_KEY: "re_test", LEAD_EMAIL_FROM: "hello@example.test" }),
+    );
     await mergeTenantConfig(env, "acme", {
       forms: [
         {
@@ -1395,6 +1399,292 @@ describe("deliverLead fan-out", () => {
       globalThis.fetch = originalFetch;
     }
   });
+});
+
+test("form submit persists a typed operator record before success and retries email once", async () => {
+  const env = wireSessionNS(
+    fakeEnv({
+      TENANT_SYNC_SECRET: "test-operator-secret",
+      RESEND_API_KEY: "re_test",
+      LEAD_EMAIL_FROM: "leads@example.test",
+    }),
+  );
+  await mergeTenantConfig(env, "acme", {
+    forms: [
+      {
+        id: "callback",
+        title: "Request a callback",
+        fields: [
+          { name: "phone", label: "Callback number", type: "tel", required: true },
+          { name: "note", label: "What should we discuss?", type: "textarea" },
+        ],
+        connectorIds: ["owner"],
+      },
+    ],
+    connectors: [{ id: "owner", type: "email", toAddress: "owner@example.test" }],
+  });
+  const sessionId = "qa-form-1";
+  const visitorSecret = "v".repeat(43);
+  const stub = env.SESSION.get(env.SESSION.idFromName(`acme:${sessionId}`));
+  const registered = await stub.fetch("https://do/call/visitor/register", {
+    method: "POST",
+    headers: { [DO_INTERNAL_HEADER]: doInternalSecret(env) },
+    body: JSON.stringify({ secret: visitorSecret }),
+  });
+  expect(registered.status).toBe(200);
+  const other = env.SESSION.get(env.SESSION.idFromName("acme:someone-else"));
+  await other.fetch("https://do/call/visitor/register", {
+    method: "POST",
+    headers: { [DO_INTERNAL_HEADER]: doInternalSecret(env) },
+    body: JSON.stringify({ secret: "o".repeat(43) }),
+  });
+  const body = {
+    tenantId: "acme",
+    sessionId,
+    formId: "callback",
+    submissionId: "qa-submission-1",
+    visitorSecret,
+    values: { phone: "+972 50 123 4567", note: "Please call after 5." },
+    history: [],
+  };
+  const submit = (value: object) =>
+    worker.fetch(
+      new Request("https://edge.test/api/lead", {
+        method: "POST",
+        body: JSON.stringify(value),
+      }),
+      env,
+    );
+  const operator = (path: string, value: object) =>
+    worker.fetch(
+      new Request(`https://edge.test${path}`, {
+        method: "POST",
+        headers: { "x-tenant-sync-secret": "test-operator-secret" },
+        body: JSON.stringify(value),
+      }),
+      env,
+    );
+  const originalFetch = globalThis.fetch;
+  const emails: RequestInit[] = [];
+  let emailUnavailable = false;
+  try {
+    globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      emails.push(init ?? {});
+      return emailUnavailable
+        ? new Response("unavailable", { status: 503 })
+        : Response.json({ id: "accepted-email" });
+    }) as typeof fetch;
+    expect((await submit({ ...body, visitorSecret: "x".repeat(43) })).status).toBe(403);
+    expect((await submit({ ...body, sessionId: "someone-else" })).status).toBe(403);
+    expect((await submit(body)).status).toBe(200);
+    expect((await submit(body)).status).toBe(200);
+    expect((await submit({ ...body, values: { ...body.values, phone: "changed" } })).status).toBe(
+      409,
+    );
+    expect(emails).toHaveLength(1);
+    expect(new Headers(emails[0]!.headers).get("Idempotency-Key")).toBeTruthy();
+
+    const thread = await operator("/api/operator/thread", { tenantId: "acme", sessionId });
+    expect(thread.status).toBe(200);
+    const { messages } = (await thread.json()) as { messages: { lead?: unknown }[] };
+    expect(messages.filter((message) => message.lead)).toHaveLength(1);
+    expect(messages.find((message) => message.lead)?.lead).toMatchObject({
+      id: body.submissionId,
+      formId: "callback",
+      title: "Request a callback",
+      fields: [
+        { name: "phone", label: "Callback number", value: body.values.phone },
+        { name: "note", label: "What should we discuss?", value: body.values.note },
+      ],
+    });
+    const inbox = await operator("/api/operator/handoffs", {
+      tenantId: "acme",
+      includeActive: true,
+    });
+    expect(
+      ((await inbox.json()) as { conversations: { sessionId: string }[] }).conversations,
+    ).toContainEqual(expect.objectContaining({ sessionId }));
+
+    emailUnavailable = true;
+    const delayedBody = { ...body, submissionId: "qa-submission-2" };
+    const delayed = await submit(delayedBody);
+    expect(delayed.status).toBe(200);
+    expect(await delayed.json()).toMatchObject({
+      ok: true,
+      recorded: true,
+      emailStatus: "delayed",
+    });
+    const afterDelay = await operator("/api/operator/thread", { tenantId: "acme", sessionId });
+    expect(
+      ((await afterDelay.json()) as { messages: { lead?: unknown }[] }).messages.filter(
+        (m) => m.lead,
+      ),
+    ).toHaveLength(2);
+    emailUnavailable = false;
+    expect((await submit(delayedBody)).status).toBe(200);
+    expect((await submit(delayedBody)).status).toBe(200);
+    expect(emails).toHaveLength(3);
+    expect(new Headers(emails[1]!.headers).get("Idempotency-Key")).toBe(
+      new Headers(emails[2]!.headers).get("Idempotency-Key"),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("legacy cached-widget lead keeps a delivered form visible for human review", async () => {
+  const env = wireSessionNS(
+    fakeEnv({
+      TENANT_SYNC_SECRET: "test-operator-secret",
+      RESEND_API_KEY: "re_test",
+      LEAD_EMAIL_FROM: "leads@example.test",
+    }),
+  );
+  await mergeTenantConfig(env, "acme", {
+    forms: [
+      {
+        id: "callback",
+        title: "Request a callback",
+        fields: [{ name: "phone", label: "Phone", type: "tel", required: true }],
+        connectorIds: ["owner"],
+      },
+    ],
+    connectors: [{ id: "owner", type: "email", toAddress: "owner@example.test" }],
+  });
+  const submit = (sessionId: string, values: Record<string, string>) =>
+    worker.fetch(
+      new Request("https://edge.test/api/lead", {
+        method: "POST",
+        body: JSON.stringify({ tenantId: "acme", sessionId, formId: "callback", values }),
+      }),
+      env,
+    );
+  const originalFetch = globalThis.fetch;
+  try {
+    const stub = env.SESSION.get(env.SESSION.idFromName("acme:legacy-form"));
+    await stub.fetch("https://do/log", {
+      method: "POST",
+      headers: { [DO_INTERNAL_HEADER]: doInternalSecret(env) },
+      body: JSON.stringify({
+        seed: true,
+        messages: [{ role: "visitor", text: "Please call me", ts: Date.now() - 48 * 60 * 60_000 }],
+      }),
+    });
+    let sent = 0;
+    globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) => {
+      sent++;
+      return Response.json({ id: "accepted-email" });
+    }) as typeof fetch;
+    expect((await submit("legacy-invalid", { phone: "" })).status).toBe(400);
+    expect(sent).toBe(0);
+    expect((await submit("legacy-form", { phone: "+972501234567" })).status).toBe(200);
+    const inbox = await worker.fetch(
+      new Request("https://edge.test/api/operator/handoffs", {
+        method: "POST",
+        headers: { "x-tenant-sync-secret": "test-operator-secret" },
+        body: JSON.stringify({ tenantId: "acme", includeActive: true, includeResolved: true }),
+      }),
+      env,
+    );
+    expect(
+      ((await inbox.json()) as { conversations: { sessionId: string }[] }).conversations,
+    ).toContainEqual(expect.objectContaining({ sessionId: "legacy-form", resolved: false }));
+    globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) =>
+      new Response("unavailable", { status: 503 })) as typeof fetch;
+    expect((await submit("legacy-failed", { phone: "+972501234567" })).status).toBe(502);
+    const afterFailure = await worker.fetch(
+      new Request("https://edge.test/api/operator/handoffs", {
+        method: "POST",
+        headers: { "x-tenant-sync-secret": "test-operator-secret" },
+        body: JSON.stringify({ tenantId: "acme", includeActive: true, includeResolved: true }),
+      }),
+      env,
+    );
+    expect(
+      ((await afterFailure.json()) as { conversations: { sessionId: string }[] }).conversations,
+    ).not.toContainEqual(expect.objectContaining({ sessionId: "legacy-failed" }));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("lead-only receipt survives chat-ring eviction and is visible only to operator sockets", async () => {
+  const env = fakeEnv();
+  const state = fakeDOState();
+  const writes = new Map<string, unknown>();
+  const put = state.storage.put.bind(state.storage);
+  state.storage.put = async (key: string, value: unknown) => {
+    writes.set(key, value);
+    await put(key, value);
+  };
+  const operatorFrames: string[] = [];
+  const visitorFrames: string[] = [];
+  Object.defineProperty(state, "getWebSockets", {
+    value: (tag?: string) =>
+      tag === "operator"
+        ? [{ send: (frame: string) => operatorFrames.push(frame) }]
+        : tag === "call-visitor"
+          ? [{ send: (frame: string) => visitorFrames.push(frame) }]
+          : [],
+  });
+  const do_ = new SessionDO(state, env);
+  const headers = { [DO_INTERNAL_HEADER]: doInternalSecret(env) };
+  const receipt = await do_.fetch(
+    new Request("https://do/lead", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        id: "lead-only-1",
+        tenantId: "acme",
+        sessionId: "lead-only-session",
+        siteId: "default",
+        formId: "callback",
+        title: "Request a callback",
+        fields: [{ name: "phone", label: "Callback number", value: "+972 50 123 4567" }],
+        history: [],
+        visitorSecret: "v".repeat(43),
+      }),
+    }),
+  );
+  expect(receipt.status).toBe(200);
+  expect(writes.get("humanInquiry")).toBe(true);
+  expect(writes.get("archiveDueAt")).toBe(0);
+  expect(operatorFrames).toHaveLength(1);
+  expect(JSON.parse(operatorFrames[0]!)).toMatchObject({
+    type: "lead",
+    message: { lead: { fields: [{ label: "Callback number" }] } },
+  });
+  expect(visitorFrames).toHaveLength(0);
+  const wrongVisitor = await do_.fetch(
+    new Request("https://do/lead", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        id: "lead-only-2",
+        tenantId: "acme",
+        sessionId: "lead-only-session",
+        siteId: "default",
+        formId: "callback",
+        title: "Request a callback",
+        fields: [],
+        history: [],
+        visitorSecret: "x".repeat(43),
+      }),
+    }),
+  );
+  expect(wrongVisitor.status).toBe(403);
+  for (let i = 0; i < RING_MAX + 5; i++) {
+    await do_.fetch(
+      new Request("https://do/log", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ messages: [{ role: "visitor", text: `later-${i}` }] }),
+      }),
+    );
+  }
+  const thread = await do_.fetch(new Request("https://do/log", { headers }));
+  const { messages } = (await thread.json()) as { messages: { lead?: { id: string } }[] };
+  expect(messages.filter((message) => message.lead?.id === "lead-only-1")).toHaveLength(1);
 });
 
 // ── lead rate limit (anti-spam / cost on the unauth lead routes) ─────────────
@@ -1645,22 +1935,149 @@ describe("SessionDO ring buffer", () => {
     );
   });
 
+  test("archives a bot-only conversation after 24 hours without a visitor, then reopens it", async () => {
+    const state = fakeDOState();
+    const do_ = new SessionDO(state, env);
+    const before = Date.now();
+    await post(do_, "/log", { messages: [{ role: "visitor", text: "course question" }] });
+    const alarm = await state.storage.getAlarm();
+    expect(alarm).toBeGreaterThanOrEqual(before + 24 * 60 * 60_000);
+    expect(alarm).toBeLessThan(before + 24 * 60 * 60_000 + 5_000);
+    await state.storage.put("archiveDueAt", Date.now() - 1);
+    await do_.alarm();
+    expect((await (await get(do_, "/summary")).json()) as { resolved: boolean }).toMatchObject({
+      resolved: true,
+    });
+    await post(do_, "/log", { messages: [{ role: "visitor", text: "one more question" }] });
+    expect((await (await get(do_, "/summary")).json()) as { resolved: boolean }).toMatchObject({
+      resolved: false,
+    });
+  });
+
+  test("archives an old bot-only conversation on inbox read without a bulk migration", async () => {
+    const state = fakeDOState();
+    const do_ = new SessionDO(state, env);
+    await state.storage.put("log", [
+      { role: "visitor", text: "old question", ts: Date.now() - 25 * 60 * 60_000 },
+      { role: "ai", text: "old answer", ts: Date.now() - 25 * 60 * 60_000 },
+    ]);
+    expect((await (await get(do_, "/summary")).json()) as { resolved: boolean }).toMatchObject({
+      resolved: true,
+    });
+    expect(await state.storage.get<boolean>("resolved")).toBe(true);
+  });
+
+  test("a historical handoff index or operator note blocks lazy archive", async () => {
+    const old = Date.now() - 25 * 60 * 60_000;
+    const indexed = fakeDOState();
+    await indexed.storage.put("log", [
+      { role: "visitor", text: "I need a person", ts: old },
+      { role: "ai", text: "Back to AI", ts: old },
+    ]);
+    const known = new SessionDO(indexed, env);
+    expect(
+      (await (await get(known, "/summary?knownHandoff=1")).json()) as { resolved: boolean },
+    ).toMatchObject({ resolved: false });
+    expect(await indexed.storage.get<boolean>("humanInquiry")).toBe(true);
+
+    const operatorState = fakeDOState();
+    await operatorState.storage.put("log", [
+      { role: "visitor", text: "I need a person", ts: old },
+      { role: "operator", text: "I can help", ts: old },
+    ]);
+    const operator = new SessionDO(operatorState, env);
+    expect((await (await get(operator, "/summary")).json()) as { resolved: boolean }).toMatchObject(
+      {
+        resolved: false,
+      },
+    );
+
+    const unansweredState = fakeDOState();
+    await unansweredState.storage.put("log", [
+      { role: "visitor", text: "I still need the team", ts: old },
+      { role: "ai", text: HANDBACK_NOTE, ts: old },
+    ]);
+    const unanswered = new SessionDO(unansweredState, env);
+    expect(
+      (await (await get(unanswered, "/summary")).json()) as { resolved: boolean },
+    ).toMatchObject({
+      resolved: false,
+    });
+  });
+
+  test("keeps an unanswered human request visible after silence hands ownership to AI", async () => {
+    const state = fakeDOState();
+    const do_ = new SessionDO(state, env);
+    await post(do_, "/log", { messages: [{ role: "visitor", text: "I need a person" }] });
+    await post(do_, "/handoff", {});
+    await state.storage.put("handoffDueAt", Date.now() - 1);
+    await do_.alarm();
+    expect((await (await get(do_, "/summary")).json()) as { handoffState: string }).toMatchObject({
+      handoffState: "ai",
+      resolved: false,
+    });
+    await state.storage.put("archiveDueAt", Date.now() - 1);
+    await do_.alarm();
+    expect((await (await get(do_, "/summary")).json()) as { resolved: boolean }).toMatchObject({
+      resolved: false,
+    });
+    expect(await state.storage.getAlarm()).toBeNull();
+  });
+
+  test("AUTO_ARCHIVE_HOURS changes the bot-only deadline", async () => {
+    const configured = fakeEnv({ AUTO_ARCHIVE_HOURS: "1" });
+    const state = fakeDOState();
+    const do_ = new SessionDO(state, configured);
+    const before = Date.now();
+    await do_.fetch(
+      new Request("https://do/log", {
+        method: "POST",
+        headers: { [DO_INTERNAL_HEADER]: doInternalSecret(configured) },
+        body: JSON.stringify({ messages: [{ role: "visitor", text: "hello" }] }),
+      }),
+    );
+    const alarm = await state.storage.getAlarm();
+    expect(alarm).toBeGreaterThanOrEqual(before + 60 * 60_000);
+    expect(alarm).toBeLessThan(before + 60 * 60_000 + 5_000);
+  });
+
+  test("a visitor call request prevents a bot-only archive", async () => {
+    const state = fakeDOState();
+    const do_ = new SessionDO(state, env);
+    const secret = "s".repeat(43);
+    await post(do_, "/log", { messages: [{ role: "visitor", text: "Can we speak?" }] });
+    await post(do_, "/call/visitor/register", { secret });
+    const invitation = await do_.fetch(
+      new Request("https://do/call", {
+        method: "POST",
+        headers: {
+          ...authed,
+          "x-call-actor": "visitor",
+          "x-call-visitor-secret": secret,
+          "x-call-request-trigger": "always",
+        },
+        body: JSON.stringify({ action: "invite" }),
+      }),
+    );
+    expect(invitation.status).toBe(200);
+    await state.storage.put("archiveDueAt", Date.now() - 1);
+    await do_.alarm();
+    expect((await (await get(do_, "/summary")).json()) as { resolved: boolean }).toMatchObject({
+      resolved: false,
+    });
+  });
+
   test("live /log appends mirror {type:'message'} to OPERATOR sockets only; seed stays silent", async () => {
     // fake state with one tagged operator socket + one visitor socket
     const opFrames: string[] = [];
     const visitorFrames: string[] = [];
     const opSocket = { send: (d: string) => void opFrames.push(d) };
     const visitorSocket = { send: (d: string) => void visitorFrames.push(d) };
-    const store = new Map<string, unknown>();
-    const state = {
-      acceptWebSocket: () => {},
-      getWebSockets: (tag?: string) =>
-        tag === "operator" ? [opSocket] : [opSocket, visitorSocket],
-      storage: {
-        get: async (k: string) => store.get(k),
-        put: async (k: string, v: unknown) => void store.set(k, v),
+    const state = Object.create(fakeDOState(), {
+      getWebSockets: {
+        value: (tag?: string) => (tag === "operator" ? [opSocket] : [opSocket, visitorSocket]),
       },
-    } as unknown as DurableObjectState;
+    }) as DurableObjectState;
     const do_ = new SessionDO(state, env);
 
     // seed replay → ring fills, but nothing is broadcast (backfill, not live)
@@ -1782,9 +2199,9 @@ describe("SessionDO hand-back", () => {
 
   test("visitor msg while handed off arms the silence alarm; operator reply disarms it", async () => {
     const { do_, state } = socketDO();
-    // visitor msg while NOT handed off → no alarm (bot is answering anyway)
+    // Bot-only inactivity has its own later archive deadline.
     await post(do_, "/log", { messages: [{ role: "visitor", text: "hi" }] });
-    expect(await state.storage.getAlarm()).toBeNull();
+    expect(await state.storage.getAlarm()).toBeGreaterThan(Date.now() + 23 * 60 * 60_000);
 
     await post(do_, "/operator", { text: "human here" });
     const before = Date.now();

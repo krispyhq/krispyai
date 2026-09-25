@@ -27,8 +27,15 @@
 // Silence hand-back: a visitor message while pending/operator-owned arms the DO alarm
 // (HANDBACK_SILENCE_MINUTES, default 5). An operator reply disarms it. If it fires,
 // the session hands back to the AI so a returning visitor never faces a muted bot.
-import type { Env, HandoffState, OperatorAction, ServerEvent, SessionMessage } from "./types";
-import { DO_INTERNAL_HEADER, doInternalSecret, readTenantConfig } from "./store";
+import type {
+  Env,
+  HandoffState,
+  LeadSubmission,
+  OperatorAction,
+  ServerEvent,
+  SessionMessage,
+} from "./types";
+import { DO_INTERNAL_HEADER, checkLeadRate, doInternalSecret, readTenantConfig } from "./store";
 import { proposeKbSuggestion } from "./learn";
 import {
   currentCall,
@@ -67,6 +74,7 @@ export function broadcast(sockets: Sendable[], event: ServerEvent): number {
 // ponytail: 20-msg ceiling; add pagination only when a thread needs scroll-back
 export const RING_MAX = 20;
 export type RingMsg = SessionMessage;
+type StoredLead = LeadSubmission & { history: { role: string; content: string }[] };
 
 /** The first frame after every WS reconnect carries the durable ring snapshot.
  * Clients may have been backgrounded while a reply arrived, so the live event
@@ -84,6 +92,7 @@ export function readyEvent(handoffState: HandoffState, messages: RingMsg[]): Ser
 // Operator silence after a visitor message on a handed-off session → hand back to
 // the AI. Minutes are env-tunable (HANDBACK_SILENCE_MINUTES); this is the default.
 export const HANDBACK_SILENCE_MINUTES = 5;
+export const AUTO_ARCHIVE_HOURS = 24;
 // Bot-styled ring line appended on a silence hand-back (operator thread record).
 export const HANDBACK_NOTE = "No reply from the team for a while — the AI has resumed this chat.";
 
@@ -119,6 +128,22 @@ export class SessionDO {
 
   private async ring(): Promise<RingMsg[]> {
     return (await this.state.storage.get<RingMsg[]>("log")) ?? [];
+  }
+
+  private async threadMessages(): Promise<SessionMessage[]> {
+    const [ring, leads] = await Promise.all([
+      this.ring(),
+      this.state.storage.list<StoredLead>({ prefix: "lead:record:" }),
+    ]);
+    return [
+      ...ring,
+      ...[...leads.values()].map(({ history: _history, ...lead }) => ({
+        role: "visitor" as const,
+        text: `Submitted ${lead.title}`,
+        ts: lead.ts,
+        lead,
+      })),
+    ].sort((a, b) => a.ts - b.ts);
   }
 
   private async callState(): Promise<CallState | null> {
@@ -158,13 +183,14 @@ export class SessionDO {
     const call = await this.state.storage.get<CallState>("call");
     const handoffDue = await this.state.storage.get<number>("handoffDueAt");
     const cleanupDue = await this.state.storage.get<number>("callCleanupDueAt");
+    const archiveDue = await this.state.storage.get<number>("archiveDueAt");
     const callDue =
       call?.status === "ringing"
         ? call.expiresAt
         : call?.status === "accepted"
           ? (call.acceptedAt ?? call.createdAt) + CALL_MAX_DURATION_MS
           : 0;
-    const due = [handoffDue, callDue, cleanupDue].filter(
+    const due = [handoffDue, callDue, cleanupDue, archiveDue].filter(
       (n): n is number => typeof n === "number" && n > 0,
     );
     if (due.length) await this.state.storage.setAlarm(Math.min(...due));
@@ -191,10 +217,48 @@ export class SessionDO {
     return (Number.isFinite(mins) && mins > 0 ? mins : HANDBACK_SILENCE_MINUTES) * 60_000;
   }
 
+  private archiveMs(): number {
+    const hours = Number(this.env.AUTO_ARCHIVE_HOURS);
+    return (Number.isFinite(hours) && hours > 0 ? hours : AUTO_ARCHIVE_HOURS) * 60 * 60_000;
+  }
+
+  private async hasHumanInquiry(): Promise<boolean> {
+    if ((await this.state.storage.get<boolean>("humanInquiry")) === true) return true;
+    if ((await this.state.storage.get<number>("visitorCallRequestAt")) ?? 0) return true;
+    const log = await this.ring();
+    return log.some((message) => message.role === "operator" || message.text === HANDBACK_NOTE);
+  }
+
+  private async markHumanInquiry(): Promise<void> {
+    await this.state.storage.put("humanInquiry", true);
+    await this.state.storage.put("archiveDueAt", 0);
+    await this.scheduleAlarm();
+  }
+
+  /** The inbox read upgrades old bot-only sessions that predate archive alarms.
+   * Never infer that an old human request was answered merely because handback
+   * returned ownership to AI. */
+  private async archiveIfIdle(now: number): Promise<void> {
+    if ((await this.resolved()) || (await this.handoffState()) !== "ai") return;
+    if (await this.hasHumanInquiry()) return;
+    const log = await this.ring();
+    const lastVisitor = [...log].reverse().find((message) => message.role === "visitor");
+    if (!lastVisitor || !Number.isFinite(lastVisitor.ts)) return;
+    const storedDue = await this.state.storage.get<number>("archiveDueAt");
+    const due = storedDue && storedDue > 0 ? storedDue : lastVisitor.ts + this.archiveMs();
+    if (due > now) return;
+    const call = await this.callState();
+    if (call?.status === "ringing" || call?.status === "accepted") return;
+    await this.state.storage.put("resolved", true);
+    await this.state.storage.put("archiveDueAt", 0);
+    await this.scheduleAlarm();
+  }
+
   /** Hand the session back to the AI: clear pending/operator state, disarm the silence alarm,
    * broadcast {type:"resume"} to every socket (widget un-mutes its framing; the
    * Buttr thread sees the state flip). No-op when the bot already has the session. */
   private async handBack(opts: { note?: string } = {}): Promise<void> {
+    if ((await this.handoffState()) !== "ai") await this.markHumanInquiry();
     await this.state.storage.put("handoffDueAt", 0);
     await this.scheduleAlarm();
     // Reset the handoff-announce guard so a genuinely new future escalation can alert
@@ -253,6 +317,20 @@ export class SessionDO {
     const cleanupDue = await this.state.storage.get<number>("callCleanupDueAt");
     const cleanupRoom = await this.state.storage.get<string>("callCleanupRoom");
     if (cleanupDue && cleanupDue <= now && cleanupRoom) await this.closeEndedRoom(cleanupRoom);
+    const archiveDue = await this.state.storage.get<number>("archiveDueAt");
+    if (archiveDue && archiveDue <= now) {
+      const call = await this.callState();
+      const callActive = call?.status === "ringing" || call?.status === "accepted";
+      if (
+        !(await this.resolved()) &&
+        (await this.handoffState()) === "ai" &&
+        !(await this.hasHumanInquiry()) &&
+        !callActive
+      ) {
+        await this.state.storage.put("resolved", true);
+      }
+      await this.state.storage.put("archiveDueAt", 0);
+    }
     await this.scheduleAlarm();
   }
 
@@ -307,6 +385,128 @@ export class SessionDO {
       const registered = await this.state.storage.get<string>("callVisitorSecret");
       if (!registered) await this.state.storage.put("callVisitorSecret", body.secret);
       return Response.json({ ok: !registered || registered === body.secret });
+    }
+
+    if (request.method === "POST" && url.pathname.endsWith("/lead/delivered")) {
+      const body = (await request.json().catch(() => null)) as { id?: string } | null;
+      if (!body?.id || !(await this.state.storage.get(`lead:record:${body.id}`)))
+        return Response.json({ error: "lead_not_found" }, { status: 404 });
+      await this.state.storage.put(`lead:delivered:${body.id}`, true);
+      return Response.json({ ok: true });
+    }
+
+    // Old cached widgets do not carry a visitor capability. After the Worker
+    // validates a configured form and confirms email delivery, retain only an
+    // inquiry marker here; never copy untrusted form values into a thread.
+    if (request.method === "POST" && url.pathname.endsWith("/lead/legacy-marker")) {
+      const body = (await request.json().catch(() => null)) as {
+        tenantId?: string;
+        sessionId?: string;
+        siteId?: string;
+      } | null;
+      if (!body?.tenantId || !body.sessionId || !body.siteId)
+        return Response.json({ error: "invalid_session" }, { status: 400 });
+      const [tenantId, sessionId, siteId] = await Promise.all([
+        this.state.storage.get<string>("tenantId"),
+        this.state.storage.get<string>("sessionId"),
+        this.state.storage.get<string>("siteId"),
+      ]);
+      if (
+        (tenantId && tenantId !== body.tenantId) ||
+        (sessionId && sessionId !== body.sessionId) ||
+        (siteId && siteId !== body.siteId)
+      )
+        return Response.json({ error: "session_mismatch" }, { status: 403 });
+      if (!tenantId) await this.state.storage.put("tenantId", body.tenantId);
+      if (!sessionId) await this.state.storage.put("sessionId", body.sessionId);
+      if (!siteId) await this.state.storage.put("siteId", body.siteId);
+      await this.markHumanInquiry();
+      if (await this.resolved()) await this.state.storage.put("resolved", false);
+      return Response.json({ ok: true });
+    }
+
+    if (request.method === "POST" && url.pathname.endsWith("/lead")) {
+      const body = (await request.json().catch(() => null)) as
+        | (Omit<LeadSubmission, "ts"> & { visitorSecret?: string; history?: StoredLead["history"] })
+        | null;
+      if (
+        !body ||
+        !/^[A-Za-z0-9_-]{8,80}$/.test(body.id || "") ||
+        !/^[A-Za-z0-9_-]{43}$/.test(body.visitorSecret || "") ||
+        !body.tenantId ||
+        !body.sessionId ||
+        !body.formId ||
+        typeof body.title !== "string" ||
+        body.title.length > 200 ||
+        !Array.isArray(body.fields) ||
+        body.fields.length > 20 ||
+        body.fields.some(
+          (field) =>
+            !field ||
+            typeof field.name !== "string" ||
+            field.name.length > 100 ||
+            typeof field.label !== "string" ||
+            field.label.length > 100 ||
+            typeof field.value !== "string" ||
+            field.value.length > 2000,
+        )
+      )
+        return Response.json({ error: "invalid_lead" }, { status: 400 });
+      const registered = await this.state.storage.get<string>("callVisitorSecret");
+      if (registered && registered !== body.visitorSecret)
+        return Response.json({ error: "visitor_auth_required" }, { status: 403 });
+      const storedTenant = await this.state.storage.get<string>("tenantId");
+      const storedSession = await this.state.storage.get<string>("sessionId");
+      const storedSite = await this.state.storage.get<string>("siteId");
+      if (
+        (storedTenant && storedTenant !== body.tenantId) ||
+        (storedSession && storedSession !== body.sessionId) ||
+        (storedTenant && (storedSite ?? "default") !== body.siteId)
+      )
+        return Response.json({ error: "session_mismatch" }, { status: 403 });
+      // A lead-only session can establish its visitor capability on first submit.
+      // Once registered, a different browser cannot add fields to this conversation.
+      if (!registered) await this.state.storage.put("callVisitorSecret", body.visitorSecret);
+      if (!storedTenant) await this.state.storage.put("tenantId", body.tenantId);
+      if (!storedSession) await this.state.storage.put("sessionId", body.sessionId);
+      if (!storedSite) await this.state.storage.put("siteId", body.siteId);
+      const key = `lead:record:${body.id}`;
+      const existing = await this.state.storage.get<StoredLead>(key);
+      const input = {
+        id: body.id,
+        tenantId: body.tenantId,
+        sessionId: body.sessionId,
+        siteId: body.siteId,
+        formId: body.formId,
+        title: body.title,
+        fields: body.fields,
+      };
+      if (existing) {
+        const { ts: _ts, history: _history, ...previous } = existing;
+        if (JSON.stringify(previous) !== JSON.stringify(input))
+          return Response.json({ error: "submission_mismatch" }, { status: 409 });
+        await this.markHumanInquiry();
+        return Response.json({
+          lead: existing,
+          created: false,
+          delivered: (await this.state.storage.get<boolean>(`lead:delivered:${body.id}`)) === true,
+        });
+      }
+      if (!(await checkLeadRate(this.env, body.tenantId, body.sessionId)))
+        return Response.json({ error: "rate_limited" }, { status: 429 });
+      const lead: StoredLead = { ...input, history: body.history ?? [], ts: Date.now() };
+      await this.state.storage.put(key, lead);
+      await this.markHumanInquiry();
+      if (await this.resolved()) await this.state.storage.put("resolved", false);
+      const { history: _history, ...visibleLead } = lead;
+      const message: SessionMessage = {
+        role: "visitor",
+        text: `Submitted ${lead.title}`,
+        ts: lead.ts,
+        lead: visibleLead,
+      };
+      broadcast(this.state.getWebSockets("operator"), { type: "lead", message });
+      return Response.json({ lead, created: true, delivered: false });
     }
 
     if (request.method === "POST" && url.pathname.endsWith("/call/grant")) {
@@ -394,6 +594,7 @@ export class SessionDO {
           await this.state.storage.put("call", result.call);
           await this.state.storage.put("callNonce", crypto.randomUUID());
           if (actor === "visitor") await this.state.storage.put("visitorCallRequestAt", Date.now());
+          await this.markHumanInquiry();
           await this.sendCall(result.call);
           await this.scheduleAlarm();
         }
@@ -470,10 +671,16 @@ export class SessionDO {
     // One inbox-row read: handoff flag + the ring tail — halves the per-session
     // subrequests of the /api/operator/handoffs KV scan vs /state + /log.
     if (request.method === "GET" && url.pathname.endsWith("/summary")) {
+      if (
+        url.searchParams.get("knownHandoff") === "1" &&
+        (await this.state.storage.get<boolean>("humanInquiry")) !== true
+      )
+        await this.markHumanInquiry();
+      await this.archiveIfIdle(Date.now());
       const [handoffState, resolved, log] = await Promise.all([
         this.handoffState(),
         this.resolved(),
-        this.ring(),
+        this.threadMessages(),
       ]);
       const last = log[log.length - 1];
       return Response.json({
@@ -494,7 +701,7 @@ export class SessionDO {
     }
 
     if (request.method === "GET" && url.pathname.endsWith("/log")) {
-      return Response.json({ messages: await this.ring() });
+      return Response.json({ messages: await this.threadMessages() });
     }
 
     if (request.method === "POST" && url.pathname.endsWith("/log")) {
@@ -521,6 +728,10 @@ export class SessionDO {
       // the bot answers, and the visitor can re-request a human normally.
       if (!seed && appended.some((m) => m.role === "visitor")) {
         if (await this.resolved()) await this.state.storage.put("resolved", false);
+        if ((await this.handoffState()) === "ai" && !(await this.hasHumanInquiry())) {
+          await this.state.storage.put("archiveDueAt", Date.now() + this.archiveMs());
+          await this.scheduleAlarm();
+        }
         // Pending/operator + visitor waiting → arm (or reset) silence hand-back.
         // Any operator reply disarms it (see /operator).
         if ((await this.handoffState()) !== "ai") {
@@ -546,6 +757,7 @@ export class SessionDO {
       const { text } = (await request.json()) as { text: string };
       const ts = Date.now();
       await this.setHandoffState("operator");
+      await this.markHumanInquiry();
       await this.state.storage.put("handoffDueAt", 0); // operator replied
       await this.scheduleAlarm();
       await this.appendRing([{ role: "operator", text, ts }]);
@@ -563,6 +775,7 @@ export class SessionDO {
       const text = action.kind === "form" ? action.form.title : action.connector.label;
       const ts = Date.now();
       await this.setHandoffState("operator");
+      await this.markHumanInquiry();
       await this.state.storage.put("handoffDueAt", 0);
       await this.scheduleAlarm();
       await this.appendRing([{ role: "operator", text, ts, action }]);
@@ -590,11 +803,18 @@ export class SessionDO {
       const body = (await request.json().catch(() => null)) as { resolved?: boolean } | null;
       const next = typeof body?.resolved === "boolean" ? body.resolved : !(await this.resolved());
       await this.state.storage.put("resolved", next);
-      if (next) await this.handBack();
+      if (next) {
+        await this.state.storage.put("archiveDueAt", 0);
+        await this.handBack();
+      } else if (!(await this.hasHumanInquiry())) {
+        await this.state.storage.put("archiveDueAt", Date.now() + this.archiveMs());
+      }
+      await this.scheduleAlarm();
       return Response.json({ ok: true, resolved: next });
     }
 
     if (request.method === "POST" && url.pathname.endsWith("/handoff")) {
+      await this.markHumanInquiry();
       // Idempotency guard: a jailbroken bot can emit [!HANDOFF] on every turn. The
       // widget-facing broadcast is harmless to repeat, but the Worker's LOUD side of a
       // handoff (operator @mention + push) must fire ONCE per escalation, not per turn.

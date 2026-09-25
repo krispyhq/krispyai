@@ -12,6 +12,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Changed
 
+- The visitor call card now reports a microphone or connection failure after
+  Join instead of silently returning to the Join button.
 - Lead emails now use Krispy's readable branded layout and include a plain-text
   version. The optional configured Buttr inbox action opens the relevant session.
 - Resend lead delivery can carry an explicit idempotency key for safe retries.
@@ -36,6 +38,15 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Fixed
 
+- Submitted lead forms now save their labeled phone and note fields in the operator
+  thread before showing success. These records survive chat-ring eviction, remain
+  visible if email delivery is delayed, and keep callback inquiries out of the
+  automatic bot-only archive path. Older cached widgets mark a validated,
+  email-accepted form for human review without storing its unauthenticated fields.
+
+- Bot-only conversations now archive after 24 hours of visitor inactivity (configurable
+  with `AUTO_ARCHIVE_HOURS`), including eligible older sessions on inbox read. A new
+  visitor turn reopens them; human requests and calls stay visible until manually archived.
 - Operator reply drafts now retain tenant-approved or validated knowledge links
   with sentence punctuation, including links beyond the model prompt slice;
   changed links remain filtered.

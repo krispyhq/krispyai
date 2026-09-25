@@ -35,8 +35,9 @@ fires, just without a mention. See `docs → connect Telegram`.
 
 Configured lead forms can forward the visitor's recent chat to an email connector.
 Set `RESEND_API_KEY` and a verified `LEAD_EMAIL_FROM` through Infisical; a failed
-email delivery returns `502 delivery_failed` so the widget keeps the form ready
-for another attempt.
+email delivery on an older cached widget returns `502 delivery_failed` so it
+keeps the form ready for another attempt. Current widgets retain the lead record
+and show a delayed-email notice instead.
 The lead email includes labeled contact details, the recent conversation, a
 plain-text part, and an optional **Open in Buttr** action. Configure the
 Worker-side `BUTTR_INBOX_URL` to an HTTPS operator inbox URL (localhost HTTP is
@@ -47,6 +48,22 @@ the details and transcript without the action.
 The authenticated operator action routes list configured forms and Instagram CTAs
 for a session's recorded site, then send a selected ID as a durable typed card.
 The visitor receives it over the session WebSocket and sees it again after reconnecting.
+Configured form submissions now carry a stable `submissionId` and the visitor's
+session capability. The session Durable Object saves labeled values separately from
+the short chat ring, broadcasts the record only to operator sockets, and includes it
+in the operator thread and inbox preview. A form-only session registers its capability
+on first submit; later submissions must match it. The widget shows success only after
+the record is durable and indexed. If email delivery is delayed, the visitor sees a
+saved-inquiry notice while the record stays in Buttr; retries reuse the submission ID
+and Resend idempotency key. Older cached widgets keep their legacy email path;
+after a configured form's email is accepted, the Worker marks its session for
+human review without copying unverified form values into the operator thread.
+Bot-only sessions archive after 24 hours without a new visitor message by default;
+`AUTO_ARCHIVE_HOURS` configures that window. A new live visitor message reopens the
+session. Handoffs, human replies, and call requests remain available for manual
+resolution even if ownership has returned to AI. An inbox read archives eligible
+older bot-only sessions that predate the timer; it leaves uncertain legacy human
+requests active.
 Reply suggestions remain editable and unsent. Checkout links in a suggestion must
 match the tenant's configured sources or validated knowledge gateway context;
 ordinary sentence punctuation after an approved URL does not hide the suggestion.

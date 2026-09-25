@@ -10,16 +10,16 @@ one Cloudflare Worker hosts all of these plus the `SessionDO`. CORS allow-origin
 
 ## public routes
 
-| method | path                             | body / query → response                                                                                                                                                                        |
-| ------ | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST` | `/api/chat`                      | `{ sessionId, message, tenantId?, history? }` → `{ reply, handoff, handoffState, handedOff, degraded?, formId?, form? }`                                                                       |
-| `POST` | `/api/call`                      | Visitor call control with registered `visitorSecret`: `status`, `invite`, `accept`, `decline`, `cancel`, `end`, `grant`. Status includes `availableToRequest`; invite returns a private nonce. |
-| `POST` | `/api/contact`                   | `{ sessionId, tenantId?, name?, contact?, message? }` → `{ ok: true }` — legacy contact-capture shim (maps onto the lead fan-out)                                                              |
-| `POST` | `/api/lead`                      | `{ tenantId?, sessionId, formId?, values, history }` → `{ ok: true }` after a configured form's email delivery is accepted; `502 delivery_failed` keeps the widget form available to retry     |
-| `GET`  | `/api/session/:id/ws?t=<tenant>` | WebSocket upgrade → `SessionDO`. `426` if not an upgrade. the visitor's live channel                                                                                                           |
-| `GET`  | `/api/widget/config?t=<tenant>`  | → `{ capabilities: { attachments }, theme, ctas, forms, script, popups }` — the **public, secret-free** widget projection (whitelist only; no `persona` or form delivery routing)              |
-| `GET`  | `/api/usage?t=<tenant>`          | → `{ tenantId, usage: { ai, handoff, tokens }, plan, entitled, status, limits, withinLimits }`                                                                                                 |
-| `GET`  | `/health`                        | → `{ status: "ok", service: "edge" }`                                                                                                                                                          |
+| method | path                             | body / query → response                                                                                                                                                                                                                      |
+| ------ | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `POST` | `/api/chat`                      | `{ sessionId, message, tenantId?, history? }` → `{ reply, handoff, handoffState, handedOff, degraded?, formId?, form? }`                                                                                                                     |
+| `POST` | `/api/call`                      | Visitor call control with registered `visitorSecret`: `status`, `invite`, `accept`, `decline`, `cancel`, `end`, `grant`. Status includes `availableToRequest`; invite returns a private nonce.                                               |
+| `POST` | `/api/contact`                   | `{ sessionId, tenantId?, name?, contact?, message? }` → `{ ok: true }` — legacy contact-capture shim (maps onto the lead fan-out)                                                                                                            |
+| `POST` | `/api/lead`                      | Configured forms send `{ tenantId?, sessionId, siteId?, formId, values, history, submissionId, visitorSecret }`. A matching visitor capability records labeled fields in the session before `{ ok: true, recorded: true, emailStatus: "sent" | "none" | "delayed" }`; email delay does not discard the operator record. Older clients without both new fields retain legacy email delivery. |
+| `GET`  | `/api/session/:id/ws?t=<tenant>` | WebSocket upgrade → `SessionDO`. `426` if not an upgrade. the visitor's live channel                                                                                                                                                         |
+| `GET`  | `/api/widget/config?t=<tenant>`  | → `{ capabilities: { attachments }, theme, ctas, forms, script, popups }` — the **public, secret-free** widget projection (whitelist only; no `persona` or form delivery routing)                                                            |
+| `GET`  | `/api/usage?t=<tenant>`          | → `{ tenantId, usage: { ai, handoff, tokens }, plan, entitled, status, limits, withinLimits }`                                                                                                                                               |
+| `GET`  | `/health`                        | → `{ status: "ok", service: "edge" }`                                                                                                                                                                                                        |
 
 ### `POST /api/chat` gate
 
@@ -95,6 +95,12 @@ unresolved AI-only conversations indexed under `conversation:<tenant>:<session>`
 keep their separate legacy `session:` keys, so
 enabling Telegram later cannot overwrite discovery state. The inbox unions and de-duplicates both
 prefixes so conversations created before this index remain visible.
+`includeResolved: true` includes archived rows. Bot-only conversations archive after
+24 hours without a visitor turn by default (`AUTO_ARCHIVE_HOURS`); an inbox read
+also archives eligible older bot-only conversations that predate the timer. The next
+live visitor turn reopens them. Known handoffs, operator messages, and call requests
+stay available for manual archive even after the AI resumes; a legacy conversation
+without enough evidence stays active rather than being archived speculatively.
 
 Known business questions stay with the AI. An explicit human request enters `pending` immediately
 without requiring a name, email, phone, or order reference. Only a business-configured form can

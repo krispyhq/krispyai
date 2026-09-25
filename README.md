@@ -59,6 +59,9 @@ visitor ──▶ AI answers (Cloudflare Workers AI) ──▶ visitor
 - Every message mirrors to **one Telegram forum topic per visitor** on your phone.
 - The Buttr operator inbox can list every unresolved conversation, including AI-only
   chats; phone notifications remain reserved for human handoffs.
+- Bot-only conversations archive after 24 hours without a new visitor message
+  (`AUTO_ARCHIVE_HOURS` changes the window). A new visitor message reopens them.
+  Human requests and calls remain visible until a team member archives them.
 - You reply from Telegram → it's pushed into the browser over a WebSocket, **live**.
 - The bot detects it's a human job and steps back immediately. Messages sent while you are
   on the way still reach the same topic; the bot stays quiet until you resolve the handoff.
@@ -260,6 +263,11 @@ On coarse-pointer devices, the mute and close controls expand to 44px touch targ
 Audio calls are opt-in through tenant `callSettings`. A team member can invite a visitor, or the visitor can request a call after human handoff when visitor requests are enabled. A visitor request alerts the operator app and waits for a team member to accept; it does not activate the microphone. The visitor explicitly joins after acceptance. The call card shows whether the team member has joined, provides Mute/Unmute and End call controls, and ends the call when the page goes into the background or closes. Closing the chat panel alone leaves the call active.
 
 Details: [`packages/widget/README.md`](./packages/widget/README.md).
+
+If joining cannot start the microphone or the audio connection fails, the call
+card returns to **Join call** with a retry message. A hosting page must permit
+microphone access for its own origin in `Permissions-Policy`; the browser still
+asks the visitor for consent on Join.
 
 ## Documentation
 
