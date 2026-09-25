@@ -49,6 +49,8 @@ function harness(
                 put: async (key: string, value: unknown) => {
                   storage.set(key, value);
                 },
+                list: async ({ prefix }: { prefix?: string } = {}) =>
+                  new Map([...storage].filter(([key]) => !prefix || key.startsWith(prefix))),
                 setAlarm: async (when: number | Date) => {
                   storage.set("__alarm", when instanceof Date ? when.getTime() : when);
                 },

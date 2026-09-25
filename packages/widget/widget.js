@@ -134,17 +134,22 @@
     var callKey = "krispy_call_cap_" + cfg.tenant + "_" + sessionId;
     try {
       visitorSecret = localStorage.getItem(callKey);
-      if (!visitorSecret || !/^[A-Za-z0-9_-]{43}$/.test(visitorSecret)) {
-        var secretBytes = new Uint8Array(32);
-        crypto.getRandomValues(secretBytes);
-        visitorSecret = btoa(String.fromCharCode.apply(null, secretBytes))
-          .replace(/\+/g, "-")
-          .replace(/\//g, "_")
-          .replace(/=+$/, "");
-        localStorage.setItem(callKey, visitorSecret);
-      }
     } catch {
-      visitorSecret = null;
+      // Storage can be blocked while WebCrypto still works. Keep the capability
+      // in memory for this page so a form-only visitor can submit safely.
+    }
+    if (!visitorSecret || !/^[A-Za-z0-9_-]{43}$/.test(visitorSecret)) {
+      var secretBytes = new Uint8Array(32);
+      crypto.getRandomValues(secretBytes);
+      visitorSecret = btoa(String.fromCharCode.apply(null, secretBytes))
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
+      try {
+        localStorage.setItem(callKey, visitorSecret);
+      } catch {
+        /* in-memory capability */
+      }
     }
   }
 
@@ -2338,6 +2343,25 @@
     formTimers = [];
     var wrap = document.createElement("form");
     wrap.className = "cap";
+    var submissionKey = "krispy_lead_" + cfg.tenant + "_" + sessionId + "_" + form.id;
+    var submissionId = null;
+    try {
+      submissionId = sessionStorage.getItem(submissionKey);
+    } catch {
+      /* storage blocked */
+    }
+    if (!submissionId && crypto && crypto.getRandomValues) {
+      submissionId = crypto.randomUUID
+        ? crypto.randomUUID()
+        : Array.from(crypto.getRandomValues(new Uint8Array(16)), function (byte) {
+            return byte.toString(16).padStart(2, "0");
+          }).join("");
+      try {
+        sessionStorage.setItem(submissionKey, submissionId);
+      } catch {
+        /* in-memory id */
+      }
+    }
 
     if (form.title) {
       var h = document.createElement("div");
@@ -2413,15 +2437,28 @@
           formId: form.id,
           values: values,
           history: history.slice(-10),
+          submissionId: submissionId && visitorSecret ? submissionId : undefined,
+          visitorSecret: submissionId && visitorSecret ? visitorSecret : undefined,
           source: openSource || undefined, // popup origin → lead meta (§3.5)
         }),
       })
         .then(function (response) {
-          if (!response.ok) throw new Error("Lead delivery failed");
-          // Keep a compact record in the transcript only after delivery succeeds.
-          wrap.textContent = form.successText || "Thanks — we'll be in touch.";
-          wrap.classList.add("done");
-          formOpen = false;
+          return response.json().then(function (result) {
+            if (!response.ok) throw new Error(result.error || "Lead save failed");
+            // The server acknowledges only after the operator record is durable.
+            // Email is secondary; a delayed notification is shown honestly.
+            wrap.textContent =
+              result.emailStatus === "delayed"
+                ? "Saved for the team. Email notification is delayed."
+                : form.successText || "Thanks — we'll be in touch.";
+            wrap.classList.add("done");
+            formOpen = false;
+            try {
+              sessionStorage.removeItem(submissionKey);
+            } catch {
+              /* storage blocked */
+            }
+          });
         })
         .catch(function () {
           submit.disabled = false;

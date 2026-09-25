@@ -116,6 +116,8 @@ function fakeDOState(): DurableObjectState {
     storage: {
       get: async (k: string) => store.get(k),
       put: async (k: string, v: unknown) => void store.set(k, v),
+      list: async ({ prefix }: { prefix?: string } = {}) =>
+        new Map([...store].filter(([key]) => !prefix || key.startsWith(prefix))),
       setAlarm: async (t: number | Date) => void (alarm = typeof t === "number" ? t : t.getTime()),
       deleteAlarm: async () => void (alarm = null),
       getAlarm: async () => alarm,
@@ -1395,6 +1397,216 @@ describe("deliverLead fan-out", () => {
       globalThis.fetch = originalFetch;
     }
   });
+});
+
+test("form submit persists a typed operator record before success and retries email once", async () => {
+  const env = wireSessionNS(
+    fakeEnv({
+      TENANT_SYNC_SECRET: "test-operator-secret",
+      RESEND_API_KEY: "re_test",
+      LEAD_EMAIL_FROM: "leads@example.test",
+    }),
+  );
+  await mergeTenantConfig(env, "acme", {
+    forms: [
+      {
+        id: "callback",
+        title: "Request a callback",
+        fields: [
+          { name: "phone", label: "Callback number", type: "tel", required: true },
+          { name: "note", label: "What should we discuss?", type: "textarea" },
+        ],
+        connectorIds: ["owner"],
+      },
+    ],
+    connectors: [{ id: "owner", type: "email", toAddress: "owner@example.test" }],
+  });
+  const sessionId = "qa-form-1";
+  const visitorSecret = "v".repeat(43);
+  const stub = env.SESSION.get(env.SESSION.idFromName(`acme:${sessionId}`));
+  const registered = await stub.fetch("https://do/call/visitor/register", {
+    method: "POST",
+    headers: { [DO_INTERNAL_HEADER]: doInternalSecret(env) },
+    body: JSON.stringify({ secret: visitorSecret }),
+  });
+  expect(registered.status).toBe(200);
+  const other = env.SESSION.get(env.SESSION.idFromName("acme:someone-else"));
+  await other.fetch("https://do/call/visitor/register", {
+    method: "POST",
+    headers: { [DO_INTERNAL_HEADER]: doInternalSecret(env) },
+    body: JSON.stringify({ secret: "o".repeat(43) }),
+  });
+  const body = {
+    tenantId: "acme",
+    sessionId,
+    formId: "callback",
+    submissionId: "qa-submission-1",
+    visitorSecret,
+    values: { phone: "+972 50 123 4567", note: "Please call after 5." },
+    history: [],
+  };
+  const submit = (value: object) =>
+    worker.fetch(
+      new Request("https://edge.test/api/lead", {
+        method: "POST",
+        body: JSON.stringify(value),
+      }),
+      env,
+    );
+  const operator = (path: string, value: object) =>
+    worker.fetch(
+      new Request(`https://edge.test${path}`, {
+        method: "POST",
+        headers: { "x-tenant-sync-secret": "test-operator-secret" },
+        body: JSON.stringify(value),
+      }),
+      env,
+    );
+  const originalFetch = globalThis.fetch;
+  const emails: RequestInit[] = [];
+  let emailUnavailable = false;
+  try {
+    globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      emails.push(init ?? {});
+      return emailUnavailable
+        ? new Response("unavailable", { status: 503 })
+        : Response.json({ id: "accepted-email" });
+    }) as typeof fetch;
+    expect((await submit({ ...body, visitorSecret: "x".repeat(43) })).status).toBe(403);
+    expect((await submit({ ...body, sessionId: "someone-else" })).status).toBe(403);
+    expect((await submit(body)).status).toBe(200);
+    expect((await submit(body)).status).toBe(200);
+    expect((await submit({ ...body, values: { ...body.values, phone: "changed" } })).status).toBe(
+      409,
+    );
+    expect(emails).toHaveLength(1);
+    expect(new Headers(emails[0]!.headers).get("Idempotency-Key")).toBeTruthy();
+
+    const thread = await operator("/api/operator/thread", { tenantId: "acme", sessionId });
+    expect(thread.status).toBe(200);
+    const { messages } = (await thread.json()) as { messages: { lead?: unknown }[] };
+    expect(messages.filter((message) => message.lead)).toHaveLength(1);
+    expect(messages.find((message) => message.lead)?.lead).toMatchObject({
+      id: body.submissionId,
+      formId: "callback",
+      title: "Request a callback",
+      fields: [
+        { name: "phone", label: "Callback number", value: body.values.phone },
+        { name: "note", label: "What should we discuss?", value: body.values.note },
+      ],
+    });
+    const inbox = await operator("/api/operator/handoffs", {
+      tenantId: "acme",
+      includeActive: true,
+    });
+    expect(
+      ((await inbox.json()) as { conversations: { sessionId: string }[] }).conversations,
+    ).toContainEqual(expect.objectContaining({ sessionId }));
+
+    emailUnavailable = true;
+    const delayedBody = { ...body, submissionId: "qa-submission-2" };
+    const delayed = await submit(delayedBody);
+    expect(delayed.status).toBe(200);
+    expect(await delayed.json()).toMatchObject({
+      ok: true,
+      recorded: true,
+      emailStatus: "delayed",
+    });
+    const afterDelay = await operator("/api/operator/thread", { tenantId: "acme", sessionId });
+    expect(
+      ((await afterDelay.json()) as { messages: { lead?: unknown }[] }).messages.filter(
+        (m) => m.lead,
+      ),
+    ).toHaveLength(2);
+    emailUnavailable = false;
+    expect((await submit(delayedBody)).status).toBe(200);
+    expect((await submit(delayedBody)).status).toBe(200);
+    expect(emails).toHaveLength(3);
+    expect(new Headers(emails[1]!.headers).get("Idempotency-Key")).toBe(
+      new Headers(emails[2]!.headers).get("Idempotency-Key"),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("lead-only receipt survives chat-ring eviction and is visible only to operator sockets", async () => {
+  const env = fakeEnv();
+  const state = fakeDOState();
+  const writes = new Map<string, unknown>();
+  const put = state.storage.put.bind(state.storage);
+  state.storage.put = async (key: string, value: unknown) => {
+    writes.set(key, value);
+    await put(key, value);
+  };
+  const operatorFrames: string[] = [];
+  const visitorFrames: string[] = [];
+  Object.defineProperty(state, "getWebSockets", {
+    value: (tag?: string) =>
+      tag === "operator"
+        ? [{ send: (frame: string) => operatorFrames.push(frame) }]
+        : tag === "call-visitor"
+          ? [{ send: (frame: string) => visitorFrames.push(frame) }]
+          : [],
+  });
+  const do_ = new SessionDO(state, env);
+  const headers = { [DO_INTERNAL_HEADER]: doInternalSecret(env) };
+  const receipt = await do_.fetch(
+    new Request("https://do/lead", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        id: "lead-only-1",
+        tenantId: "acme",
+        sessionId: "lead-only-session",
+        siteId: "default",
+        formId: "callback",
+        title: "Request a callback",
+        fields: [{ name: "phone", label: "Callback number", value: "+972 50 123 4567" }],
+        history: [],
+        visitorSecret: "v".repeat(43),
+      }),
+    }),
+  );
+  expect(receipt.status).toBe(200);
+  expect(writes.get("humanInquiry")).toBe(true);
+  expect(writes.get("archiveDueAt")).toBe(0);
+  expect(operatorFrames).toHaveLength(1);
+  expect(JSON.parse(operatorFrames[0]!)).toMatchObject({
+    type: "lead",
+    message: { lead: { fields: [{ label: "Callback number" }] } },
+  });
+  expect(visitorFrames).toHaveLength(0);
+  const wrongVisitor = await do_.fetch(
+    new Request("https://do/lead", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        id: "lead-only-2",
+        tenantId: "acme",
+        sessionId: "lead-only-session",
+        siteId: "default",
+        formId: "callback",
+        title: "Request a callback",
+        fields: [],
+        history: [],
+        visitorSecret: "x".repeat(43),
+      }),
+    }),
+  );
+  expect(wrongVisitor.status).toBe(403);
+  for (let i = 0; i < RING_MAX + 5; i++) {
+    await do_.fetch(
+      new Request("https://do/log", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ messages: [{ role: "visitor", text: `later-${i}` }] }),
+      }),
+    );
+  }
+  const thread = await do_.fetch(new Request("https://do/log", { headers }));
+  const { messages } = (await thread.json()) as { messages: { lead?: { id: string } }[] };
+  expect(messages.filter((message) => message.lead?.id === "lead-only-1")).toHaveLength(1);
 });
 
 // ── lead rate limit (anti-spam / cost on the unauth lead routes) ─────────────

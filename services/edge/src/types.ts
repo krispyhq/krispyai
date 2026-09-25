@@ -290,6 +290,19 @@ export interface SessionMessage {
   text: string;
   ts: number;
   action?: OperatorAction;
+  lead?: LeadSubmission;
+}
+
+/** Form fields retained by the tenant-scoped session, separate from the short chat ring. */
+export interface LeadSubmission {
+  id: string;
+  tenantId: string;
+  sessionId: string;
+  siteId: string;
+  formId: string;
+  title: string;
+  fields: { name: string; label: string; value: string }[];
+  ts: number;
 }
 
 /** Message pushed over the DO WebSocket to the visitor's browser. */
@@ -304,6 +317,7 @@ export type ServerEvent =
     }
   | { type: "operator"; handoffState: "operator"; text: string; ts: number }
   | { type: "action"; handoffState: "operator"; text: string; ts: number; action: OperatorAction }
+  | { type: "lead"; message: SessionMessage }
   | { type: "handoff"; handoffState: "pending" | "operator" }
   /** The AI took the session back (operator resolved it, or went silent past the
    * HANDBACK_SILENCE_MINUTES alarm). Widget drops its "human joined" framing. */

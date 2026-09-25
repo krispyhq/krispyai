@@ -34,7 +34,7 @@ import { handleOperatorReplyDrafts } from "./reply-drafts";
 import { callRtcAvailable } from "./call-token";
 import { stampSeen, readSeen } from "./liveness";
 import { pushToApp } from "./push";
-import { renderLeadEmail, sendLeadEmail } from "./email";
+import { leadInboxUrl, renderLeadEmail, sendLeadEmail } from "./email";
 import type { Connector, Env, FormSpec, HandoffState, OperatorAction, TenantConfig } from "./types";
 import {
   getTenant,
@@ -916,26 +916,136 @@ interface LeadPayload {
   formId: string | null;
   values: Record<string, string>;
   history: { role: string; content: string }[];
+  submissionId?: string;
 }
 
 async function handleLead(request: Request, env: Env): Promise<Response> {
-  const b = (await request.json().catch(() => null)) as Partial<LeadPayload> | null;
+  const b = (await request.json().catch(() => null)) as
+    | (Partial<LeadPayload> & { visitorSecret?: string })
+    | null;
   if (!b?.sessionId) return json(env, { error: "sessionId required" }, 400);
   const tenantId = b.tenantId || DEFAULT_TENANT;
   const siteId = siteOr400(env, b.siteId);
   if (siteId instanceof Response) return siteId;
-  if (!(await checkLeadRate(env, tenantId, b.sessionId)))
-    return json(env, { error: "rate_limited" }, 429);
-  const delivered = await deliverLead(env, {
+  const lead = {
     tenantId,
     siteId,
     sessionId: b.sessionId,
     formId: b.formId ?? null,
     values: b.values || {},
     history: Array.isArray(b.history) ? b.history : [],
+  };
+  // Older cached widgets send neither capability nor id; retain their existing
+  // email path during rollout. New widgets send both so the submission is first
+  // recorded in this tenant's session DO and retries use one stable identity.
+  if (!b.submissionId && !b.visitorSecret) {
+    if (!(await checkLeadRate(env, tenantId, b.sessionId)))
+      return json(env, { error: "rate_limited" }, 429);
+    const delivered = await deliverLead(env, lead);
+    return delivered ? json(env, { ok: true }) : json(env, { error: "delivery_failed" }, 502);
+  }
+  if (
+    !b.submissionId ||
+    !/^[A-Za-z0-9_-]{8,80}$/.test(b.submissionId) ||
+    !b.visitorSecret ||
+    !/^[A-Za-z0-9_-]{43}$/.test(b.visitorSecret)
+  )
+    return json(env, { error: "invalid_submission_identity" }, 400);
+  const tenant = await getTenant(env, tenantId, siteId);
+  const form = tenant?.forms?.find((entry) => entry.id === b.formId);
+  if (!form) return json(env, { error: "form_not_found" }, 404);
+  const connectors = tenant?.connectors ?? [];
+  const selectedConnectors = form.connectorIds
+    ? connectors.filter((connector) => form.connectorIds!.includes(connector.id))
+    : connectors;
+  const hasEmailTarget =
+    selectedConnectors?.some((connector) => connector.type === "email" && connector.toAddress) ===
+    true;
+  if (!b.values || typeof b.values !== "object" || Array.isArray(b.values))
+    return json(env, { error: "invalid_form_values" }, 400);
+  const values = b.values;
+  if (
+    form.title.length > 200 ||
+    form.fields.length > 20 ||
+    form.fields.some((field) => {
+      const value = values[field.name];
+      return (
+        field.name.length > 100 ||
+        field.label.length > 100 ||
+        typeof value !== "string" ||
+        value.length > 2000 ||
+        (field.required && !value.trim())
+      );
+    })
+  )
+    return json(env, { error: "invalid_form_values" }, 400);
+  const fields = form.fields.map((field) => ({
+    name: field.name,
+    label: field.label,
+    value: values[field.name]!.trim(),
+  }));
+  const history = lead.history
+    .filter(
+      (item) =>
+        item &&
+        (item.role === "user" || item.role === "assistant") &&
+        typeof item.content === "string",
+    )
+    .slice(-10)
+    .map((item) => ({ role: item.role, content: clampText(item.content) }));
+  const persisted = await doFetch(env, tenantId, b.sessionId, "https://do/lead", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      id: b.submissionId,
+      tenantId,
+      sessionId: b.sessionId,
+      siteId: siteId ?? "default",
+      formId: form.id,
+      title: form.title,
+      fields,
+      history,
+      visitorSecret: b.visitorSecret,
+    }),
   });
-  if (!delivered) return json(env, { error: "delivery_failed" }, 502);
-  return json(env, { ok: true });
+  const receipt = (await persisted.json()) as {
+    lead?: { fields: typeof fields; history: typeof history };
+    delivered?: boolean;
+    error?: string;
+  };
+  if (!persisted.ok)
+    return json(env, { error: receipt.error || "lead_record_failed" }, persisted.status);
+  // The inbox index is retried for the same submission if a previous request
+  // stopped after durable storage. Never send email before the record is findable.
+  try {
+    await indexConversationSession(env, tenantId, b.sessionId);
+  } catch {
+    return json(env, { error: "lead_index_failed", recorded: true }, 503);
+  }
+  if (receipt.delivered)
+    return json(env, { ok: true, recorded: true, emailStatus: hasEmailTarget ? "sent" : "none" });
+  const savedValues = Object.fromEntries(
+    (receipt.lead?.fields ?? fields).map((field) => [field.name, field.value]),
+  );
+  const delivered = await deliverLead(env, {
+    ...lead,
+    values: savedValues,
+    history: receipt.lead?.history ?? history,
+    submissionId: b.submissionId,
+  });
+  if (delivered) {
+    const marked = await doFetch(env, tenantId, b.sessionId, "https://do/lead/delivered", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: b.submissionId }),
+    });
+    if (!marked.ok) return json(env, { error: "lead_delivery_state_failed", recorded: true }, 503);
+  }
+  return json(env, {
+    ok: true,
+    recorded: true,
+    emailStatus: delivered ? (hasEmailTarget ? "sent" : "none") : "delayed",
+  });
 }
 
 /**
@@ -975,17 +1085,42 @@ export async function deliverLead(env: Env, lead: LeadPayload): Promise<boolean>
   // rely on Telegram only).
   const waPhone = targets.find((c) => c.type === "whatsapp")?.phone;
   const emailTargets = targets.filter((c) => c.type === "email" && c.toAddress);
-  let emailDelivered = false;
+  let emailDelivered = true;
   for (const c of emailTargets) {
-    const mail = renderLeadEmail(form, lead.values, lead.history, waPhone);
-    emailDelivered =
-      (await sendLeadEmail(env.RESEND_API_KEY, env.LEAD_EMAIL_FROM, c.toAddress, mail)) ||
-      emailDelivered;
+    const mail = renderLeadEmail(
+      form,
+      lead.values,
+      lead.history,
+      waPhone,
+      leadInboxUrl(env.BUTTR_INBOX_URL, lead.sessionId),
+    );
+    const idempotencyKey = lead.submissionId
+      ? `lead-${Array.from(
+          new Uint8Array(
+            await crypto.subtle.digest(
+              "SHA-256",
+              new TextEncoder().encode(
+                `${lead.tenantId}:${lead.sessionId}:${lead.submissionId}:${c.id}`,
+              ),
+            ),
+          ),
+          (byte) => byte.toString(16).padStart(2, "0"),
+        ).join("")}`
+      : undefined;
+    const sent = await sendLeadEmail(
+      env.RESEND_API_KEY,
+      env.LEAD_EMAIL_FROM,
+      c.toAddress,
+      mail,
+      fetch,
+      idempotencyKey,
+    );
+    emailDelivered = sent && emailDelivered;
   }
   // A configured form must have a confirmed delivery route before its widget may
   // show a success state. Legacy contact capture and self-hosts without forms keep
   // their existing best-effort behavior.
-  return !form || !emailTargets.length || emailDelivered;
+  return !form || emailDelivered;
 }
 
 // ── POST /api/telegram/webhook ─────────────────────────────────────────────

@@ -28,6 +28,11 @@ declare global {
   interface DurableObjectStorage {
     get<T = unknown>(key: string): Promise<T | undefined>;
     put(key: string, value: unknown): Promise<void>;
+    list<T = unknown>(options?: {
+      prefix?: string;
+      startAfter?: string;
+      limit?: number;
+    }): Promise<Map<string, T>>;
     // DO alarm API (one alarm per object; setAlarm overwrites the pending one).
     setAlarm(scheduledTime: number | Date): Promise<void>;
     deleteAlarm(): Promise<void>;

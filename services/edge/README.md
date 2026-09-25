@@ -47,6 +47,14 @@ the details and transcript without the action.
 The authenticated operator action routes list configured forms and Instagram CTAs
 for a session's recorded site, then send a selected ID as a durable typed card.
 The visitor receives it over the session WebSocket and sees it again after reconnecting.
+Configured form submissions now carry a stable `submissionId` and the visitor's
+session capability. The session Durable Object saves labeled values separately from
+the short chat ring, broadcasts the record only to operator sockets, and includes it
+in the operator thread and inbox preview. A form-only session registers its capability
+on first submit; later submissions must match it. The widget shows success only after
+the record is durable and indexed. If email delivery is delayed, the visitor sees a
+saved-inquiry notice while the record stays in Buttr; retries reuse the submission ID
+and Resend idempotency key. Older cached widgets keep their legacy email-only path.
 Bot-only sessions archive after 24 hours without a new visitor message by default;
 `AUTO_ARCHIVE_HOURS` configures that window. A new live visitor message reopens the
 session. Handoffs, human replies, and call requests remain available for manual
