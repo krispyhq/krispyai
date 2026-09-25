@@ -25,6 +25,10 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Added
 
+- Visitor call cards expand to available microphone and speaker choices while
+  keeping Mute and End call accessible in the compact view. Unsupported speaker
+  selection is hidden.
+
 - Pending human handoffs now offer one compact choice card built from the site's
   configured forms and contact CTAs, with an audio-call request only when available.
   Form choices expand inline and retain visitor input if a team member takes over;
