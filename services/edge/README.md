@@ -45,7 +45,10 @@ lost-race disposition. A 30-second accepted-but-not-joined deadline starts room
 cleanup, while operator occupancy stays reserved until media termination is
 confirmed. A signed LiveKit event or an authenticated request followed by a
 server room query must verify media progress; a client callback alone is not
-proof. Projection and push effects remain in a retryable outbox.
+proof. A declined or revoked offer stays ineligible for that call; the initiating
+operator installation can cancel its outgoing ring. Projection and push effects
+remain in a retryable outbox. Old terminal calls and receipts can be pruned after
+seven days only when their outbox effects are acknowledged; live calls remain.
 
 The coordinator is keyed by tenant, so it does not serialize other businesses.
 Cloud auth must supply the real user ID and resolved owner tenant ID; the device

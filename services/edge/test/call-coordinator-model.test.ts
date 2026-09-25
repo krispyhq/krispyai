@@ -5,6 +5,7 @@ import {
   createCoordinatorState,
   expireCoordinatedCalls,
   operatorMayReceiveGrant,
+  pruneCoordinatorState,
   waitingCalls,
   type CallCommand,
   type CoordinatorState,
@@ -211,6 +212,57 @@ test("one device declining an offer leaves the other device and original deadlin
   }).state;
   expect(state.calls.one?.status).toBe("waiting");
   expect(waitingCalls(state, 6).map((call) => call.callId)).toEqual(["one"]);
+  expect(
+    run(state, {
+      type: "offer",
+      callId: "one",
+      eventId: "dispatch-phone-again",
+      now: 7,
+      operator: a1,
+    }).result.disposition,
+  ).toBe("unavailable");
+  expect(
+    run(state, {
+      type: "offer",
+      callId: "one",
+      eventId: "dispatch-tablet-again",
+      now: 7,
+      operator: a2,
+    }).result.disposition,
+  ).toBe("unavailable");
+  expect(offer(state, "one", b1, 7).result.disposition).toBe("offered");
+});
+
+test("only the initiating operator installation can cancel an outgoing ring", () => {
+  let state = run(createCoordinatorState("tenant", { maxPending: 2 }), {
+    type: "invite_operator",
+    callId: "outgoing",
+    sessionId: "session-outgoing",
+    eventId: "invite-outgoing",
+    now: 0,
+    operator: a1,
+  }).state;
+  expect(
+    run(state, {
+      type: "cancel_operator",
+      callId: "outgoing",
+      eventId: "wrong-cancel",
+      now: 2,
+      operator: a2,
+    }).result.disposition,
+  ).toBe("answered_elsewhere");
+  const canceled = run(state, {
+    type: "cancel_operator",
+    callId: "outgoing",
+    eventId: "owner-cancel",
+    now: 3,
+    operator: a1,
+  });
+  state = canceled.state;
+  expect(canceled.result).toMatchObject({ status: "canceled", disposition: "completed_self" });
+  expect(state.calls.outgoing?.endedAt).toBe(3);
+  state = visitorCall(state, "incoming", 4);
+  expect(offer(state, "incoming", a1, 5).result.disposition).toBe("offered");
 });
 
 test("visitor cancellation and offer expiry beat stale native answers", () => {
@@ -347,4 +399,27 @@ test("cross-tenant operator cannot receive an offer and failed projection stays 
   expect(duplicate.state.outbox[event!.key]).toBeDefined();
   state = acknowledgeCallOutbox(state, event!.key);
   expect(state.outbox[event!.key]).toBeUndefined();
+});
+
+test("retention removes only old terminal calls after their outbox is acknowledged", () => {
+  const day = 24 * 60 * 60 * 1000;
+  let state = visitorCall(createCoordinatorState("tenant", { maxPending: 2 }), "old", 0);
+  state = run(state, {
+    type: "cancel_visitor",
+    callId: "old",
+    eventId: "old-cancel",
+    now: 10,
+  }).state;
+  state = visitorCall(state, "active", 11);
+  const beforeAck = pruneCoordinatorState(state, 8 * day);
+  expect(beforeAck.calls.old).toBeDefined();
+  expect(beforeAck.receipts["old-cancel"]).toBeDefined();
+  for (const event of Object.values(state.outbox)) {
+    if (event.callId === "old") state = acknowledgeCallOutbox(state, event.key);
+  }
+  const pruned = pruneCoordinatorState(state, 8 * day);
+  expect(pruned.calls.old).toBeUndefined();
+  expect(pruned.receipts["old-cancel"]).toBeUndefined();
+  expect(pruned.calls.active).toBeDefined();
+  expect(pruned.receipts["invite-active"]).toBeDefined();
 });

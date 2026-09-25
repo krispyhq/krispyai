@@ -48,6 +48,9 @@ export interface CoordinatedCall {
   outgoingBy?: Pick<VerifiedCallOperator, "operatorId" | "deviceInstanceId">;
   /** Keep this claim through `ending` until room termination is confirmed. */
   winner?: Pick<VerifiedCallOperator, "operatorId" | "deviceInstanceId">;
+  /** A declined/revoked offer must not be sent back to the same target. */
+  ineligibleDevices?: string[];
+  ineligibleOperators?: string[];
 }
 
 export interface CallOffer {
@@ -81,7 +84,7 @@ export interface CoordinatorState {
   calls: Record<string, CoordinatedCall>;
   offers: Record<string, CallOffer>;
   /** Keyed by native actionEventId; stored durably with the state by the future DO. */
-  receipts: Record<string, { fingerprint: string; result: CallReceipt }>;
+  receipts: Record<string, { fingerprint: string; result: CallReceipt; createdAt: number }>;
   /** Retried until acknowledged; no push or projection is considered a transaction. */
   outbox: Record<string, CallOutboxEvent>;
 }
@@ -105,6 +108,13 @@ export type CallCommand =
     }
   | {
       type: "accept_operator" | "decline_offer";
+      callId: string;
+      eventId: string;
+      now: number;
+      operator: VerifiedCallOperator;
+    }
+  | {
+      type: "cancel_operator";
       callId: string;
       eventId: string;
       now: number;
@@ -146,6 +156,17 @@ export type CallCommand =
 
 export const defaultCallWaitMs = CALL_INVITE_TTL_MS;
 export const DEFAULT_CALL_JOIN_WAIT_MS = 30_000;
+export const DEFAULT_CALL_RECEIPT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+function excludeDevice(call: CoordinatedCall, deviceId: string): void {
+  if (!call.ineligibleDevices?.includes(deviceId))
+    call.ineligibleDevices = [...(call.ineligibleDevices ?? []), deviceId];
+}
+
+function excludeOperator(call: CoordinatedCall, operatorId: string): void {
+  if (!call.ineligibleOperators?.includes(operatorId))
+    call.ineligibleOperators = [...(call.ineligibleOperators ?? []), operatorId];
+}
 
 export function createCoordinatorState(
   tenantId: string,
@@ -261,7 +282,7 @@ export function applyCallCommand(
     };
 
   const finish = (result: CallReceipt) => {
-    state.receipts[command.eventId] = { fingerprint, result };
+    state.receipts[command.eventId] = { fingerprint, result, createdAt: command.now };
     return { state, result };
   };
   if ("operator" in command && command.operator && command.operator.tenantId !== state.tenantId)
@@ -313,6 +334,8 @@ export function applyCallCommand(
         const call = state.calls[offer.callId];
         delete state.offers[deviceId];
         if (call) {
+          excludeDevice(call, deviceId);
+          if (command.type === "revoke_operator") excludeOperator(call, offer.operatorId);
           call.revision++;
           if (!Object.values(state.offers).some((remaining) => remaining.callId === call.callId))
             call.status = "waiting";
@@ -362,6 +385,11 @@ export function applyCallCommand(
 
   if (command.type === "offer") {
     if (call.requestedBy !== "visitor" || !["waiting", "ringing"].includes(call.status))
+      return finish(receipt(call, "unavailable", call.callId));
+    if (
+      call.ineligibleDevices?.includes(command.operator.deviceInstanceId) ||
+      call.ineligibleOperators?.includes(command.operator.operatorId)
+    )
       return finish(receipt(call, "unavailable", call.callId));
     const currentOffer = state.offers[command.operator.deviceInstanceId];
     if (
@@ -425,10 +453,34 @@ export function applyCallCommand(
     if (!offer || offer.callId !== call.callId || offer.operatorId !== command.operator.operatorId)
       return finish(receipt(call, "unavailable", call.callId));
     delete state.offers[command.operator.deviceInstanceId];
+    excludeDevice(call, command.operator.deviceInstanceId);
+    if (
+      !Object.values(state.offers).some(
+        (remaining) =>
+          remaining.callId === call.callId && remaining.operatorId === command.operator.operatorId,
+      )
+    )
+      excludeOperator(call, command.operator.operatorId);
     call.revision++;
     if (!Object.values(state.offers).some((remaining) => remaining.callId === call.callId))
       call.status = "waiting";
     emit(state, call, "stop_offer", command.operator.deviceInstanceId);
+    emit(state, call, "status");
+    dispatchNextWaiting(state, command.now);
+    return finish(receipt(call, "completed_self", call.callId));
+  }
+
+  if (command.type === "cancel_operator") {
+    if (call.requestedBy !== "operator" || call.status !== "ringing" || !call.outgoingBy)
+      return finish(receipt(call, "unavailable", call.callId));
+    if (
+      call.outgoingBy.operatorId !== command.operator.operatorId ||
+      call.outgoingBy.deviceInstanceId !== command.operator.deviceInstanceId
+    )
+      return finish(receipt(call, "answered_elsewhere", call.callId));
+    call.status = "canceled";
+    call.endedAt = command.now;
+    call.revision++;
     emit(state, call, "status");
     dispatchNextWaiting(state, command.now);
     return finish(receipt(call, "completed_self", call.callId));
@@ -570,5 +622,33 @@ export function acknowledgeCallOutbox(previous: CoordinatorState, key: string): 
   if (!previous.outbox[key]) return previous;
   const state = clone(previous);
   delete state.outbox[key];
+  return state;
+}
+
+/** Keep live calls and undelivered effects; expire only old settled receipts. */
+export function pruneCoordinatorState(
+  previous: CoordinatorState,
+  now: number,
+  retentionMs = DEFAULT_CALL_RECEIPT_RETENTION_MS,
+): CoordinatorState {
+  if (!Number.isFinite(retentionMs) || retentionMs <= 0)
+    throw new Error("invalid call receipt retention");
+  const state = clone(previous);
+  const cutoff = now - retentionMs;
+  for (const [callId, call] of Object.entries(state.calls)) {
+    if (
+      !terminal(call) ||
+      call.endedAt == null ||
+      call.endedAt > cutoff ||
+      Object.values(state.outbox).some((event) => event.callId === callId)
+    )
+      continue;
+    delete state.calls[callId];
+  }
+  for (const [eventId, entry] of Object.entries(state.receipts)) {
+    if (entry.createdAt > cutoff) continue;
+    const call = state.calls[entry.result.callId];
+    if (!call) delete state.receipts[eventId];
+  }
   return state;
 }
