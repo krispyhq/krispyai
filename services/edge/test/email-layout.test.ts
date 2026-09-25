@@ -16,6 +16,10 @@ describe("lead email rendering", () => {
       "https://app.example.com/inbox?sessionId=abc+123",
     );
     expect(leadInboxUrl("javascript:alert(1)", "abc")).toBeUndefined();
+    expect(leadInboxUrl("https://app.example.com/inbox", "a".repeat(200))).toContain(
+      "a".repeat(200),
+    );
+    expect(leadInboxUrl("https://app.example.com/inbox", "a".repeat(201))).toBeUndefined();
   });
   test("includes contact, transcript and action in HTML and plain text", () => {
     const url = "https://app.example.com/inbox?sessionId=abc123";

@@ -45,7 +45,7 @@ function safeActionUrl(value: string | undefined): string | undefined {
 /** Build a session link without allowing a configured non-web scheme. */
 export function leadInboxUrl(baseUrl: string | undefined, sessionId: string): string | undefined {
   const safe = safeActionUrl(baseUrl);
-  if (!safe || !sessionId || sessionId.length > 100) return undefined;
+  if (!safe || !sessionId || sessionId.length > 200) return undefined;
   const url = new URL(safe);
   url.searchParams.set("sessionId", sessionId);
   return url.toString();
