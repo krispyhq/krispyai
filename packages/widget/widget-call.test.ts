@@ -257,6 +257,7 @@ describe("visitor audio call controller", () => {
     app.connect.resolve();
     await joining;
     expect(app.callExpand.disabled).toBe(false);
+    app.click("Mute");
     app.callExpand.click();
     await tick();
     expect(app.callExpand.attributes["aria-expanded"]).toBe("true");
@@ -269,7 +270,8 @@ describe("visitor audio call controller", () => {
     microphone.change();
     await tick();
     expect(app.deviceChanges).toEqual([{ kind: "audioinput", id: "mic-2" }]);
-    expect(app.micCalls).toEqual([true]);
+    expect(app.micCalls).toEqual([true, false]);
+    expect(app.callControls.children.some((item) => item.textContent === "Unmute")).toBe(true);
     app.click("End call");
     expect(app.callDevices.hidden).toBe(true);
   });
