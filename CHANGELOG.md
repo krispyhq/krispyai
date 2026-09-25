@@ -27,6 +27,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Fixed
 
+- Widget: restore the saved unread indicator at boot for every launcher, including the default circle and visits where theme config fails to load.
+
 - Visitor audio calls now show when the team member has actually joined, provide
   Mute/Unmute controls, and stop media and end the call when the page leaves the foreground.
   Pending joins cannot turn the microphone back on after a call ends. With tenant opt-in,

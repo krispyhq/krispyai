@@ -909,7 +909,6 @@
         Math.min(300, Math.max(116, Math.ceil(pillLabel.scrollWidth + 87))) + "px",
       );
       if (panel.classList.contains("open")) pillBtn.classList.add("kshut");
-      restoreUnread();
     }
     var r = clampRadius(th.radius);
     if (r != null) host.style.setProperty("--k-radius", r + "px");
@@ -1108,6 +1107,19 @@
     muteBtn.setAttribute("aria-label", muted ? "Unmute notifications" : "Mute notifications");
   }
   renderMute();
+  // AND THE UNREAD FLAG, restored for EVERY launcher.
+  //
+  // This was a bug the day it shipped: the call lived inside applyTheme's
+  // `launcherStyle === "pill"` branch, so a tenant on the default circle — which
+  // is every tenant that has not opted in — kept writing the key on an inbound
+  // message and never read it back. The notice still died on the next
+  // navigation, which is the exact thing persisting it was for.
+  //
+  // Here instead of in applyTheme for a second reason: the flag has nothing to do
+  // with the theme, and applyTheme only runs if the boot config fetch SUCCEEDS. A
+  // visitor coming back to a page whose config request failed should still be told
+  // somebody answered them.
+  restoreUnread();
   muteBtn.addEventListener("click", function () {
     muted = !muted;
     localStorage.setItem(MUTE_KEY, muted ? "1" : "0");
