@@ -25,6 +25,11 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Added
 
+- The visitor widget renders durable runtime 0.5 call receipts by call ID and
+  revision with outcome, occurred time, and verified connected duration. Times
+  observed from room presence or deletion are labeled approximate; reconnect
+  replay preserves chronological placement and the visitor's scroll position.
+
 - A disabled coordinator adapter validates native call actions, derives the
   operator/device from trusted auth, and requires verified room closure before
   the future tenant Durable Object may release occupancy.

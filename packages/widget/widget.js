@@ -168,7 +168,9 @@
   }
   var restoring = false;
   function persistMsg(cls, text, action, ts) {
-    savedMsgs.push(cls === "action" ? { c: cls, a: action, ts: ts } : { c: cls, t: String(text) });
+    savedMsgs.push(
+      cls === "action" ? { c: cls, a: action, ts: ts } : { c: cls, t: String(text), ts: ts },
+    );
     if (savedMsgs.length > 60) savedMsgs = savedMsgs.slice(-60);
     try {
       localStorage.setItem(MSG_KEY, JSON.stringify(savedMsgs));
@@ -455,6 +457,11 @@
     "align-self:center;font-size:11px;color:var(--k-muted-fg);" +
     "text-align:center;padding:0 8px;max-width:90%" +
     "}" +
+    ".callreceipt{align-self:center;display:grid;gap:3px;max-width:90%;" +
+    "margin:8px 0;padding:10px 14px;border:1px solid var(--k-border);" +
+    "border-radius:12px;background:var(--k-card);color:var(--k-espresso);" +
+    "text-align:center;font:12px/1.4 var(--k-font)}" +
+    ".callreceipt strong{font-size:13px}.callreceipt time,.callreceipt span{color:var(--k-muted-fg)}" +
     // Bubble enter animation
     "@keyframes kmsg{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}" +
     ".msg{animation:kmsg .2s cubic-bezier(.16,1,.3,1) both}" +
@@ -1363,7 +1370,7 @@
     if (last < text.length) renderInline(el, text.slice(last));
   }
 
-  function add(cls, text) {
+  function add(cls, text, at) {
     // Typing indicator: return a special node with animated dots for "…" placeholder
     if (cls === "bot" && text === "…") {
       var t = document.createElement("div");
@@ -1378,6 +1385,8 @@
     }
     var d = document.createElement("div");
     d.className = "msg " + cls;
+    var stamp = Number.isFinite(at) ? at : Date.now();
+    d.dataset.krispyAt = String(stamp);
     // Keep the raw server text beside the rendered DOM. Markdown formatting
     // changes textContent, so reconnect reconciliation must compare payloads,
     // not the visual text extracted from the bubble.
@@ -1388,8 +1397,86 @@
     else d.textContent = text;
     log.appendChild(d);
     log.scrollTop = log.scrollHeight;
-    if (!restoring && (cls === "me" || cls === "bot" || cls === "op")) persistMsg(cls, text);
+    if (!restoring && (cls === "me" || cls === "bot" || cls === "op"))
+      persistMsg(cls, text, undefined, stamp);
     return d;
+  }
+
+  // Call receipts are durable server records, replayed separately from the
+  // bounded chat ring. Revisions update one card per call instead of duplicating
+  // it when the socket reconnects. Never infer duration from invitation time.
+  var callReceiptNodes = Object.create(null);
+  function renderCallReceipt(event) {
+    if (!event || event.type !== "call_receipt") return;
+    var receipt = event.receipt;
+    if (
+      !receipt ||
+      receipt.sessionId !== sessionId ||
+      typeof receipt.callId !== "string" ||
+      !receipt.callId ||
+      receipt.callId.length > 200 ||
+      !["ended", "missed", "declined", "canceled"].includes(receipt.outcome) ||
+      !Number.isFinite(receipt.startedAt) ||
+      !Number.isFinite(receipt.endedAt) ||
+      !Number.isFinite(receipt.connectedDurationMs) ||
+      !Number.isFinite(receipt.revision) ||
+      receipt.connectedDurationMs < 0 ||
+      receipt.revision < 0 ||
+      receipt.endedAt < receipt.startedAt ||
+      Math.abs(receipt.endedAt) > 8.64e15 ||
+      ![
+        "signed_event",
+        "observed_room_absent",
+        "confirmed_room_delete",
+        "server_transition",
+      ].includes(receipt.endTimeProvenance) ||
+      (receipt.connectedAt == null && receipt.connectedTimeProvenance !== null) ||
+      (receipt.connectedAt != null &&
+        (!Number.isFinite(receipt.connectedAt) ||
+          !["signed_event", "observed_room_present"].includes(receipt.connectedTimeProvenance)))
+    )
+      return;
+    var existing = callReceiptNodes[receipt.callId];
+    if (existing && existing.revision >= receipt.revision) return;
+    var card = existing ? existing.node : document.createElement("div");
+    card.className = "callreceipt";
+    card.replaceChildren();
+    var approximate =
+      receipt.connectedTimeProvenance === "observed_room_present" ||
+      receipt.endTimeProvenance === "observed_room_absent" ||
+      receipt.endTimeProvenance === "confirmed_room_delete";
+    var title = document.createElement("strong");
+    title.textContent = {
+      ended: "Audio call ended",
+      missed: "Missed audio call",
+      declined: "Audio call declined",
+      canceled: "Audio call canceled",
+    }[receipt.outcome];
+    var time = document.createElement("time");
+    time.dateTime = new Date(receipt.endedAt).toISOString();
+    time.textContent = (approximate ? "Around " : "") + new Date(receipt.endedAt).toLocaleString();
+    var duration = document.createElement("span");
+    if (receipt.connectedAt == null) duration.textContent = "Not connected";
+    else {
+      var seconds = Math.floor(receipt.connectedDurationMs / 1000);
+      duration.textContent =
+        (approximate ? "Approx. connected " : "Connected ") +
+        Math.floor(seconds / 60) +
+        ":" +
+        String(seconds % 60).padStart(2, "0");
+    }
+    card.appendChild(title);
+    card.appendChild(time);
+    card.appendChild(duration);
+    card.dataset.krispyAt = String(receipt.endedAt);
+    callReceiptNodes[receipt.callId] = { revision: receipt.revision, node: card };
+    var later = Array.from(log.children).find(function (node) {
+      return node !== card && Number(node.dataset.krispyAt) > receipt.endedAt;
+    });
+    if (later) log.insertBefore(card, later);
+    else log.appendChild(card);
+    // Reconnect replay can contain years-old calls; never jump the visitor's
+    // scroll position when a receipt arrives or a revision updates its card.
   }
 
   // A reconnect's ready frame includes the durable ring. Reconcile by role/text
@@ -1419,7 +1506,7 @@
       var text = String(message.text || "");
       var key = cls + "\u0000" + text;
       if (counts[key]) counts[key] -= 1;
-      else add(cls, text);
+      else add(cls, text, message.ts);
     });
     // The server ring is authoritative for the next AI turn after reconnect.
     history.length = 0;
@@ -1519,7 +1606,7 @@
         for (var ri = 0; ri < savedMsgs.length; ri++) {
           var rm = savedMsgs[ri];
           if (rm && rm.c === "action" && rm.a) renderOperatorAction(rm.a, rm.ts);
-          else if (rm && rm.c && rm.t != null) add(rm.c, rm.t);
+          else if (rm && rm.c && rm.t != null) add(rm.c, rm.t, rm.ts);
         }
         restoring = false;
       } else if (opening.length) {
@@ -2131,6 +2218,8 @@
             notifyInbound();
             open();
           }
+        } else if (ev.type === "call_receipt") {
+          renderCallReceipt(ev);
         } else if (ev.type === "ready") {
           handoffState = ev.handoffState || (ev.handedOff ? "operator" : "ai");
           handedOff = handoffState !== "ai";
@@ -2144,7 +2233,7 @@
           handoffState = "operator";
           handedOff = true;
           markHuman();
-          add("op", ev.text);
+          add("op", ev.text, ev.ts);
           notifyInbound();
         } else if (ev.type === "action") {
           handoffState = "operator";
@@ -2429,6 +2518,7 @@
     }
     if (!node) return;
     node.dataset.krispyAction = key;
+    node.dataset.krispyAt = String(ts);
     if (!restoring) persistMsg("action", "", action, ts);
     log.scrollTop = log.scrollHeight;
   }
