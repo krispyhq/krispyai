@@ -338,6 +338,32 @@ test("accepted call with lost response closes after join deadline and blocks reu
   expect(offer(state, "two", a1).result.disposition).toBe("offered");
 });
 
+test("delayed signed two-party join keeps an accepted call when media started before deadline", () => {
+  let state = visitorCall(
+    createCoordinatorState("tenant", { maxPending: 2, joinWaitMs: 20 }),
+    "one",
+  );
+  state = offer(state, "one", a1).state;
+  state = accept(state, "one", a1, "answer", 2).state;
+  const late = run(state, {
+    type: "media_joined",
+    callId: "one",
+    eventId: "signed-join-delayed",
+    now: 24,
+    occurredAt: 18,
+    operator: a1,
+    source: "signed_livekit_event",
+  });
+  expect(late.result.disposition).toBe("completed_self");
+  expect(late.state.calls.one).toMatchObject({
+    status: "accepted",
+    mediaConnectedAt: 18,
+    mediaStartProvenance: "signed_event",
+  });
+  expect(expireCoordinatedCalls(late.state, 24).calls.one?.status).toBe("accepted");
+  expect(operatorMayReceiveGrant(late.state, "one", a1, 24)).toBe(true);
+});
+
 test("outgoing offer reserves one operator and revocation cancels it before media exists", () => {
   const initial = createCoordinatorState("tenant", { maxPending: 3 });
   const outgoing = run(initial, {

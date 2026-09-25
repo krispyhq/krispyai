@@ -671,22 +671,23 @@ export function applyCallCommand(
   }
 
   if (command.type === "media_joined") {
+    const signedOnTime =
+      command.source === "signed_livekit_event" &&
+      command.occurredAt != null &&
+      Number.isFinite(command.occurredAt) &&
+      command.occurredAt >= (call.acceptedAt ?? call.createdAt) &&
+      command.occurredAt <= command.now &&
+      (!call.joinDueAt || command.occurredAt < call.joinDueAt);
     if (
       call.status !== "accepted" ||
-      (call.joinDueAt && command.now >= call.joinDueAt && !call.mediaConnectedAt) ||
+      (call.joinDueAt && command.now >= call.joinDueAt && !call.mediaConnectedAt && !signedOnTime) ||
       call.winner?.operatorId !== command.operator.operatorId ||
       call.winner.deviceInstanceId !== command.operator.deviceInstanceId
     )
       return finish(receipt(call, "unavailable", call.callId));
     if (!call.mediaConnectedAt) {
-      const exactSignedStart =
-        command.source === "signed_livekit_event" &&
-        command.occurredAt != null &&
-        Number.isFinite(command.occurredAt) &&
-        command.occurredAt >= (call.acceptedAt ?? call.createdAt) &&
-        command.occurredAt <= command.now;
-      call.mediaConnectedAt = exactSignedStart ? command.occurredAt : command.now;
-      call.mediaStartProvenance = exactSignedStart ? "signed_event" : "observed_room_present";
+      call.mediaConnectedAt = signedOnTime ? command.occurredAt : command.now;
+      call.mediaStartProvenance = signedOnTime ? "signed_event" : "observed_room_present";
       call.revision++;
       emit(state, call, "status");
     }
