@@ -1394,8 +1394,10 @@
     }
     var d = document.createElement("div");
     d.className = "msg " + cls;
-    var stamp = Number.isFinite(at) ? at : Date.now();
-    d.dataset.krispyAt = String(stamp);
+    // Older persisted messages have no timestamp. Do not relabel one with
+    // this page-load time and claim false chronological precision.
+    var stamp = Number.isFinite(at) ? at : restoring ? null : Date.now();
+    if (stamp != null) d.dataset.krispyAt = String(stamp);
     // Keep the raw server text beside the rendered DOM. Markdown formatting
     // changes textContent, so reconnect reconciliation must compare payloads,
     // not the visual text extracted from the bubble.
@@ -1415,6 +1417,13 @@
   // bounded chat ring. Revisions update one card per call instead of duplicating
   // it when the socket reconnects. Never infer duration from invitation time.
   var callReceiptNodes = Object.create(null);
+  // Mirrors isCallTimelineReceipt in services/edge/src/call-coordinator-model.ts;
+  // the widget stays dependency-free, and tests check both sides of this wire.
+  var callReceiptUuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  function validReceiptTime(value) {
+    return Number.isInteger(value) && value >= 0 && value <= 8_640_000_000_000_000;
+  }
   function renderCallReceipt(event) {
     if (!event || event.type !== "call_receipt") return;
     var receipt = event.receipt;
@@ -1422,26 +1431,32 @@
       !receipt ||
       receipt.sessionId !== sessionId ||
       typeof receipt.callId !== "string" ||
-      !receipt.callId ||
-      receipt.callId.length > 200 ||
+      !callReceiptUuid.test(receipt.callId) ||
       !["ended", "missed", "declined", "canceled"].includes(receipt.outcome) ||
-      !Number.isFinite(receipt.startedAt) ||
-      !Number.isFinite(receipt.endedAt) ||
+      !validReceiptTime(receipt.startedAt) ||
+      !validReceiptTime(receipt.endedAt) ||
       !Number.isFinite(receipt.connectedDurationMs) ||
-      !Number.isFinite(receipt.revision) ||
+      !Number.isInteger(receipt.revision) ||
       receipt.connectedDurationMs < 0 ||
-      receipt.revision < 0 ||
+      receipt.revision <= 0 ||
+      receipt.connectedAt === undefined ||
       receipt.endedAt < receipt.startedAt ||
-      Math.abs(receipt.endedAt) > 8.64e15 ||
       ![
         "signed_event",
         "observed_room_absent",
         "confirmed_room_delete",
         "server_transition",
       ].includes(receipt.endTimeProvenance) ||
-      (receipt.connectedAt == null && receipt.connectedTimeProvenance !== null) ||
+      (receipt.connectedAt === null &&
+        (receipt.connectedTimeProvenance !== null ||
+          receipt.connectedDurationMs !== 0 ||
+          receipt.outcome === "ended")) ||
       (receipt.connectedAt != null &&
-        (!Number.isFinite(receipt.connectedAt) ||
+        (!validReceiptTime(receipt.connectedAt) ||
+          receipt.connectedAt < receipt.startedAt ||
+          receipt.connectedAt > receipt.endedAt ||
+          receipt.connectedDurationMs !== receipt.endedAt - receipt.connectedAt ||
+          receipt.outcome !== "ended" ||
           !["signed_event", "observed_room_present"].includes(receipt.connectedTimeProvenance)))
     )
       return;
@@ -1483,7 +1498,15 @@
       return node !== card && Number(node.dataset.krispyAt) > receipt.endedAt;
     });
     if (later) log.insertBefore(card, later);
-    else log.appendChild(card);
+    else {
+      // Legacy saved bubbles have no occurredAt. Preserve their own order and
+      // place dated historical receipts before that uncertain block.
+      var firstUntimed = Array.from(log.children).find(function (node) {
+        return node !== card && node.className.indexOf("msg ") === 0 && !node.dataset.krispyAt;
+      });
+      if (firstUntimed) log.insertBefore(card, firstUntimed);
+      else log.appendChild(card);
+    }
     // Reconnect replay can contain years-old calls; never jump the visitor's
     // scroll position when a receipt arrives or a revision updates its card.
   }

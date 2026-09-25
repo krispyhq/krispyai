@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { isCallTimelineReceipt } from "../../services/edge/src/call-coordinator-model";
 
 const source = readFileSync(new URL("./widget.js", import.meta.url), "utf8");
 const start = source.indexOf("  // Call receipts are durable server records,");
@@ -45,7 +46,7 @@ function harness() {
 }
 
 const receipt = {
-  callId: "call-1",
+  callId: "103218a5-c487-499f-b306-b7812f333f03",
   sessionId: "visitor-session",
   startedAt: Date.UTC(2026, 8, 25, 16, 0),
   connectedAt: Date.UTC(2026, 8, 25, 16, 0, 4),
@@ -58,6 +59,7 @@ const receipt = {
 };
 
 test("typed call receipts show server time and verified duration once per call/revision", () => {
+  expect(isCallTimelineReceipt(receipt)).toBe(true);
   const app = harness();
   const older = new FakeNode();
   older.dataset.krispyAt = String(receipt.endedAt - 1_000);
@@ -82,7 +84,12 @@ test("typed call receipts show server time and verified duration once per call/r
   expect(app.log.children).toEqual([older, card, newer]);
   app.render({
     type: "call_receipt",
-    receipt: { ...receipt, revision: 2, connectedDurationMs: 35_000 },
+    receipt: {
+      ...receipt,
+      revision: 2,
+      connectedAt: receipt.connectedAt - 1_000,
+      connectedDurationMs: 35_000,
+    },
   });
   expect(app.log.children).toEqual([older, card, newer]);
   expect(card.children[2]!.textContent).toBe("Connected 0:35");
@@ -125,18 +132,17 @@ test("receipt renderer keeps sessions separate and labels unanswered outcomes", 
   app.render({ type: "call_receipt", receipt: { ...receipt, endedAt: Infinity } });
   app.render({ type: "call_receipt", receipt: { ...receipt, connectedTimeProvenance: null } });
   expect(app.log.children).toHaveLength(0);
-  app.render({
-    type: "call_receipt",
-    receipt: {
-      ...receipt,
-      callId: "call-2",
-      connectedAt: null,
-      connectedTimeProvenance: null,
-      connectedDurationMs: 0,
-      outcome: "missed",
-      transcript: "must not appear",
-    },
-  });
+  const missed = {
+    ...receipt,
+    callId: "40128dbe-99e7-4a1b-b358-47c0e9cc68e0",
+    connectedAt: null,
+    connectedTimeProvenance: null,
+    connectedDurationMs: 0,
+    outcome: "missed",
+    transcript: "must not appear",
+  };
+  expect(isCallTimelineReceipt(missed)).toBe(true);
+  app.render({ type: "call_receipt", receipt: missed });
   expect(app.log.children).toHaveLength(1);
   expect(app.log.children[0]!.children.map((part) => part.textContent)).toEqual([
     "Missed audio call",
@@ -144,4 +150,43 @@ test("receipt renderer keeps sessions separate and labels unanswered outcomes", 
     "Not connected",
   ]);
   expect(JSON.stringify(app.log.children)).not.toContain("must not appear");
+});
+
+test("historical receipts do not assign invented times to legacy saved bubbles", () => {
+  const app = harness();
+  const oldFirst = new FakeNode();
+  oldFirst.className = "msg op";
+  const oldSecond = new FakeNode();
+  oldSecond.className = "msg me";
+  app.log.appendChild(oldFirst);
+  app.log.appendChild(oldSecond);
+  app.log.scrollTop = 9;
+  app.render({ type: "call_receipt", receipt });
+  expect(app.log.children.slice(1)).toEqual([oldFirst, oldSecond]);
+  expect(app.log.children[0]!.className).toBe("callreceipt");
+  expect(oldFirst.dataset.krispyAt).toBeUndefined();
+  expect(oldSecond.dataset.krispyAt).toBeUndefined();
+  expect(app.log.scrollTop).toBe(9);
+});
+
+test("widget rejects the same malformed receipt envelopes as the edge validator", () => {
+  const app = harness();
+  const invalid = [
+    { ...receipt, callId: "call-1" },
+    { ...receipt, revision: 0 },
+    { ...receipt, revision: 1.5 },
+    { ...receipt, startedAt: receipt.startedAt + 0.5 },
+    { ...receipt, connectedAt: receipt.startedAt - 1 },
+    { ...receipt, connectedAt: receipt.endedAt + 1 },
+    { ...receipt, connectedDurationMs: 1 },
+    { ...receipt, outcome: "missed" },
+    { ...receipt, connectedAt: null, connectedTimeProvenance: null, connectedDurationMs: 34_000 },
+    { ...receipt, connectedAt: null, connectedTimeProvenance: null },
+    { ...receipt, connectedAt: undefined },
+  ];
+  for (const value of invalid) {
+    expect(isCallTimelineReceipt(value)).toBe(false);
+    app.render({ type: "call_receipt", receipt: value });
+  }
+  expect(app.log.children).toHaveLength(0);
 });
