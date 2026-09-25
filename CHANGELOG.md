@@ -12,6 +12,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Changed
 
+- Edge deploys now sync the optional archive window and authenticated inbox URL
+  from the target Infisical environment, preserving existing bindings when unset.
 - The visitor call card now reports a microphone or connection failure after
   Join instead of silently returning to the Join button.
 - Lead emails now use Krispy's readable branded layout and include a plain-text

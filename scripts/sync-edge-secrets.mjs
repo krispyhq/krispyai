@@ -21,8 +21,8 @@ if (!["preview", "production"].includes(ENV)) {
 
 // The edge Env's secret-shaped bindings (src/types.ts). Plain config vars
 // (ALLOWED_ORIGIN, API_ORIGIN, AI_MODEL, …) stay in wrangler.toml [vars]. The optional
-// private knowledge gateway settings below use the same per-key secret API so this
-// deploy step can source them from Infisical without touching unrelated bindings.
+// runtime settings below use the same per-key secret API so this deploy step can
+// source them from Infisical without touching unrelated bindings.
 const EDGE_SECRET_KEYS = [
   "ADMIN_USAGE_SECRET",
   "AI_API_KEY",
@@ -40,7 +40,9 @@ const EDGE_SECRET_KEYS = [
   "TELEGRAM_WEBHOOK_SECRET",
   "TENANT_SYNC_SECRET",
 ];
-const EDGE_KNOWLEDGE_CONFIG_KEYS = [
+const EDGE_RUNTIME_CONFIG_KEYS = [
+  "AUTO_ARCHIVE_HOURS",
+  "BUTTR_INBOX_URL",
   "KNOWLEDGE_GATEWAY_URL",
   "KNOWLEDGE_TENANT_ID",
   "KNOWLEDGE_SITE_ID",
@@ -74,8 +76,8 @@ if (!TOKEN || !ACCT) {
 const worker = ENV === "production" ? "krispy-edge" : "krispy-edge-preview";
 const present = EDGE_SECRET_KEYS.filter((k) => L[k]);
 const absent = EDGE_SECRET_KEYS.filter((k) => !L[k]);
-const presentKnowledgeConfig = EDGE_KNOWLEDGE_CONFIG_KEYS.filter((k) => L[k]);
-const absentKnowledgeConfig = EDGE_KNOWLEDGE_CONFIG_KEYS.filter((k) => !L[k]);
+const presentRuntimeConfig = EDGE_RUNTIME_CONFIG_KEYS.filter((k) => L[k]);
+const absentRuntimeConfig = EDGE_RUNTIME_CONFIG_KEYS.filter((k) => !L[k]);
 
 console.log(`→ ${worker}: syncing ${present.length} secret(s)${DRY ? " (dry-run)" : ""}`);
 for (const key of present) {
@@ -100,9 +102,9 @@ for (const key of present) {
 }
 if (absent.length) console.log(`  ⚠ skipped (absent in .env.local): ${absent.join(", ")}`);
 console.log(
-  `→ ${worker}: syncing ${presentKnowledgeConfig.length} knowledge config binding(s)${DRY ? " (dry-run)" : ""}`,
+  `→ ${worker}: syncing ${presentRuntimeConfig.length} runtime config binding(s)${DRY ? " (dry-run)" : ""}`,
 );
-for (const key of presentKnowledgeConfig) {
+for (const key of presentRuntimeConfig) {
   if (DRY) {
     console.log(`  · ${key} (would PUT)`);
     continue;
@@ -122,8 +124,8 @@ for (const key of presentKnowledgeConfig) {
   }
   console.log(`  ✔ ${key}`);
 }
-if (absentKnowledgeConfig.length)
+if (absentRuntimeConfig.length)
   console.log(
-    `  ⚠ skipped (absent in .env.local; existing binding unchanged): ${absentKnowledgeConfig.join(", ")}`,
+    `  ⚠ skipped (absent in .env.local; existing binding unchanged): ${absentRuntimeConfig.join(", ")}`,
   );
 console.log(`✔ edge secret sync complete (${ENV}).`);
