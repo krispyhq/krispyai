@@ -82,6 +82,11 @@ allow `microphone=(self)` in its `Permissions-Policy` for the browser to show
 its consent prompt; `microphone=()` prevents a prompt and blocks capture.
 Permission is still requested only after the visitor chooses Join.
 
+The idle **Speak with a team member** suggestion has a **Dismiss call offer**
+button. Dismissal is remembered for the current tenant, site, and chat session,
+including page reloads; a later new handoff or new chat session may show it again.
+Dismissal does not decline an incoming invite or end a ringing or connected call.
+
 During a call, choose **Audio settings** on the call card to expand device
 controls. The microphone menu lists already permitted inputs and changes the
 active LiveKit track; opening settings does not request microphone permission.

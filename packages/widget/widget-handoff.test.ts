@@ -69,7 +69,7 @@ function harness() {
     "shownForms",
     "requested",
     `
-    var handoffState = "pending", handoffChoiceDismissed = false, handoffChoices = null;
+    var handoffState = "pending", handoffChoiceDismissed = false, handoffChoices = null, callOfferDismissed = false;
     var formOpen = false, callCanRequest = false, visitorSecret = "secret", callVisitorConnected = true, callState = null;
     function showForm(form) { shownForms.push(form.id); formOpen = true; }
     function renderCta(cta, container) { var a = document.createElement("a"); a.textContent = cta.label; a.href = cta.url; container.appendChild(a); return a; }
