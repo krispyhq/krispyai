@@ -35,8 +35,9 @@ fires, just without a mention. See `docs → connect Telegram`.
 
 Configured lead forms can forward the visitor's recent chat to an email connector.
 Set `RESEND_API_KEY` and a verified `LEAD_EMAIL_FROM` through Infisical; a failed
-email delivery returns `502 delivery_failed` so the widget keeps the form ready
-for another attempt.
+email delivery on an older cached widget returns `502 delivery_failed` so it
+keeps the form ready for another attempt. Current widgets retain the lead record
+and show a delayed-email notice instead.
 The lead email includes labeled contact details, the recent conversation, a
 plain-text part, and an optional **Open in Buttr** action. Configure the
 Worker-side `BUTTR_INBOX_URL` to an HTTPS operator inbox URL (localhost HTTP is
@@ -54,7 +55,9 @@ in the operator thread and inbox preview. A form-only session registers its capa
 on first submit; later submissions must match it. The widget shows success only after
 the record is durable and indexed. If email delivery is delayed, the visitor sees a
 saved-inquiry notice while the record stays in Buttr; retries reuse the submission ID
-and Resend idempotency key. Older cached widgets keep their legacy email-only path.
+and Resend idempotency key. Older cached widgets keep their legacy email path;
+after a configured form's email is accepted, the Worker marks its session for
+human review without copying unverified form values into the operator thread.
 Bot-only sessions archive after 24 hours without a new visitor message by default;
 `AUTO_ARCHIVE_HOURS` configures that window. A new live visitor message reopens the
 session. Handoffs, human replies, and call requests remain available for manual

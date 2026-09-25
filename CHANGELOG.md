@@ -39,7 +39,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 - Submitted lead forms now save their labeled phone and note fields in the operator
   thread before showing success. These records survive chat-ring eviction, remain
   visible if email delivery is delayed, and keep callback inquiries out of the
-  automatic bot-only archive path.
+  automatic bot-only archive path. Older cached widgets mark a validated,
+  email-accepted form for human review without storing its unauthenticated fields.
 
 - Bot-only conversations now archive after 24 hours of visitor inactivity (configurable
   with `AUTO_ARCHIVE_HOURS`), including eligible older sessions on inbox read. A new

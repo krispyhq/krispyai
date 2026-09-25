@@ -395,6 +395,36 @@ export class SessionDO {
       return Response.json({ ok: true });
     }
 
+    // Old cached widgets do not carry a visitor capability. After the Worker
+    // validates a configured form and confirms email delivery, retain only an
+    // inquiry marker here; never copy untrusted form values into a thread.
+    if (request.method === "POST" && url.pathname.endsWith("/lead/legacy-marker")) {
+      const body = (await request.json().catch(() => null)) as {
+        tenantId?: string;
+        sessionId?: string;
+        siteId?: string;
+      } | null;
+      if (!body?.tenantId || !body.sessionId || !body.siteId)
+        return Response.json({ error: "invalid_session" }, { status: 400 });
+      const [tenantId, sessionId, siteId] = await Promise.all([
+        this.state.storage.get<string>("tenantId"),
+        this.state.storage.get<string>("sessionId"),
+        this.state.storage.get<string>("siteId"),
+      ]);
+      if (
+        (tenantId && tenantId !== body.tenantId) ||
+        (sessionId && sessionId !== body.sessionId) ||
+        (siteId && siteId !== body.siteId)
+      )
+        return Response.json({ error: "session_mismatch" }, { status: 403 });
+      if (!tenantId) await this.state.storage.put("tenantId", body.tenantId);
+      if (!sessionId) await this.state.storage.put("sessionId", body.sessionId);
+      if (!siteId) await this.state.storage.put("siteId", body.siteId);
+      await this.markHumanInquiry();
+      if (await this.resolved()) await this.state.storage.put("resolved", false);
+      return Response.json({ ok: true });
+    }
+
     if (request.method === "POST" && url.pathname.endsWith("/lead")) {
       const body = (await request.json().catch(() => null)) as
         | (Omit<LeadSubmission, "ts"> & { visitorSecret?: string; history?: StoredLead["history"] })

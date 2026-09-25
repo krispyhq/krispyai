@@ -1348,7 +1348,9 @@ describe("deliverLead fan-out", () => {
   });
 
   test("configured inquiry includes the conversation and only acknowledges accepted email", async () => {
-    const env = fakeEnv({ RESEND_API_KEY: "re_test", LEAD_EMAIL_FROM: "hello@example.test" });
+    const env = wireSessionNS(
+      fakeEnv({ RESEND_API_KEY: "re_test", LEAD_EMAIL_FROM: "hello@example.test" }),
+    );
     await mergeTenantConfig(env, "acme", {
       forms: [
         {
@@ -1525,6 +1527,82 @@ test("form submit persists a typed operator record before success and retries em
     expect(new Headers(emails[1]!.headers).get("Idempotency-Key")).toBe(
       new Headers(emails[2]!.headers).get("Idempotency-Key"),
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("legacy cached-widget lead keeps a delivered form visible for human review", async () => {
+  const env = wireSessionNS(
+    fakeEnv({
+      TENANT_SYNC_SECRET: "test-operator-secret",
+      RESEND_API_KEY: "re_test",
+      LEAD_EMAIL_FROM: "leads@example.test",
+    }),
+  );
+  await mergeTenantConfig(env, "acme", {
+    forms: [
+      {
+        id: "callback",
+        title: "Request a callback",
+        fields: [{ name: "phone", label: "Phone", type: "tel", required: true }],
+        connectorIds: ["owner"],
+      },
+    ],
+    connectors: [{ id: "owner", type: "email", toAddress: "owner@example.test" }],
+  });
+  const submit = (sessionId: string, values: Record<string, string>) =>
+    worker.fetch(
+      new Request("https://edge.test/api/lead", {
+        method: "POST",
+        body: JSON.stringify({ tenantId: "acme", sessionId, formId: "callback", values }),
+      }),
+      env,
+    );
+  const originalFetch = globalThis.fetch;
+  try {
+    const stub = env.SESSION.get(env.SESSION.idFromName("acme:legacy-form"));
+    await stub.fetch("https://do/log", {
+      method: "POST",
+      headers: { [DO_INTERNAL_HEADER]: doInternalSecret(env) },
+      body: JSON.stringify({
+        seed: true,
+        messages: [{ role: "visitor", text: "Please call me", ts: Date.now() - 48 * 60 * 60_000 }],
+      }),
+    });
+    let sent = 0;
+    globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) => {
+      sent++;
+      return Response.json({ id: "accepted-email" });
+    }) as typeof fetch;
+    expect((await submit("legacy-invalid", { phone: "" })).status).toBe(400);
+    expect(sent).toBe(0);
+    expect((await submit("legacy-form", { phone: "+972501234567" })).status).toBe(200);
+    const inbox = await worker.fetch(
+      new Request("https://edge.test/api/operator/handoffs", {
+        method: "POST",
+        headers: { "x-tenant-sync-secret": "test-operator-secret" },
+        body: JSON.stringify({ tenantId: "acme", includeActive: true, includeResolved: true }),
+      }),
+      env,
+    );
+    expect(
+      ((await inbox.json()) as { conversations: { sessionId: string }[] }).conversations,
+    ).toContainEqual(expect.objectContaining({ sessionId: "legacy-form", resolved: false }));
+    globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) =>
+      new Response("unavailable", { status: 503 })) as typeof fetch;
+    expect((await submit("legacy-failed", { phone: "+972501234567" })).status).toBe(502);
+    const afterFailure = await worker.fetch(
+      new Request("https://edge.test/api/operator/handoffs", {
+        method: "POST",
+        headers: { "x-tenant-sync-secret": "test-operator-secret" },
+        body: JSON.stringify({ tenantId: "acme", includeActive: true, includeResolved: true }),
+      }),
+      env,
+    );
+    expect(
+      ((await afterFailure.json()) as { conversations: { sessionId: string }[] }).conversations,
+    ).not.toContainEqual(expect.objectContaining({ sessionId: "legacy-failed" }));
   } finally {
     globalThis.fetch = originalFetch;
   }

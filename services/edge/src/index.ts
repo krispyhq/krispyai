@@ -941,8 +941,50 @@ async function handleLead(request: Request, env: Env): Promise<Response> {
   if (!b.submissionId && !b.visitorSecret) {
     if (!(await checkLeadRate(env, tenantId, b.sessionId)))
       return json(env, { error: "rate_limited" }, 429);
+    const tenant = await getTenant(env, tenantId, siteId);
+    const form = tenant?.forms?.find((entry) => entry.id === b.formId);
+    const selectedConnectors = form?.connectorIds
+      ? (tenant?.connectors ?? []).filter((connector) => form.connectorIds!.includes(connector.id))
+      : (tenant?.connectors ?? []);
+    const hasEmailTarget = selectedConnectors.some(
+      (connector) => connector.type === "email" && connector.toAddress,
+    );
+    if (form) {
+      if (
+        !b.values ||
+        typeof b.values !== "object" ||
+        Array.isArray(b.values) ||
+        form.title.length > 200 ||
+        form.fields.length > 20 ||
+        form.fields.some((field) => {
+          const value = b.values?.[field.name];
+          return (
+            field.name.length > 100 ||
+            field.label.length > 100 ||
+            typeof value !== "string" ||
+            value.length > 2000 ||
+            (field.required && !value.trim())
+          );
+        })
+      )
+        return json(env, { error: "invalid_form_values" }, 400);
+    }
     const delivered = await deliverLead(env, lead);
-    return delivered ? json(env, { ok: true }) : json(env, { error: "delivery_failed" }, 502);
+    if (!delivered) return json(env, { error: "delivery_failed" }, 502);
+    if (form && hasEmailTarget) {
+      const marked = await doFetch(env, tenantId, b.sessionId, "https://do/lead/legacy-marker", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tenantId, sessionId: b.sessionId, siteId: siteId ?? "default" }),
+      });
+      if (!marked.ok) return json(env, { error: "lead_record_failed" }, 503);
+      try {
+        await indexConversationSession(env, tenantId, b.sessionId);
+      } catch {
+        return json(env, { error: "lead_index_failed" }, 503);
+      }
+    }
+    return json(env, { ok: true });
   }
   if (
     !b.submissionId ||
