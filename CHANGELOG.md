@@ -25,6 +25,10 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Added
 
+- Real incoming operator invitations now ring in the visitor widget when browser
+  audio and notification settings permit, while the visible call controls remain
+  available if autoplay blocks playback. The ring stops on call state changes.
+
 - Visitor call cards expand to available microphone and speaker choices while
   keeping Mute and End call accessible in the compact view. Unsupported speaker
   selection is hidden.

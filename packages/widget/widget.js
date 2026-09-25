@@ -876,7 +876,10 @@
   }
   function applyTheme(th) {
     if (!th) return;
-    if (th.sound === false) soundEnabled = false;
+    if (th.sound === false) {
+      soundEnabled = false;
+      stopIncomingRing();
+    }
     var pc = clampColor(th.primaryColor);
     if (pc) {
       host.style.setProperty("--k-primary", pc);
@@ -1131,6 +1134,9 @@
     muted = !muted;
     localStorage.setItem(MUTE_KEY, muted ? "1" : "0");
     renderMute();
+    if (muted) stopIncomingRing();
+    else if (callState && callState.status === "ringing" && callState.requestedBy !== "visitor")
+      startIncomingRing(callState.id, callState.expiresAt);
   });
 
   // Popup teaser interactions: card click opens the chat (carrying the popup's
@@ -1611,6 +1617,105 @@
   var callVisitorConnected = false;
   var callCanRequest = false;
   var callStatusEpoch = 0;
+  var ringContext = null;
+  var ringTimer = null;
+  var ringExpiryTimer = null;
+  var ringCallId = null;
+  var ringEpoch = 0;
+  var ringResumePending = false;
+  function stopIncomingRing() {
+    ringEpoch++;
+    ringCallId = null;
+    clearInterval(ringTimer);
+    ringTimer = null;
+    clearTimeout(ringExpiryTimer);
+    ringExpiryTimer = null;
+    ringResumePending = false;
+    if (ringContext) {
+      var old = ringContext;
+      ringContext = null;
+      try {
+        Promise.resolve(old.close()).catch(function () {});
+      } catch {
+        /* audio cleanup is best-effort; epoch still blocks late playback */
+      }
+    }
+  }
+  function ringPulse(epoch, id) {
+    if (ringResumePending || !ringContext) return;
+    ringResumePending = true;
+    var context = ringContext;
+    Promise.resolve()
+      .then(function () {
+        return context.resume();
+      })
+      .then(function () {
+        if (
+          epoch !== ringEpoch ||
+          ringCallId !== id ||
+          !callState ||
+          callState.id !== id ||
+          callState.status !== "ringing" ||
+          callState.requestedBy === "visitor" ||
+          (Number.isFinite(callState.expiresAt) && callState.expiresAt <= Date.now()) ||
+          muted ||
+          !soundEnabled ||
+          document.visibilityState !== "visible"
+        )
+          return;
+        var now = context.currentTime;
+        [440, 480].forEach(function (frequency) {
+          var oscillator = context.createOscillator();
+          var gain = context.createGain();
+          oscillator.type = "sine";
+          oscillator.frequency.value = frequency;
+          gain.gain.setValueAtTime(0.0001, now);
+          gain.gain.exponentialRampToValueAtTime(0.055, now + 0.02);
+          gain.gain.setValueAtTime(0.055, now + 1);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.2);
+          oscillator.connect(gain).connect(context.destination);
+          oscillator.start(now);
+          oscillator.stop(now + 1.2);
+        });
+      })
+      .catch(function () {
+        /* autoplay may block audio; the visible Accept/Decline card remains */
+      })
+      .finally(function () {
+        if (epoch === ringEpoch) ringResumePending = false;
+      });
+  }
+  function startIncomingRing(id, expiresAt) {
+    if (ringCallId === id) return;
+    stopIncomingRing();
+    if (
+      muted ||
+      !soundEnabled ||
+      document.visibilityState !== "visible" ||
+      (Number.isFinite(expiresAt) && expiresAt <= Date.now())
+    )
+      return;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    try {
+      ringContext = new AC();
+    } catch {
+      return;
+    }
+    ringCallId = id;
+    var epoch = ringEpoch;
+    ringPulse(epoch, id);
+    ringTimer = setInterval(function () {
+      ringPulse(epoch, id);
+    }, 3000);
+    if (Number.isFinite(expiresAt))
+      ringExpiryTimer = setTimeout(
+        function () {
+          if (ringCallId === id && ringEpoch === epoch) stopIncomingRing();
+        },
+        Math.max(0, expiresAt - Date.now()),
+      );
+  }
   // An idle call invitation is a suggestion, not a server call. Keep its
   // dismissal for this conversation across status refreshes and page reloads.
   var callOfferKey =
@@ -1774,6 +1879,9 @@
       callState.status === "ended"
     )
       return;
+    if (next && next.status === "ringing" && next.requestedBy !== "visitor")
+      startIncomingRing(next.id, next.expiresAt);
+    else stopIncomingRing();
     if (next && (!callState || next.id !== callState.id)) stopCallMedia();
     callState = next;
     refreshHandoffChoices();
@@ -2084,7 +2192,10 @@
       keepalive: true,
     }).catch(function () {});
   }
-  window.addEventListener("pagehide", endCallInBackground);
+  window.addEventListener("pagehide", function () {
+    stopIncomingRing();
+    endCallInBackground();
+  });
   function syncCallStatus() {
     if (!visitorSecret || !callVisitorConnected) return;
     var epoch = ++callStatusEpoch;
@@ -2175,6 +2286,7 @@
         }
       };
       ws.onclose = function () {
+        stopIncomingRing();
         // Exponential backoff capped at WS_BACKOFF_MAX, ±25% jitter (avoid a
         // thundering-herd reconnect when the edge recovers). Reset on open.
         var delay = wsBackoff * (0.75 + Math.random() * 0.5);
@@ -2202,7 +2314,10 @@
   // Mobile browsers may suspend the socket without delivering a close event.
   // Force a reconnect on return so the ready snapshot backfills missed replies.
   document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState !== "visible") endCallInBackground();
+    if (document.visibilityState !== "visible") {
+      stopIncomingRing();
+      endCallInBackground();
+    }
     if (!opened || document.visibilityState !== "visible") return;
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
       try {
