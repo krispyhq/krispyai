@@ -1580,6 +1580,7 @@
   var livekitLoading = null;
   var callVisitorConnected = false;
   var callCanRequest = false;
+  var callStatusEpoch = 0;
   function callRequest(action, extra) {
     return fetch(cfg.api + "/api/call", {
       method: "POST",
@@ -1932,8 +1933,10 @@
   window.addEventListener("pagehide", endCallInBackground);
   function syncCallStatus() {
     if (!visitorSecret || !callVisitorConnected) return;
+    var epoch = ++callStatusEpoch;
     callRequest("status")
       .then(function (d) {
+        if (epoch !== callStatusEpoch) return;
         callCanRequest = d.availableToRequest === true;
         renderCall(d.call, d.nonce);
       })
@@ -2006,6 +2009,9 @@
           handedOff = false;
           waitingMarked = false;
           humanMarked = false;
+          callCanRequest = false;
+          renderCall(callState);
+          syncCallStatus();
           add("sys", "You're back with the AI assistant. A human can rejoin anytime.");
         }
       };
