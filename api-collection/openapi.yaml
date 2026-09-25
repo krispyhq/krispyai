@@ -421,7 +421,8 @@ paths:
                     type: array
                     maxItems: 3
                     items: { type: string, maxLength: 500 }
-                  sourceRevision: { type: [string, "null"], description: SHA-256 of the server-side ring. }
+                  sourceRevision:
+                    { type: [string, "null"], description: SHA-256 of the server-side ring. }
                   sourceLastMessageTs: { type: [integer, "null"] }
                   stale: { type: boolean }
         "400": { description: Missing tenant/session or invalid siteId. }

@@ -134,7 +134,11 @@ export class SessionDO {
   }
 
   private rtcConfig() {
-    return { url: this.env.LIVEKIT_URL, apiKey: this.env.LIVEKIT_API_KEY, apiSecret: this.env.LIVEKIT_API_SECRET };
+    return {
+      url: this.env.LIVEKIT_URL,
+      apiKey: this.env.LIVEKIT_API_KEY,
+      apiSecret: this.env.LIVEKIT_API_SECRET,
+    };
   }
 
   private async closeEndedRoom(room: string): Promise<boolean> {
@@ -154,9 +158,15 @@ export class SessionDO {
     const call = await this.state.storage.get<CallState>("call");
     const handoffDue = await this.state.storage.get<number>("handoffDueAt");
     const cleanupDue = await this.state.storage.get<number>("callCleanupDueAt");
-    const callDue = call?.status === "ringing" ? call.expiresAt
-      : call?.status === "accepted" ? (call.acceptedAt ?? call.createdAt) + CALL_MAX_DURATION_MS : 0;
-    const due = [handoffDue, callDue, cleanupDue].filter((n): n is number => typeof n === "number" && n > 0);
+    const callDue =
+      call?.status === "ringing"
+        ? call.expiresAt
+        : call?.status === "accepted"
+          ? (call.acceptedAt ?? call.createdAt) + CALL_MAX_DURATION_MS
+          : 0;
+    const due = [handoffDue, callDue, cleanupDue].filter(
+      (n): n is number => typeof n === "number" && n > 0,
+    );
     if (due.length) await this.state.storage.setAlarm(Math.min(...due));
     else await this.state.storage.deleteAlarm();
   }
@@ -304,11 +314,18 @@ export class SessionDO {
       const registered = await this.state.storage.get<string>("callVisitorSecret");
       if (actor !== "operator" && actor !== "visitor")
         return Response.json({ error: "actor_required" }, { status: 403 });
-      if (actor === "visitor" && (!registered || request.headers.get("x-call-visitor-secret") !== registered))
+      if (
+        actor === "visitor" &&
+        (!registered || request.headers.get("x-call-visitor-secret") !== registered)
+      )
         return Response.json({ error: "visitor_auth_required" }, { status: 403 });
       const body = (await request.json().catch(() => ({}))) as { id?: string };
       if (!body.id) return Response.json({ error: "stale_call" }, { status: 409 });
-      const rtc = { url: this.env.LIVEKIT_URL, apiKey: this.env.LIVEKIT_API_KEY, apiSecret: this.env.LIVEKIT_API_SECRET };
+      const rtc = {
+        url: this.env.LIVEKIT_URL,
+        apiKey: this.env.LIVEKIT_API_KEY,
+        apiSecret: this.env.LIVEKIT_API_SECRET,
+      };
       const call = await this.callState();
       if (!call) return Response.json({ error: "call_not_accepted" }, { status: 409 });
       const grant = await issueCallToken(rtc, call, body.id, actor);
@@ -350,7 +367,11 @@ export class SessionDO {
       if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
       const action = body?.action;
       if (action === "invite") {
-        if (actor !== "operator" || !visitorSecret || this.state.getWebSockets("call-visitor").length === 0)
+        if (
+          actor !== "operator" ||
+          !visitorSecret ||
+          this.state.getWebSockets("call-visitor").length === 0
+        )
           return Response.json({ error: "visitor_unavailable" }, { status: 409 });
         if (await this.state.storage.get<string>("callCleanupRoom"))
           return Response.json({ error: "previous_call_cleanup_pending" }, { status: 503 });
@@ -381,7 +402,11 @@ export class SessionDO {
       if (action === "end") {
         const closed = await this.closeEndedRoom(result.call.room);
         await this.scheduleAlarm();
-        if (!closed) return Response.json({ error: "room_disconnect_failed", call: publicCall(result.call, Date.now()) }, { status: 502 });
+        if (!closed)
+          return Response.json(
+            { error: "room_disconnect_failed", call: publicCall(result.call, Date.now()) },
+            { status: 502 },
+          );
       }
       return Response.json({ call: publicCall(result.call, Date.now()), room: result.call.room });
     }

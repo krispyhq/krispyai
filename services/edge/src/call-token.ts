@@ -14,7 +14,10 @@ export function callRtcAvailable(config: CallRtcConfig): boolean {
   if (!config.apiKey?.trim() || !config.apiSecret?.trim() || !config.url?.trim()) return false;
   try {
     const url = new URL(config.url);
-    return url.protocol === "wss:" || (url.protocol === "ws:" && ["localhost", "127.0.0.1"].includes(url.hostname));
+    return (
+      url.protocol === "wss:" ||
+      (url.protocol === "ws:" && ["localhost", "127.0.0.1"].includes(url.hostname))
+    );
   } catch {
     return false;
   }
@@ -27,18 +30,28 @@ function base64url(data: Uint8Array): string {
 }
 
 /** WebCrypto keeps the edge Worker dependency-free. Do not expose config to clients. */
-async function signClaims(config: CallRtcConfig, subject: string, video: Record<string, unknown>, now: number, ttl: number) {
+async function signClaims(
+  config: CallRtcConfig,
+  subject: string,
+  video: Record<string, unknown>,
+  now: number,
+  ttl: number,
+) {
   const iat = Math.floor(now / 1000);
   const exp = iat + ttl;
   const header = base64url(new TextEncoder().encode(JSON.stringify({ alg: "HS256", typ: "JWT" })));
-  const payload = base64url(new TextEncoder().encode(JSON.stringify({
-    iss: config.apiKey,
-    sub: subject,
-    iat,
-    nbf: iat,
-    exp,
-    video,
-  })));
+  const payload = base64url(
+    new TextEncoder().encode(
+      JSON.stringify({
+        iss: config.apiKey,
+        sub: subject,
+        iat,
+        nbf: iat,
+        exp,
+        video,
+      }),
+    ),
+  );
   const unsigned = `${header}.${payload}`;
   const key = await crypto.subtle.importKey(
     "raw",
@@ -47,7 +60,9 @@ async function signClaims(config: CallRtcConfig, subject: string, video: Record<
     false,
     ["sign"],
   );
-  const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(unsigned)));
+  const signature = new Uint8Array(
+    await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(unsigned)),
+  );
   return { token: `${unsigned}.${base64url(signature)}`, expiresAt: exp * 1000 };
 }
 
@@ -59,15 +74,21 @@ export async function issueCallToken(
   now: number = Date.now(),
 ): Promise<{ url: string; token: string; expiresAt: number } | null> {
   if (!callRtcAvailable(config) || !canJoinCall(call, expectedId, now)) return null;
-  const grant = await signClaims(config, `${role}-${call.id}`, {
-    roomJoin: true,
-    room: call.room,
-    canPublish: true,
-    canPublishSources: ["microphone"],
-    canPublishData: false,
-    canSubscribe: true,
-    canUpdateOwnMetadata: false,
-  }, now, CALL_TOKEN_TTL_SECONDS);
+  const grant = await signClaims(
+    config,
+    `${role}-${call.id}`,
+    {
+      roomJoin: true,
+      room: call.room,
+      canPublish: true,
+      canPublishSources: ["microphone"],
+      canPublishData: false,
+      canSubscribe: true,
+      canUpdateOwnMetadata: false,
+    },
+    now,
+    CALL_TOKEN_TTL_SECONDS,
+  );
   return { url: config.url!, ...grant };
 }
 
@@ -78,7 +99,13 @@ export async function closeCallRoom(
   fetchImpl: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> = fetch,
 ): Promise<boolean> {
   if (!callRtcAvailable(config)) return false;
-  const grant = await signClaims(config, `server-${crypto.randomUUID()}`, { roomCreate: true }, Date.now(), 30);
+  const grant = await signClaims(
+    config,
+    `server-${crypto.randomUUID()}`,
+    { roomCreate: true },
+    Date.now(),
+    30,
+  );
   const url = new URL(config.url!);
   url.protocol = url.protocol === "wss:" ? "https:" : "http:";
   url.pathname = "/twirp/livekit.RoomService/DeleteRoom";
@@ -92,7 +119,7 @@ export async function closeCallRoom(
     });
     if (response.ok) return true;
     if (response.status === 404) {
-      const body = await response.json().catch(() => null) as { code?: unknown } | null;
+      const body = (await response.json().catch(() => null)) as { code?: unknown } | null;
       return body?.code === "not_found"; // room never acquired a participant
     }
     return false;

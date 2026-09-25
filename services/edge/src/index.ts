@@ -242,8 +242,10 @@ async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promis
     if (path === "/health") return json(env, { status: "ok", service: "edge" });
 
     if (request.method === "POST" && path === "/api/chat") return handleChat(request, env, ctx);
-    if (request.method === "POST" && path === "/api/call") return handleCall(request, env, "visitor");
-    if (request.method === "POST" && path === "/api/operator/call") return handleCall(request, env, "operator");
+    if (request.method === "POST" && path === "/api/call")
+      return handleCall(request, env, "visitor");
+    if (request.method === "POST" && path === "/api/operator/call")
+      return handleCall(request, env, "operator");
     if (request.method === "POST" && path === "/api/contact") return handleContact(request, env);
     if (request.method === "POST" && path === "/api/lead") return handleLead(request, env);
     if (request.method === "POST" && path === "/api/attachment")
@@ -316,19 +318,29 @@ async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promis
 
 // ── POST /api/chat ───────────────────────────────────────────────────────────
 /** Call control stays in the session DO. The caller cannot choose a room or role. */
-async function handleCall(request: Request, env: Env, actor: "visitor" | "operator"): Promise<Response> {
+async function handleCall(
+  request: Request,
+  env: Env,
+  actor: "visitor" | "operator",
+): Promise<Response> {
   const parsed: unknown = await request.json().catch(() => null);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
     return json(env, { error: "invalid_request" }, 400);
   const body = parsed as Record<string, unknown>;
   if (
-    typeof body.sessionId !== "string" || !body.sessionId || body.sessionId.length > 200 ||
-    typeof body.action !== "string" || !body.action || body.action.length > 20 ||
-    (body.tenantId !== undefined && (typeof body.tenantId !== "string" || !body.tenantId || body.tenantId.length > 200)) ||
+    typeof body.sessionId !== "string" ||
+    !body.sessionId ||
+    body.sessionId.length > 200 ||
+    typeof body.action !== "string" ||
+    !body.action ||
+    body.action.length > 20 ||
+    (body.tenantId !== undefined &&
+      (typeof body.tenantId !== "string" || !body.tenantId || body.tenantId.length > 200)) ||
     (body.id !== undefined && (typeof body.id !== "string" || body.id.length > 100)) ||
     (body.nonce !== undefined && (typeof body.nonce !== "string" || body.nonce.length > 100)) ||
     (body.visitorSecret !== undefined && typeof body.visitorSecret !== "string")
-  ) return json(env, { error: "invalid_request" }, 400);
+  )
+    return json(env, { error: "invalid_request" }, 400);
   const tenantId = body.tenantId || DEFAULT_TENANT;
   if (actor === "operator") {
     const denied = await authorizeOperator(request, env, tenantId as string);
@@ -336,17 +348,25 @@ async function handleCall(request: Request, env: Env, actor: "visitor" | "operat
   } else if (!body.visitorSecret || !/^[A-Za-z0-9_-]{43}$/.test(body.visitorSecret as string)) {
     return json(env, { error: "visitor_auth_required" }, 401);
   }
-  const rtc = { url: env.LIVEKIT_URL, apiKey: env.LIVEKIT_API_KEY, apiSecret: env.LIVEKIT_API_SECRET };
+  const rtc = {
+    url: env.LIVEKIT_URL,
+    apiKey: env.LIVEKIT_API_KEY,
+    apiSecret: env.LIVEKIT_API_SECRET,
+  };
   const clientUrl = env.LIVEKIT_CLIENT_URL;
   let clientReady = false;
   try {
     const u = new URL(clientUrl || "");
     clientReady = u.protocol === "https:" || (u.protocol === "http:" && u.hostname === "localhost");
-  } catch { /* no client bundle configured */ }
+  } catch {
+    /* no client bundle configured */
+  }
   const available = callRtcAvailable(rtc) && clientReady;
   if (!available) return json(env, { error: "call_unavailable", available: false }, 503);
-  if (actor === "visitor" && !["status", "accept", "decline", "end", "grant"].includes(body.action)) return json(env, { error: "wrong_actor" }, 403);
-  if (actor === "operator" && !["status", "invite", "cancel", "end", "grant"].includes(body.action)) return json(env, { error: "wrong_actor" }, 403);
+  if (actor === "visitor" && !["status", "accept", "decline", "end", "grant"].includes(body.action))
+    return json(env, { error: "wrong_actor" }, 403);
+  if (actor === "operator" && !["status", "invite", "cancel", "end", "grant"].includes(body.action))
+    return json(env, { error: "wrong_actor" }, 403);
   const headers: Record<string, string> = { "x-call-actor": actor };
   if (actor === "visitor") headers["x-call-visitor-secret"] = body.visitorSecret as string;
   const path = "https://do/call";
@@ -356,21 +376,39 @@ async function handleCall(request: Request, env: Env, actor: "visitor" | "operat
       headers: { ...headers, "content-type": "application/json" },
       body: JSON.stringify({ id: body.id }),
     });
-    const data = await response.json() as { error?: string; url?: string; token?: string; expiresAt?: number };
-    return response.ok ? json(env, { ...data, clientUrl }) : json(env, { error: data.error || "call_not_accepted" }, response.status);
+    const data = (await response.json()) as {
+      error?: string;
+      url?: string;
+      token?: string;
+      expiresAt?: number;
+    };
+    return response.ok
+      ? json(env, { ...data, clientUrl })
+      : json(env, { error: data.error || "call_not_accepted" }, response.status);
   }
   if (body.action === "status") {
     const response = await doFetch(env, tenantId, body.sessionId, path, { headers });
     if (!response.ok) return json(env, { error: "call_auth_failed" }, response.status);
-    const data = await response.json() as { call: ReturnType<typeof import("./call").publicCall>; nonce?: string };
-    return json(env, { available, call: data.call, ...(actor === "visitor" ? { nonce: data.nonce } : {}) });
+    const data = (await response.json()) as {
+      call: ReturnType<typeof import("./call").publicCall>;
+      nonce?: string;
+    };
+    return json(env, {
+      available,
+      call: data.call,
+      ...(actor === "visitor" ? { nonce: data.nonce } : {}),
+    });
   }
   const response = await doFetch(env, tenantId, body.sessionId, path, {
     method: "POST",
     headers: { ...headers, "content-type": "application/json" },
     body: JSON.stringify({ action: body.action, id: body.id, nonce: body.nonce }),
   });
-  const result = await response.json() as { call?: ReturnType<typeof import("./call").publicCall>; room?: string; error?: string };
+  const result = (await response.json()) as {
+    call?: ReturnType<typeof import("./call").publicCall>;
+    room?: string;
+    error?: string;
+  };
   if (!response.ok) return json(env, { error: result.error || "call_failed" }, response.status);
   return json(env, { call: result.call });
 }

@@ -200,6 +200,7 @@ Without the URL, chat and inbox persistence work but mobile push is skipped.
 A signed device build, notification permission, registered device token, and
 valid platform push credentials are also required; simulator chat tests do not
 prove notification delivery. Self-hosted installations may leave these unset.
+
 # Visitor audio calls (optional)
 
 Audio calls are off until the Worker has `LIVEKIT_URL`, `LIVEKIT_API_KEY`,

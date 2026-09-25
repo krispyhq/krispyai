@@ -138,10 +138,14 @@
         var secretBytes = new Uint8Array(32);
         crypto.getRandomValues(secretBytes);
         visitorSecret = btoa(String.fromCharCode.apply(null, secretBytes))
-          .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+          .replace(/\+/g, "-")
+          .replace(/\//g, "_")
+          .replace(/=+$/, "");
         localStorage.setItem(callKey, visitorSecret);
       }
-    } catch { visitorSecret = null; }
+    } catch {
+      visitorSecret = null;
+    }
   }
 
   var history = []; // {role, content} — sent for context, capped server-side
@@ -795,7 +799,11 @@
     sendForm = $(".ft"),
     sendBtn = sendForm.querySelector("button");
   var avatarEl = $(".av");
-  var callEl = $(".kcall"), callTitle = $(".kcall-title"), callNote = $(".kcall-note"), callControls = $(".kcall-controls"), callAudio = $(".kcall-audio");
+  var callEl = $(".kcall"),
+    callTitle = $(".kcall-title"),
+    callNote = $(".kcall-note"),
+    callControls = $(".kcall-controls"),
+    callAudio = $(".kcall-audio");
   var popEl = $(".pop"),
     popTxtEl = $(".popt");
   $(".ttl").textContent = cfg.title;
@@ -1559,13 +1567,27 @@
   };
 
   // ── consent-based audio call ────────────────────────────────────────────
-  var callState = null, callNonce = null, callRoom = null, callExpiryTimer = null;
+  var callState = null,
+    callNonce = null,
+    callRoom = null,
+    callExpiryTimer = null;
   var livekitLoading = null;
   var callVisitorConnected = false;
   function callRequest(action, extra) {
     return fetch(cfg.api + "/api/call", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify(Object.assign({ tenantId: cfg.tenant, sessionId: sessionId, visitorSecret: visitorSecret, action: action }, extra || {})),
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        Object.assign(
+          {
+            tenantId: cfg.tenant,
+            sessionId: sessionId,
+            visitorSecret: visitorSecret,
+            action: action,
+          },
+          extra || {},
+        ),
+      ),
     }).then(function (r) {
       return r.json().then(function (data) {
         if (!r.ok) throw new Error(data.error || "Call request failed");
@@ -1574,7 +1596,11 @@
     });
   }
   function stopCallMedia() {
-    if (callRoom) { var old = callRoom; callRoom = null; old.disconnect(true); }
+    if (callRoom) {
+      var old = callRoom;
+      callRoom = null;
+      old.disconnect(true);
+    }
     callAudio.replaceChildren();
   }
   function callButton(label, primary, fn) {
@@ -1599,30 +1625,59 @@
     callEl.classList.add("on");
     if (next.status === "ringing") {
       callTitle.textContent = "Incoming audio call";
-      callNote.textContent = "A team member would like to speak. Your microphone stays off until you accept.";
-      callButton("Decline", false, function () { callRequest("decline", { id: next.id, nonce: callNonce }).then(function (d) { renderCall(d.call); }).catch(showCallError); });
-      callButton("Accept", true, function () {
-        callRequest("accept", { id: next.id, nonce: callNonce }).then(function (d) {
-          renderCall(d.call);
-          return joinCall(next.id);
-        }).catch(showCallError);
+      callNote.textContent =
+        "A team member would like to speak. Your microphone stays off until you accept.";
+      callButton("Decline", false, function () {
+        callRequest("decline", { id: next.id, nonce: callNonce })
+          .then(function (d) {
+            renderCall(d.call);
+          })
+          .catch(showCallError);
       });
-      callExpiryTimer = setTimeout(function () { callRequest("status").then(function (d) { renderCall(d.call, d.nonce); }).catch(showCallError); }, Math.max(0, next.expiresAt - Date.now()) + 100);
+      callButton("Accept", true, function () {
+        callRequest("accept", { id: next.id, nonce: callNonce })
+          .then(function (d) {
+            renderCall(d.call);
+            return joinCall(next.id);
+          })
+          .catch(showCallError);
+      });
+      callExpiryTimer = setTimeout(
+        function () {
+          callRequest("status")
+            .then(function (d) {
+              renderCall(d.call, d.nonce);
+            })
+            .catch(showCallError);
+        },
+        Math.max(0, next.expiresAt - Date.now()) + 100,
+      );
     } else if (next.status === "accepted") {
       callTitle.textContent = callRoom ? "Audio call connected" : "Audio call accepted";
-      callNote.textContent = callRoom ? "Your microphone is on." : "Join when you are ready to use your microphone.";
-      if (!callRoom) callButton("Join call", true, function () { joinCall(next.id).catch(showCallError); });
+      callNote.textContent = callRoom
+        ? "Your microphone is on."
+        : "Join when you are ready to use your microphone.";
+      if (!callRoom)
+        callButton("Join call", true, function () {
+          joinCall(next.id).catch(showCallError);
+        });
       callButton("End call", false, function () {
         stopCallMedia();
-        callRequest("end", { id: next.id, nonce: callNonce }).then(function (d) { renderCall(d.call); }).catch(showCallError);
+        callRequest("end", { id: next.id, nonce: callNonce })
+          .then(function (d) {
+            renderCall(d.call);
+          })
+          .catch(showCallError);
       });
     }
   }
   function showCallError(error) {
-    callNote.textContent = error && error.message ? error.message.replace(/_/g, " ") : "Call could not connect.";
+    callNote.textContent =
+      error && error.message ? error.message.replace(/_/g, " ") : "Call could not connect.";
   }
   function loadLivekit(clientUrl) {
-    if (window.LivekitClient && window.LivekitClient.Room) return Promise.resolve(window.LivekitClient);
+    if (window.LivekitClient && window.LivekitClient.Room)
+      return Promise.resolve(window.LivekitClient);
     if (livekitLoading) return livekitLoading;
     livekitLoading = new Promise(function (resolve, reject) {
       var libraryScript = document.createElement("script");
@@ -1632,30 +1687,61 @@
         if (window.LivekitClient && window.LivekitClient.Room) resolve(window.LivekitClient);
         else reject(new Error("Audio library unavailable"));
       };
-      libraryScript.onerror = function () { reject(new Error("Audio library failed to load")); };
+      libraryScript.onerror = function () {
+        reject(new Error("Audio library failed to load"));
+      };
       document.head.appendChild(libraryScript);
-    }).catch(function (error) { livekitLoading = null; throw error; });
+    }).catch(function (error) {
+      livekitLoading = null;
+      throw error;
+    });
     return livekitLoading;
   }
   function joinCall(id) {
-    if (!callState || callState.id !== id || callState.status !== "accepted") return Promise.reject(new Error("Call is no longer active"));
+    if (!callState || callState.id !== id || callState.status !== "accepted")
+      return Promise.reject(new Error("Call is no longer active"));
     if (callRoom) return Promise.resolve();
     callNote.textContent = "Connecting…";
     return callRequest("grant", { id: id }).then(function (grant) {
       return loadLivekit(grant.clientUrl).then(function (LK) {
-        if (!callState || callState.id !== id || callState.status !== "accepted") throw new Error("Call is no longer active");
+        if (!callState || callState.id !== id || callState.status !== "accepted")
+          throw new Error("Call is no longer active");
         var room = new LK.Room();
-        room.on("trackSubscribed", function (track) { if (track.kind === "audio") callAudio.appendChild(track.attach()); });
-        room.on("trackUnsubscribed", function (track) { track.detach().forEach(function (el) { el.remove(); }); });
-        room.on("disconnected", function () { if (callRoom === room) { callRoom = null; callAudio.replaceChildren(); renderCall(callState); } });
-        return room.connect(grant.url, grant.token).then(function () {
-          if (!callState || callState.id !== id || callState.status !== "accepted") { room.disconnect(true); throw new Error("Call ended"); }
-          callRoom = room;
-          return room.localParticipant.setMicrophoneEnabled(true).then(function () {
-            if (!callState || callState.id !== id || callState.status !== "accepted") { stopCallMedia(); return; }
-            renderCall(callState);
+        room.on("trackSubscribed", function (track) {
+          if (track.kind === "audio") callAudio.appendChild(track.attach());
+        });
+        room.on("trackUnsubscribed", function (track) {
+          track.detach().forEach(function (el) {
+            el.remove();
           });
-        }).catch(function (error) { room.disconnect(true); throw error; });
+        });
+        room.on("disconnected", function () {
+          if (callRoom === room) {
+            callRoom = null;
+            callAudio.replaceChildren();
+            renderCall(callState);
+          }
+        });
+        return room
+          .connect(grant.url, grant.token)
+          .then(function () {
+            if (!callState || callState.id !== id || callState.status !== "accepted") {
+              room.disconnect(true);
+              throw new Error("Call ended");
+            }
+            callRoom = room;
+            return room.localParticipant.setMicrophoneEnabled(true).then(function () {
+              if (!callState || callState.id !== id || callState.status !== "accepted") {
+                stopCallMedia();
+                return;
+              }
+              renderCall(callState);
+            });
+          })
+          .catch(function (error) {
+            room.disconnect(true);
+            throw error;
+          });
       });
     });
   }
@@ -1677,7 +1763,8 @@
         "/api/session/" +
         encodeURIComponent(sessionId) +
         "/ws?t=" +
-        encodeURIComponent(cfg.tenant) + (visitorSecret ? "&v=" + encodeURIComponent(visitorSecret) : "");
+        encodeURIComponent(cfg.tenant) +
+        (visitorSecret ? "&v=" + encodeURIComponent(visitorSecret) : "");
       ws = new WebSocket(wsUrl);
       ws.onmessage = function (e) {
         if (e.data === "pong") return;
@@ -1689,7 +1776,10 @@
         }
         if (ev.type === "call") {
           renderCall(ev.call, ev.nonce);
-          if (ev.call && ev.call.status === "ringing") { notifyInbound(); open(); }
+          if (ev.call && ev.call.status === "ringing") {
+            notifyInbound();
+            open();
+          }
         } else if (ev.type === "ready") {
           handoffState = ev.handoffState || (ev.handedOff ? "operator" : "ai");
           handedOff = handoffState !== "ai";
@@ -1733,7 +1823,12 @@
       // keepalive so proxies don't idle-close (hibernation-friendly)
       ws.onopen = function () {
         wsBackoff = 3000; // healthy again — reset the backoff
-        if (callVisitorConnected) callRequest("status").then(function (d) { renderCall(d.call, d.nonce); }).catch(function () {});
+        if (callVisitorConnected)
+          callRequest("status")
+            .then(function (d) {
+              renderCall(d.call, d.nonce);
+            })
+            .catch(function () {});
         clearInterval(keepalive);
         keepalive = setInterval(function () {
           try {
@@ -2072,9 +2167,19 @@
           // Reconnect so this socket gets the call-visitor tag for private invites.
           if (ws && ws.readyState === WebSocket.OPEN) ws.close();
           else if (ws && ws.readyState === WebSocket.CONNECTING) {
-            ws.addEventListener("open", function () { ws.close(); }, { once: true });
+            ws.addEventListener(
+              "open",
+              function () {
+                ws.close();
+              },
+              { once: true },
+            );
           }
-          callRequest("status").then(function (d) { renderCall(d.call, d.nonce); }).catch(function () {});
+          callRequest("status")
+            .then(function (d) {
+              renderCall(d.call, d.nonce);
+            })
+            .catch(function () {});
         }
         var responseState = res.handoffState || (res.handedOff ? "operator" : "ai");
         if (responseState === "operator") {

@@ -25,7 +25,10 @@ export function currentCall(call: CallState | null | undefined, now: number): Ca
   if (call.status === "ringing" && now >= call.expiresAt) {
     return { ...call, status: "expired", endedAt: now };
   }
-  if (call.status === "accepted" && now >= (call.acceptedAt ?? call.createdAt) + CALL_MAX_DURATION_MS) {
+  if (
+    call.status === "accepted" &&
+    now >= (call.acceptedAt ?? call.createdAt) + CALL_MAX_DURATION_MS
+  ) {
     return { ...call, status: "ended", endedAt: now };
   }
   return call;
@@ -83,7 +86,11 @@ export function transitionCall(
 }
 
 /** The sole permission gate for issuing either participant's room token. */
-export function canJoinCall(call: CallState | null | undefined, expectedId: string, now: number): boolean {
+export function canJoinCall(
+  call: CallState | null | undefined,
+  expectedId: string,
+  now: number,
+): boolean {
   const current = currentCall(call, now);
   return current?.id === expectedId && current.status === "accepted";
 }
