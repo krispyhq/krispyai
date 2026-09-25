@@ -179,6 +179,7 @@ describe("visitor audio call controller", () => {
     const app = harness();
     app.renderCall(accepted);
     const joining = app.joinCall("call-1");
+    expect(app.joinCall("call-1")).toBe(joining);
     expect(
       app.callControls.children.filter((item) => item.textContent === "Join call"),
     ).toHaveLength(0);
@@ -200,6 +201,29 @@ describe("visitor audio call controller", () => {
     expect(app.micCalls).toEqual([true, false, true]);
     app.rooms[0]!.emit("reconnecting");
     expect(app.callTitle.textContent).toBe("Audio call reconnecting");
+  });
+
+  test("a failed microphone update restores the control for retry", async () => {
+    const app = harness();
+    app.renderCall(accepted);
+    const joining = app.joinCall("call-1");
+    app.grant.resolve({ clientUrl: "library", url: "room", token: "token" });
+    for (let i = 0; i < 10 && !app.rooms.length; i++) await tick();
+    app.connect.resolve();
+    await joining;
+    const mic = deferred<void>();
+    app.rooms[0]!.localParticipant.setMicrophoneEnabled = (enabled) => {
+      app.micCalls.push(enabled);
+      return mic.promise;
+    };
+    app.click("Mute");
+    expect(
+      app.callControls.children.find((item) => item.textContent === "Updating…")?.disabled,
+    ).toBe(true);
+    mic.reject(new Error("Microphone unavailable"));
+    await tick();
+    expect(app.callControls.children.some((item) => item.textContent === "Mute")).toBe(true);
+    expect(app.callNote.textContent).toBe("Microphone unavailable");
   });
 
   test("backgrounding during connect disconnects and ends the server call", async () => {
