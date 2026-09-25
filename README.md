@@ -132,6 +132,11 @@ Instagram glyph; the business chooses their label, link, and reveal timing.
 Operators can also send a configured form or Instagram button into an existing
 visitor conversation. The edge resolves the selected ID from that session's site,
 stores the card in the conversation history, and restores it when the widget reconnects.
+While a visitor waits for a team member, a compact "Talk to the team" card offers
+only the site's configured forms and contact links, plus a call request when that
+tenant's call settings and live call status permit it. Selecting a form opens it
+inside the chat; the lead includes recent conversation context. The choice card
+closes on operator takeover or AI resume, while any expanded form keeps its input.
 
 <details>
 <summary>Or set it up by hand (wrangler secrets)</summary>

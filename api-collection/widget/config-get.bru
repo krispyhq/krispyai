@@ -18,6 +18,7 @@ tests {
     expect(b).to.have.property("capabilities");
     expect(b.capabilities).to.have.property("attachments");
     expect(b).to.have.property("theme");
+    expect(b).to.have.property("forms");
     expect(b).to.not.have.property("botToken");
     expect(b).to.not.have.property("systemPrompt");
   });
@@ -25,10 +26,11 @@ tests {
 
 docs {
   PUBLIC (CORS-*, no secret): the widget's boot-time read of its appearance. Returns ONLY the
-  whitelist projection `{ capabilities, theme, ctas, script, popups }` — NEVER botToken/chatId/systemPrompt/
+  whitelist projection `{ capabilities, theme, ctas, forms, script, popups }` — NEVER botToken/chatId/systemPrompt/
   persona (persona is instruction text folded into the system prompt, never projected). `ctas`
   are CTA-capable connectors (minus `cta:false` opt-outs) with server-built hrefs + default
-  labels; `popups` is the popup engine (or the `theme.popupText` sugar). Do NOT confuse with the
+  labels; `forms` includes only display fields and excludes delivery connector IDs/destinations;
+  `popups` is the popup engine (or the `theme.popupText` sugar). Do NOT confuse with the
   secret-guarded `GET /api/tenant/config`, which returns the full config incl. the bot token.
   The theme includes launcherStyle (circle/pill) and launcherLabel when configured.
   `capabilities.attachments` is true only when screenshot paste/drop has a Telegram delivery channel.

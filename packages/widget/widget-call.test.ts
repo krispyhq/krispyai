@@ -117,7 +117,7 @@ function harness() {
     "document",
     "window",
     "fetch",
-    `${source.slice(start, end)}; return { renderCall, joinCall, stopCallMedia };`,
+    `var handoffChoices = null; function refreshHandoffChoices() {} function requestVisitorCall() {}; ${source.slice(start, end)}; return { renderCall, joinCall, stopCallMedia };`,
   ) as (...args: unknown[]) => {
     renderCall: (call: { id: string; status: string }) => void;
     joinCall: (id: string) => Promise<void>;

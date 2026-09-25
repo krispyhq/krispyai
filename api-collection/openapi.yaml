@@ -261,7 +261,7 @@ paths:
       operationId: widgetConfig
       description: >
         The widget's boot-time read of its appearance/forms. Returns ONLY the whitelist
-        projection (`capabilities`, `theme`, `ctas`, `script`, `popups`) — NEVER
+        projection (`capabilities`, `theme`, `ctas`, `forms`, `script`, `popups`) — NEVER
         botToken/chatId/systemPrompt/persona. Do not confuse with the secret-guarded
         `GET /api/tenant/config`, which returns the full config.
       security: [] # public — no auth
@@ -295,6 +295,19 @@ paths:
                         caption: { type: string }
                         url: { type: string, description: "wa.me/tel/https, built server-side." }
                         showAfterMs: { type: integer }
+                  forms:
+                    type: array
+                    description: "Visitor-renderable configured forms. Delivery connector IDs and destinations remain server-side."
+                    items:
+                      type: object
+                      required: [id, title, fields]
+                      properties:
+                        id: { type: string }
+                        title: { type: string }
+                        fields:
+                          type: array
+                          items: { $ref: "#/components/schemas/FormField" }
+                        successText: { type: string }
                   script: { $ref: "#/components/schemas/ConversationScript" }
                   popups:
                     type: array

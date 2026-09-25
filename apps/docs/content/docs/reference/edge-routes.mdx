@@ -17,7 +17,7 @@ one Cloudflare Worker hosts all of these plus the `SessionDO`. CORS allow-origin
 | `POST` | `/api/contact`                   | `{ sessionId, tenantId?, name?, contact?, message? }` → `{ ok: true }` — legacy contact-capture shim (maps onto the lead fan-out)                                                              |
 | `POST` | `/api/lead`                      | `{ tenantId?, sessionId, formId?, values, history }` → `{ ok: true }` after a configured form's email delivery is accepted; `502 delivery_failed` keeps the widget form available to retry     |
 | `GET`  | `/api/session/:id/ws?t=<tenant>` | WebSocket upgrade → `SessionDO`. `426` if not an upgrade. the visitor's live channel                                                                                                           |
-| `GET`  | `/api/widget/config?t=<tenant>`  | → `{ capabilities: { attachments }, theme, ctas, script, popups }` — the **public, secret-free** widget projection (whitelist only; no `persona`)                                              |
+| `GET`  | `/api/widget/config?t=<tenant>`  | → `{ capabilities: { attachments }, theme, ctas, forms, script, popups }` — the **public, secret-free** widget projection (whitelist only; no `persona` or form delivery routing)              |
 | `GET`  | `/api/usage?t=<tenant>`          | → `{ tenantId, usage: { ai, handoff, tokens }, plan, entitled, status, limits, withinLimits }`                                                                                                 |
 | `GET`  | `/health`                        | → `{ status: "ok", service: "edge" }`                                                                                                                                                          |
 
@@ -133,8 +133,8 @@ or wrong secret returns **401** (config routes) / **403** (webhook, billing) and
 <Callout type="warn">
   `GET /api/tenant/config` returns the **full** config (bot token included) and is secret-guarded.
   `GET /api/widget/config` is the public read the browser uses — it returns **only** the whitelist
-  (`capabilities`, `theme`, `ctas`, `script`, `popups`) and never the token/prompt/persona. don't
-  confuse them. see [security](/docs/security).
+  (`capabilities`, `theme`, `ctas`, `forms`, `script`, `popups`) and never the token/prompt/persona
+  or form connector IDs. don't confuse them. see [security](/docs/security).
 </Callout>
 
 <Callout>

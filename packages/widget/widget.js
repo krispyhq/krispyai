@@ -694,6 +694,13 @@
     ".cap button{padding:10px 14px;border:0;border-radius:12px;background:var(--k-primary);color:var(--k-primary-ink);font-size:14px;font-weight:720;letter-spacing:0}" +
     ".cap button:hover{background:var(--k-primary);filter:saturate(1.04)}" +
     ".cap a{border:0!important;border-radius:12px!important;background:var(--k-muted)!important;color:var(--k-espresso)!important;font-weight:650!important}" +
+    ".handoffchoices{align-self:stretch;padding:12px;background:var(--k-card);border-radius:18px;box-shadow:0 8px 22px rgba(36,33,46,.07);display:flex;flex-direction:column;gap:8px}" +
+    ".handoffchoices .choice-title{font-size:13px;font-weight:720;color:var(--k-espresso)}" +
+    ".handoffchoices .choice-actions{display:flex;flex-wrap:wrap;gap:7px}" +
+    ".handoffchoices .choice-actions button,.handoffchoices .choice-actions .cta{min-height:44px;padding:8px 11px;border:0;border-radius:12px;background:var(--k-muted);color:var(--k-espresso);font:600 13px var(--k-font);cursor:pointer;box-shadow:none}" +
+    ".handoffchoices .choice-actions .ctaitem{flex:1 1 auto}" +
+    ".handoffchoices .choice-actions .cta-instagram{background:linear-gradient(90deg,#833AB4,#E1306C,#F77737);color:#fff}" +
+    ".handoffchoices .choice-actions button:focus-visible{outline:3px solid var(--k-primary);outline-offset:2px}" +
     ".pop{max-width:278px;margin:0 0 11px auto;padding:13px 34px 13px 15px;background:rgba(255,255,255,.96);border:0;border-radius:18px;box-shadow:0 18px 48px rgba(36,33,46,.14);font-size:13px;line-height:1.45}" +
     "@keyframes kpopin{from{opacity:0;transform:translateY(12px) scale(.96)}to{opacity:1;transform:none}}" +
     ".pop.show{animation-duration:.38s;animation-timing-function:cubic-bezier(.2,.8,.2,1)}" +
@@ -849,6 +856,9 @@
   var repliedOnce = false; // first AI reply arms the afterReplyMs form fallback
   var attachmentsEnabled = true; // old edges omit capabilities; preserve their behavior
   var ctaRow = null; // lazily-created CTA-row card inside .log
+  var handoffChoices = null; // one contextual choice card while a teammate is pending
+  var handoffChoiceKey = "";
+  var handoffChoiceDismissed = false;
   var startersEl = null; // starter-chip strip above the composer (fresh conversation only)
   var popShown = false; // a teaser card is currently visible (one at a time)
   var currentPopupSource = ""; // source of the teaser currently shown
@@ -1641,6 +1651,7 @@
       return;
     if (next && (!callState || next.id !== callState.id)) stopCallMedia();
     callState = next;
+    refreshHandoffChoices();
     if (nonce) callNonce = nonce;
     if (next && next.status === "accepted" && document.visibilityState !== "visible") {
       endCallInBackground();
@@ -1652,6 +1663,7 @@
       stopCallMedia();
       if (
         callCanRequest &&
+        !handoffChoices &&
         visitorSecret &&
         callVisitorConnected &&
         document.visibilityState === "visible"
@@ -1660,17 +1672,7 @@
         callTitle.textContent = "Speak with a team member";
         callNote.textContent = "Request an audio call. Your microphone stays off until you join.";
         callButton("Request a call", true, function () {
-          callCanRequest = false;
-          renderCall(null);
-          callRequest("invite")
-            .then(function (d) {
-              renderCall(d.call, d.nonce);
-            })
-            .catch(function (error) {
-              callCanRequest = true;
-              renderCall(null);
-              showCallError(error);
-            });
+          requestVisitorCall();
         });
       } else callEl.classList.remove("on");
       return;
@@ -1982,6 +1984,8 @@
           handedOff = handoffState !== "ai";
           if (handoffState === "operator") markHuman();
           else if (handoffState === "pending") markWaiting();
+          else removeHandoffChoices();
+          if (handoffState === "pending") refreshHandoffChoices();
           syncServerMessages(ev.messages);
           syncCallStatus();
         } else if (ev.type === "operator") {
@@ -2001,6 +2005,7 @@
           handedOff = true;
           clearFallbacks();
           if (handoffState === "operator") markHuman();
+          else refreshHandoffChoices();
           syncCallStatus();
         } else if (ev.type === "resume") {
           // The AI took the session back (operator resolved it or went quiet).
@@ -2010,6 +2015,7 @@
           waitingMarked = false;
           humanMarked = false;
           callCanRequest = false;
+          removeHandoffChoices();
           renderCall(callState);
           syncCallStatus();
           add("sys", "You're back with the AI assistant. A human can rejoin anytime.");
@@ -2060,12 +2066,16 @@
   function markWaiting() {
     if (waitingMarked) return;
     waitingMarked = true;
-    add("sys", "A team member has been notified and will reply here.");
+    add("sys", "Waiting for the team. You can keep typing here.");
     clearFallbacks();
+    if (ctaRow) ctaRow.remove();
+    refreshHandoffChoices();
   }
 
   var humanMarked = false;
   function markHuman() {
+    removeHandoffChoices();
+    if (callCanRequest) renderCall(callState);
     if (humanMarked) return;
     humanMarked = true;
     add("sys", "A team member has joined the chat.");
@@ -2078,6 +2088,97 @@
     ctaTimers = [];
     formTimers.forEach(clearTimeout);
     formTimers = [];
+    if (handoffState === "pending" && ctaRow) ctaRow.remove();
+  }
+
+  function removeHandoffChoices() {
+    if (handoffChoices) handoffChoices.remove();
+    handoffChoices = null;
+    handoffChoiceKey = "";
+  }
+  function requestVisitorCall() {
+    callCanRequest = false;
+    renderCall(null);
+    callRequest("invite")
+      .then(function (d) {
+        renderCall(d.call, d.nonce);
+      })
+      .catch(function (error) {
+        callCanRequest = true;
+        renderCall(null);
+        showCallError(error);
+      });
+  }
+  function refreshHandoffChoices() {
+    if (handoffState !== "pending" || handoffChoiceDismissed || formOpen) {
+      removeHandoffChoices();
+      return;
+    }
+    var availableForms = forms.filter(function (form) {
+      return form && form.id && Array.isArray(form.fields) && form.fields.length;
+    });
+    var availableCtas = ctas.filter(function (cta) {
+      return cta && typeof cta.url === "string" && /^(https:\/\/|tel:)/i.test(cta.url);
+    });
+    var canRequestCall =
+      callCanRequest &&
+      visitorSecret &&
+      callVisitorConnected &&
+      document.visibilityState === "visible" &&
+      (!callState || ["declined", "canceled", "expired", "ended"].indexOf(callState.status) >= 0);
+    if (!availableForms.length && !availableCtas.length && !canRequestCall) {
+      removeHandoffChoices();
+      return;
+    }
+    var key = JSON.stringify({
+      call: Boolean(canRequestCall),
+      forms: availableForms.map(function (form) {
+        return [form.id, form.title, form.fields, form.successText];
+      }),
+      ctas: availableCtas.map(function (cta) {
+        return [cta.id, cta.type, cta.label, cta.caption, cta.url];
+      }),
+    });
+    if (handoffChoices && handoffChoices.isConnected && handoffChoiceKey === key) {
+      if (log.lastElementChild !== handoffChoices) log.appendChild(handoffChoices);
+      return;
+    }
+    removeHandoffChoices();
+    var card = document.createElement("div");
+    card.className = "handoffchoices";
+    var title = document.createElement("div");
+    title.className = "choice-title";
+    title.textContent = "Talk to the team";
+    card.appendChild(title);
+    var actions = document.createElement("div");
+    actions.className = "choice-actions";
+    if (canRequestCall) {
+      var call = document.createElement("button");
+      call.type = "button";
+      call.textContent = "Request a call";
+      call.addEventListener("click", requestVisitorCall);
+      actions.appendChild(call);
+    }
+    availableForms.forEach(function (form) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.textContent = form.title || "Leave details";
+      button.addEventListener("click", function () {
+        handoffChoiceDismissed = true;
+        removeHandoffChoices();
+        showForm(form);
+      });
+      actions.appendChild(button);
+    });
+    availableCtas.forEach(function (cta) {
+      renderCta(cta, actions);
+    });
+    card.appendChild(actions);
+    handoffChoices = card;
+    handoffChoiceKey = key;
+    log.appendChild(card);
+    if (canRequestCall) callEl.classList.remove("on");
+    card.scrollIntoView({ block: "nearest" });
   }
 
   // ── CTA engine (§4) — social-connector cards inside .log ─────────────────────
@@ -2218,6 +2319,7 @@
   var formOpen = false;
   function showForm(form, fromOperator) {
     if ((!fromOperator && formOpen) || !form || !Array.isArray(form.fields)) return;
+    removeHandoffChoices();
     formOpen = true;
     // any form showing cancels the afterReplyMs fallback (incl. a [!FORM] trigger)
     formTimers.forEach(clearTimeout);
@@ -2386,9 +2488,11 @@
           handoffState = "pending";
           handedOff = true;
           clearFallbacks();
+          if (res.handoff) handoffChoiceDismissed = false;
         } else {
           handoffState = "ai";
           handedOff = false;
+          removeHandoffChoices();
         }
         if (res.reply) {
           add(res.degraded ? "op" : "bot", res.reply);
@@ -2407,6 +2511,7 @@
           // Later silent turns/reconnects need one truthful waiting line of their own.
           if (res.handoff) waitingMarked = true;
           else markWaiting();
+          refreshHandoffChoices();
         }
       })
       .catch(function () {

@@ -102,6 +102,41 @@ export function publicWidgetConfig(
         showAfterMs: c.showAfterMs,
       }))
       .filter((c) => c.url !== undefined),
+    // The visitor may choose a configured form while waiting for a person. Keep
+    // connector routing server-side; the browser needs only renderable fields.
+    forms: (cfg?.forms ?? [])
+      .filter(
+        (form) =>
+          form &&
+          typeof form.id === "string" &&
+          form.id.length > 0 &&
+          typeof form.title === "string" &&
+          Array.isArray(form.fields),
+      )
+      .map((form) => ({
+        id: form.id,
+        title: form.title,
+        fields: form.fields
+          .filter(
+            (field) =>
+              field &&
+              typeof field.name === "string" &&
+              field.name.length > 0 &&
+              typeof field.label === "string" &&
+              ["text", "email", "tel", "textarea", "select"].includes(field.type),
+          )
+          .map((field) => ({
+            name: field.name,
+            label: field.label,
+            type: field.type,
+            required: field.required === true,
+            options: Array.isArray(field.options)
+              ? field.options.filter((option) => typeof option === "string")
+              : undefined,
+          })),
+        successText: typeof form.successText === "string" ? form.successText : undefined,
+      }))
+      .filter((form) => form.fields.length > 0),
     // Scripted opening sequence + starter chips (widget-side). Persona (tone/style) is the
     // server-only half and is NOT projected. Caps mirror the widget render limits (§3.7).
     script: {

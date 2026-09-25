@@ -12,6 +12,11 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Added
 
+- Pending human handoffs now offer one compact choice card built from the site's
+  configured forms and contact CTAs, with an audio-call request only when available.
+  Form choices expand inline and retain visitor input if a team member takes over;
+  no unconfigured contact form or delivery route is created.
+
 - Operators can send a site's configured lead form or Instagram CTA directly into a
   visitor conversation. The typed card is stored in session history and restored on reconnect.
 
