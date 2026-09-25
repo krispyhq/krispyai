@@ -68,7 +68,12 @@ function harness(
       }),
     },
   } as unknown as Env;
-  const post = (route: string, body: object, authorized = false) =>
+  const post = (
+    route: string,
+    body: object,
+    authorized = false,
+    ctx?: { waitUntil(promise: Promise<unknown>): void },
+  ) =>
     worker.fetch(
       new Request(`https://edge.example.test${route}`, {
         method: "POST",
@@ -79,6 +84,7 @@ function harness(
         body: JSON.stringify(body),
       }),
       env,
+      ctx,
     );
   const register = async (session: string, secret: string, tenant = "acme") => {
     const name = `${tenant}:${session}`;
@@ -413,6 +419,55 @@ test("a new visitor request pushes once with call metadata", async () => {
       data: { kind: "call_request", callId: id },
     });
   } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("visitor invite responds before a delayed operator push and schedules it once", async () => {
+  const h = harness();
+  await h.register("session-a", secretA);
+  h.env.PUSH_TOKENS_URL = "https://push.example.test/tokens";
+  const originalFetch = globalThis.fetch;
+  let releaseTokens!: () => void;
+  const tokensReleased = new Promise<void>((resolve) => {
+    releaseTokens = resolve;
+  });
+  const scheduled: Promise<unknown>[] = [];
+  const ctx = {
+    waitUntil(promise: Promise<unknown>) {
+      scheduled.push(promise);
+    },
+  };
+  const pushes: unknown[] = [];
+  try {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("push.example.test")) {
+        await tokensReleased;
+        return Response.json({ tokens: ["ExponentPushToken[test]"] });
+      }
+      if (url.includes("exp.host")) {
+        pushes.push(...JSON.parse(String(init?.body)));
+        return Response.json({ data: [] });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }) as typeof fetch;
+    const response = await Promise.race([
+      h.post("/api/call", visitor("invite"), false, ctx),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("invite waited for push")), 2000),
+      ),
+    ]);
+    expect(response.status).toBe(200);
+    expect(scheduled).toHaveLength(1);
+    expect(pushes).toHaveLength(0);
+    expect((await h.post("/api/call", visitor("invite"), false, ctx)).status).toBe(200);
+    expect(scheduled).toHaveLength(1);
+    releaseTokens();
+    await Promise.all(scheduled);
+    expect(pushes).toHaveLength(1);
+  } finally {
+    releaseTokens();
     globalThis.fetch = originalFetch;
   }
 });

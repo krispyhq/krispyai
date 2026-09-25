@@ -243,9 +243,9 @@ async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promis
 
     if (request.method === "POST" && path === "/api/chat") return handleChat(request, env, ctx);
     if (request.method === "POST" && path === "/api/call")
-      return handleCall(request, env, "visitor");
+      return handleCall(request, env, "visitor", ctx);
     if (request.method === "POST" && path === "/api/operator/call")
-      return handleCall(request, env, "operator");
+      return handleCall(request, env, "operator", ctx);
     if (request.method === "POST" && path === "/api/contact") return handleContact(request, env);
     if (request.method === "POST" && path === "/api/lead") return handleLead(request, env);
     if (request.method === "POST" && path === "/api/attachment")
@@ -322,6 +322,7 @@ async function handleCall(
   request: Request,
   env: Env,
   actor: "visitor" | "operator",
+  ctx?: WaitUntilContext,
 ): Promise<Response> {
   const parsed: unknown = await request.json().catch(() => null);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
@@ -454,12 +455,22 @@ async function handleCall(
     body.action === "invite" &&
     result.changed &&
     callSettings?.notifyOnVisitorRequest !== false
-  )
-    await pushToApp(env, tenantId, body.sessionId, "Open the conversation to respond.", fetch, {
-      kind: "call_request",
-      callId: result.call!.id,
-      expiresAt: result.call!.expiresAt,
-    });
+  ) {
+    const push = pushToApp(
+      env,
+      tenantId,
+      body.sessionId,
+      "Open the conversation to respond.",
+      fetch,
+      {
+        kind: "call_request",
+        callId: result.call!.id,
+        expiresAt: result.call!.expiresAt,
+      },
+    );
+    if (ctx) ctx.waitUntil(push);
+    else await push;
+  }
   return json(env, {
     call: result.call,
     ...(actor === "visitor" && body.action === "invite" ? { nonce: result.nonce } : {}),
