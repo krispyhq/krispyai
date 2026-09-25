@@ -270,6 +270,8 @@ export interface Env {
   RESEND_API_KEY?: string;
   /** Verified-domain from-address for lead email. */
   LEAD_EMAIL_FROM?: string;
+  /** Optional HTTPS inbox URL for the lead email's Open in Buttr action. */
+  BUTTR_INBOX_URL?: string;
 }
 
 /** Strongly-consistent owner of the next reply for one chat session. */
