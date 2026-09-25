@@ -173,6 +173,7 @@ test("widget rejects the same malformed receipt envelopes as the edge validator"
   const app = harness();
   const invalid = [
     { ...receipt, callId: "call-1" },
+    { ...receipt, sessionId: "x".repeat(201) },
     { ...receipt, revision: 0 },
     { ...receipt, revision: 1.5 },
     { ...receipt, startedAt: receipt.startedAt + 0.5 },

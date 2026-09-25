@@ -111,6 +111,9 @@ without moving the reader's scroll position. If either endpoint time was only
 observed, the time and duration are labeled approximate. Calls are not
 recorded or summarized. Receipts require the runtime 0.5 coordinator outbox;
 the stored schema alone does not make them appear.
+Older locally saved chat bubbles without timestamps retain their own order;
+historical receipts appear before that uncertain block, rather than assigning
+those bubbles invented page-load times.
 
 During a call, choose **Audio settings** on the call card to expand device
 controls. The microphone menu lists already permitted inputs and changes the

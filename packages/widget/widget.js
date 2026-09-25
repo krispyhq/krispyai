@@ -1434,6 +1434,9 @@
     if (
       !receipt ||
       receipt.sessionId !== sessionId ||
+      typeof receipt.sessionId !== "string" ||
+      receipt.sessionId.length === 0 ||
+      receipt.sessionId.length > 200 ||
       typeof receipt.callId !== "string" ||
       !callReceiptUuid.test(receipt.callId) ||
       !["ended", "missed", "declined", "canceled"].includes(receipt.outcome) ||
