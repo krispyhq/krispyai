@@ -338,6 +338,16 @@ describe("operator reply drafts", () => {
     expect(messages.slice(1).every((m) => m.content.length <= 609)).toBe(true);
   });
 
+  test("anchors drafts to the latest visitor when the transcript ends with an AI reply", () => {
+    const messages = draftMessages(tenant, [
+      { role: "visitor", text: "Where can I pay?", ts: 1 },
+      { role: "ai", text: "Use the approved checkout link.", ts: 2 },
+    ]);
+    expect(messages.at(-1)?.role).toBe("user");
+    expect(messages.at(-1)?.content).toContain("Where can I pay?");
+    expect(messages.at(-1)?.content).toContain("JSON object");
+  });
+
   test("puts matching knowledge ahead of unrelated long sources within the prompt cap", () => {
     const messages = draftMessages(
       {

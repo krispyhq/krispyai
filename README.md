@@ -135,6 +135,8 @@ stores the card in the conversation history, and restores it when the widget rec
 Operator reply suggestions are editable and never sent automatically. Approved
 course and checkout links remain available when the model places sentence punctuation
 after the link; changed or unapproved links are filtered.
+The draft request stays focused on the latest visitor question even after an AI reply;
+the Delulus pilot asks its model for structured JSON only on this operator action.
 While a visitor waits for a team member, a compact "Talk to the team" card offers
 only the site's configured forms and contact links, plus a call request when that
 tenant's call settings and live call status permit it. Selecting a form opens it

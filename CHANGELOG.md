@@ -36,6 +36,9 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 - Operator reply drafts now retain tenant-approved or validated knowledge links
   with sentence punctuation, including links beyond the model prompt slice;
   changed links remain filtered.
+- Operator reply drafts now focus on the latest visitor request after an AI turn,
+  and the Delulus pilot requests structured JSON for this action so useful replies
+  are not lost as non-JSON model output.
 
 - Preview edge deploys now sync the configured Gemini and LiveKit
   bindings alongside the existing Worker secrets.

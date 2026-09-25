@@ -14,6 +14,15 @@ const MAX_INSTRUCTIONS_CHARS = 4_000;
 const DRAFT_TIMEOUT_MS = 12_000;
 const DRAFT_RATE_MAX = 20;
 const DRAFT_RATE_WINDOW_SEC = 3600;
+const DRAFT_JSON_SCHEMA = {
+  name: "operator_reply_drafts",
+  schema: {
+    type: "object",
+    properties: { drafts: { type: "array", items: { type: "string" } } },
+    required: ["drafts"],
+    additionalProperties: false,
+  },
+};
 
 type DraftDeps = {
   authorize?: typeof authorizeOperator;
@@ -146,13 +155,20 @@ export function draftMessages(tenant: TenantConfig, ring: RingMsg[]): ChatMessag
       ? `Business source material:\n${knowledge}`
       : "No business source material was configured.",
   ].join("\n\n");
-  return [
+  const messages: ChatMessage[] = [
     { role: "system", content: system },
     ...ring.slice(-MAX_CONTEXT_MESSAGES).map((m) => ({
       role: m.role === "visitor" ? ("user" as const) : ("assistant" as const),
       content: `${m.role}: ${m.text.slice(0, MAX_MESSAGE_CHARS)}`,
     })),
   ];
+  if (ring.at(-1)?.role !== "visitor" && latestQuestion(ring)) {
+    messages.push({
+      role: "user",
+      content: `Draft editable operator replies to the visitor's latest request: ${latestQuestion(ring).slice(0, MAX_MESSAGE_CHARS)}\nReturn only the requested JSON object.`,
+    });
+  }
+  return messages;
 }
 
 async function readRing(deps: DraftDeps, env: Env, tenantId: string, sessionId: string) {
@@ -234,6 +250,8 @@ export async function handleOperatorReplyDrafts(
             tenantId,
             siteId,
             tenant.model || env.AI_MODEL,
+            fetch,
+            DRAFT_JSON_SCHEMA,
           )(messages);
         },
         env,
