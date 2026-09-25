@@ -80,6 +80,12 @@ chat. you don't wire this by hand — configuring a form is enough.
 `instagram` are **CTA-only**: the widget renders them as links for the visitor to tap;
 nothing is delivered server-side for them, and they never leave the server as data.
 
+An operator can send an existing form or Instagram CTA while talking with a visitor.
+The app lists the forms and visitor-facing Instagram connectors configured for that
+conversation's site. Selecting one places a card in the chat transcript. The form
+uses the same `/api/lead` delivery path as a bot-offered form, and the Instagram
+button uses the connector's configured HTTPS profile URL. Cards survive reconnects.
+
 ## the two capture paths
 
 - **`[!FORM:<id>]`** → the widget renders your `FormSpec`; on submit it `POST`s to

@@ -129,6 +129,9 @@ submission only after the email provider accepts it; on failure the visitor keep
 their entries and can retry.
 Instagram connectors render as clear, tappable chat buttons with the familiar
 Instagram glyph; the business chooses their label, link, and reveal timing.
+Operators can also send a configured form or Instagram button into an existing
+visitor conversation. The edge resolves the selected ID from that session's site,
+stores the card in the conversation history, and restores it when the widget reconnects.
 
 <details>
 <summary>Or set it up by hand (wrangler secrets)</summary>

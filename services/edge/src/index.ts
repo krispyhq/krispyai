@@ -30,10 +30,12 @@ import {
   sendPhotoToTopic,
 } from "./telegram";
 import { authorizeOperator } from "./operator-auth";
+import { handleOperatorReplyDrafts } from "./reply-drafts";
+import { callRtcAvailable } from "./call-token";
 import { stampSeen, readSeen } from "./liveness";
 import { pushToApp } from "./push";
 import { renderLeadEmail, sendLeadEmail } from "./email";
-import type { Connector, Env, FormSpec, HandoffState, TenantConfig } from "./types";
+import type { Connector, Env, FormSpec, HandoffState, OperatorAction, TenantConfig } from "./types";
 import {
   getTenant,
   hasTelegramConfig,
@@ -240,6 +242,8 @@ async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promis
     if (path === "/health") return json(env, { status: "ok", service: "edge" });
 
     if (request.method === "POST" && path === "/api/chat") return handleChat(request, env, ctx);
+    if (request.method === "POST" && path === "/api/call") return handleCall(request, env, "visitor");
+    if (request.method === "POST" && path === "/api/operator/call") return handleCall(request, env, "operator");
     if (request.method === "POST" && path === "/api/contact") return handleContact(request, env);
     if (request.method === "POST" && path === "/api/lead") return handleLead(request, env);
     if (request.method === "POST" && path === "/api/attachment")
@@ -248,6 +252,12 @@ async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promis
       return handleWebhook(request, env);
     if (request.method === "POST" && path === "/api/operator/reply")
       return handleOperatorReply(request, env);
+    if (request.method === "POST" && path === "/api/operator/reply-drafts")
+      return handleOperatorReplyDrafts(request, env, { doFetch, json });
+    if (request.method === "POST" && path === "/api/operator/actions")
+      return handleOperatorActions(request, env);
+    if (request.method === "POST" && path === "/api/operator/send-action")
+      return handleOperatorSendAction(request, env);
     if (request.method === "POST" && path === "/api/operator/handoffs")
       return handleOperatorHandoffs(request, env);
     if (request.method === "POST" && path === "/api/operator/thread")
@@ -305,6 +315,66 @@ async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promis
 }
 
 // ── POST /api/chat ───────────────────────────────────────────────────────────
+/** Call control stays in the session DO. The caller cannot choose a room or role. */
+async function handleCall(request: Request, env: Env, actor: "visitor" | "operator"): Promise<Response> {
+  const parsed: unknown = await request.json().catch(() => null);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    return json(env, { error: "invalid_request" }, 400);
+  const body = parsed as Record<string, unknown>;
+  if (
+    typeof body.sessionId !== "string" || !body.sessionId || body.sessionId.length > 200 ||
+    typeof body.action !== "string" || !body.action || body.action.length > 20 ||
+    (body.tenantId !== undefined && (typeof body.tenantId !== "string" || !body.tenantId || body.tenantId.length > 200)) ||
+    (body.id !== undefined && (typeof body.id !== "string" || body.id.length > 100)) ||
+    (body.nonce !== undefined && (typeof body.nonce !== "string" || body.nonce.length > 100)) ||
+    (body.visitorSecret !== undefined && typeof body.visitorSecret !== "string")
+  ) return json(env, { error: "invalid_request" }, 400);
+  const tenantId = body.tenantId || DEFAULT_TENANT;
+  if (actor === "operator") {
+    const denied = await authorizeOperator(request, env, tenantId as string);
+    if (denied) return json(env, { error: denied.error }, denied.status);
+  } else if (!body.visitorSecret || !/^[A-Za-z0-9_-]{43}$/.test(body.visitorSecret as string)) {
+    return json(env, { error: "visitor_auth_required" }, 401);
+  }
+  const rtc = { url: env.LIVEKIT_URL, apiKey: env.LIVEKIT_API_KEY, apiSecret: env.LIVEKIT_API_SECRET };
+  const clientUrl = env.LIVEKIT_CLIENT_URL;
+  let clientReady = false;
+  try {
+    const u = new URL(clientUrl || "");
+    clientReady = u.protocol === "https:" || (u.protocol === "http:" && u.hostname === "localhost");
+  } catch { /* no client bundle configured */ }
+  const available = callRtcAvailable(rtc) && clientReady;
+  if (!available) return json(env, { error: "call_unavailable", available: false }, 503);
+  if (actor === "visitor" && !["status", "accept", "decline", "end", "grant"].includes(body.action)) return json(env, { error: "wrong_actor" }, 403);
+  if (actor === "operator" && !["status", "invite", "cancel", "end", "grant"].includes(body.action)) return json(env, { error: "wrong_actor" }, 403);
+  const headers: Record<string, string> = { "x-call-actor": actor };
+  if (actor === "visitor") headers["x-call-visitor-secret"] = body.visitorSecret as string;
+  const path = "https://do/call";
+  if (body.action === "grant") {
+    const response = await doFetch(env, tenantId, body.sessionId, "https://do/call/grant", {
+      method: "POST",
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({ id: body.id }),
+    });
+    const data = await response.json() as { error?: string; url?: string; token?: string; expiresAt?: number };
+    return response.ok ? json(env, { ...data, clientUrl }) : json(env, { error: data.error || "call_not_accepted" }, response.status);
+  }
+  if (body.action === "status") {
+    const response = await doFetch(env, tenantId, body.sessionId, path, { headers });
+    if (!response.ok) return json(env, { error: "call_auth_failed" }, response.status);
+    const data = await response.json() as { call: ReturnType<typeof import("./call").publicCall>; nonce?: string };
+    return json(env, { available, call: data.call, ...(actor === "visitor" ? { nonce: data.nonce } : {}) });
+  }
+  const response = await doFetch(env, tenantId, body.sessionId, path, {
+    method: "POST",
+    headers: { ...headers, "content-type": "application/json" },
+    body: JSON.stringify({ action: body.action, id: body.id, nonce: body.nonce }),
+  });
+  const result = await response.json() as { call?: ReturnType<typeof import("./call").publicCall>; room?: string; error?: string };
+  if (!response.ok) return json(env, { error: result.error || "call_failed" }, response.status);
+  return json(env, { call: result.call });
+}
+
 async function handleChat(
   request: Request,
   env: Env,
@@ -317,6 +387,7 @@ async function handleChat(
     tenantId?: string;
     siteId?: string;
     history?: ChatMessage[];
+    visitorSecret?: string;
   } | null;
   if (!body?.sessionId || !body.message?.trim()) {
     return json(env, { error: "sessionId and message required" }, 400);
@@ -345,6 +416,15 @@ async function handleChat(
   }
   if (!withinPlan(await getUsage(env, tenantId), ent.plan_limits)) {
     return json(env, { error: "usage_limit_reached", plan: ent.plan }, 429);
+  }
+  // First chat binds a separate random visitor capability to this session. The
+  // operator can see the session ID, but never this secret or invitation nonce.
+  if (body.visitorSecret && /^[A-Za-z0-9_-]{43}$/.test(body.visitorSecret)) {
+    await doFetch(env, tenantId, body.sessionId, "https://do/call/visitor/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ secret: body.visitorSecret }),
+    });
   }
   // Index only after entitlement and usage gates succeed. This dedicated namespace
   // cannot overwrite the legacy Telegram session→thread map.
@@ -875,6 +955,104 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
 // numeric id; the app has none). Per-operator ids when the app grows multi-operator auth.
 const APP_OPERATOR_ID = 0;
 
+/** Resolve a session's authoritative site before reading any configured action. */
+async function operatorSessionSite(
+  env: Env,
+  tenantId: string,
+  sessionId: string,
+  claimedSiteId?: string,
+): Promise<string | Response> {
+  const identity = await doFetch(env, tenantId, sessionId, "https://do/identity");
+  const stored = (await identity.json()) as { tenantId: string | null; siteId: string };
+  if (stored.tenantId !== tenantId) return json(env, { error: "session_not_found" }, 404);
+  if (claimedSiteId && claimedSiteId !== stored.siteId)
+    return json(env, { error: "site_mismatch" }, 403);
+  return stored.siteId;
+}
+
+function operatorActionCatalog(config: TenantConfig | null) {
+  return {
+    forms: (config?.forms ?? [])
+      .filter((form) => form.id && Array.isArray(form.fields))
+      .map((form) => ({ id: form.id, title: form.title })),
+    connectors: publicWidgetConfig(config).ctas.filter(
+      (cta) => cta.type === "instagram" && cta.url?.startsWith("https://"),
+    ),
+  };
+}
+
+// Both routes require a real session. The DO's identity was written on its first
+// visitor chat turn; the supplied site is only an optional assertion against it.
+async function operatorActionContext(request: Request, env: Env) {
+  const body = (await request.json().catch(() => null)) as {
+    tenantId?: string;
+    sessionId?: string;
+    siteId?: string;
+    kind?: "form" | "instagram";
+    id?: string;
+  } | null;
+  if (!body?.tenantId || !body.sessionId)
+    return { error: json(env, { error: "tenantId and sessionId required" }, 400) };
+  const siteId = siteOr400(env, body.siteId);
+  if (siteId instanceof Response) return { error: siteId };
+  const denied = await authorizeOperator(request, env, body.tenantId);
+  if (denied) return { error: json(env, { error: denied.error }, denied.status) };
+  const actualSite = await operatorSessionSite(env, body.tenantId, body.sessionId, siteId);
+  if (actualSite instanceof Response) return { error: actualSite };
+  const config = await readTenantConfig(env, body.tenantId, actualSite);
+  return { body, config, actualSite };
+}
+
+async function handleOperatorActions(request: Request, env: Env): Promise<Response> {
+  const context = await operatorActionContext(request, env);
+  if (context.error) return context.error;
+  return json(env, operatorActionCatalog(context.config));
+}
+
+async function handleOperatorSendAction(request: Request, env: Env): Promise<Response> {
+  const context = await operatorActionContext(request, env);
+  if (context.error) return context.error;
+  const { body, config } = context;
+  if (!body?.id || (body.kind !== "form" && body.kind !== "instagram"))
+    return json(env, { error: "kind and id required" }, 400);
+  const catalog = operatorActionCatalog(config);
+  let action: OperatorAction;
+  if (body.kind === "form") {
+    const configured = config?.forms?.find((form) => form.id === body.id);
+    if (!configured || !catalog.forms.some((form) => form.id === body.id))
+      return json(env, { error: "action_not_found" }, 404);
+    action = {
+      kind: "form",
+      form: {
+        id: configured.id,
+        title: configured.title,
+        fields: configured.fields,
+        successText: configured.successText,
+      },
+    };
+  } else {
+    const configured = catalog.connectors.find((connector) => connector.id === body.id);
+    if (!configured?.url) return json(env, { error: "action_not_found" }, 404);
+    action = {
+      kind: "instagram",
+      connector: {
+        id: configured.id,
+        type: "instagram",
+        label: configured.label ?? "DM us on Instagram",
+        caption: configured.caption,
+        url: configured.url,
+      },
+    };
+  }
+  const response = await doFetch(env, body.tenantId!, body.sessionId!, "https://do/action", {
+    method: "POST",
+    body: JSON.stringify({ action }),
+  });
+  const { delivered } = (await response.json()) as { delivered: number };
+  await meter(env, body.tenantId!, "handoff");
+  return json(env, { ok: true, delivered, action });
+}
+
 // POST /api/operator/reply { tenantId, sessionId, text, operatorName? }
 // → visitor's widget receives { type: "operator", handoffState: "operator", text }
 // over its existing WS.
@@ -952,6 +1130,7 @@ async function handleOperatorHandoffs(request: Request, env: Env): Promise<Respo
         resolved?: boolean;
         lastMessage: string | null;
         ts: number | null;
+        siteId?: string;
       };
       const handoffState = s.handoffState ?? (s.handedOff ? "operator" : "ai");
       const resolved = s.resolved === true;
@@ -966,6 +1145,7 @@ async function handleOperatorHandoffs(request: Request, env: Env): Promise<Respo
             handoffState,
             handedOff: s.handedOff,
             ts: s.ts,
+            siteId: s.siteId ?? "default",
             resolved,
           }
         : null;

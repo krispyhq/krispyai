@@ -42,6 +42,28 @@ another tenant with `403`. During rollout, a `/me` response without `tenantId` f
 to its nonempty `id`; malformed identity fields fail closed with `401`. Verified tokens
 are cached per Worker isolate for 60 seconds.
 
+`POST /api/operator/actions` takes `{ tenantId, sessionId, siteId? }` and returns
+`{ forms: [{ id, title }], connectors: [{ id, type: "instagram", label, caption?, url }] }`.
+`POST /api/operator/send-action` adds `kind: "form" | "instagram"` and `id`; it returns
+`{ ok: true, delivered, action }`. Both use the operator bearer or tenant sync secret.
+`POST /api/operator/reply-drafts` takes `{ tenantId, sessionId, siteId? }` and returns
+`{ drafts: string[], sourceRevision, sourceLastMessageTs, stale? }`. It reads the
+session transcript on the server, uses the tenant's configured knowledge and AI
+provider for the session's recorded site, and returns up to three editable suggestions.
+An optional `siteId` only asserts that recorded site; a mismatch returns `403`.
+It never sends a reply.
+The app requests them on demand and discards a result when the transcript changes.
+Uncertain or failed generation returns an empty array; repeated requests are capped
+at 20 per session per hour (`429`; concurrent bursts can exceed the coarse KV counter).
+Direct Gemini remains limited to the approved
+pilot tenant and site.
+The server reads the session's recorded site and resolves the ID from that site's
+configured forms/connectors. An optional `siteId` must match. Missing session or ID
+returns `404`, a site mismatch returns `403`, and malformed fields return `400`.
+The typed card appears in `/api/operator/thread` history and the visitor WebSocket
+(`type: "action"`); reconnect `ready.messages` restores it. The form submits through
+the existing `/api/lead` path. The inbox row also includes the recorded `siteId`.
+
 Telegram is optional for the Buttr inbox. Before moving a session to `pending`, the Worker writes
 `handoff:<tenant>:<session>` to KV. With `includeActive: true`, the operator inbox also lists
 unresolved AI-only conversations indexed under `conversation:<tenant>:<session>`. Topic links

@@ -243,6 +243,12 @@ export interface Env {
   /** Shared secret the Worker attaches to internal Worker→SessionDO calls (rotatable;
    * a build-time default is used when unset — DOs aren't publicly addressable). */
   DO_INTERNAL_SECRET?: string;
+  /** Optional self-hosted or Cloud LiveKit signaling URL; calls fail closed when absent. */
+  LIVEKIT_URL?: string;
+  LIVEKIT_API_KEY?: string;
+  LIVEKIT_API_SECRET?: string;
+  /** Pinned, trusted browser UMD bundle URL for livekit-client; no runtime widget deps. */
+  LIVEKIT_CLIENT_URL?: string;
 
   // --- operator-app push (Buttr; optional — unset → pushToApp no-ops) ---
   /** Cloud endpoint returning a tenant's Expo push tokens (see push.ts contract). */
@@ -260,16 +266,33 @@ export interface Env {
 /** Strongly-consistent owner of the next reply for one chat session. */
 export type HandoffState = "ai" | "pending" | "operator";
 
+/** A safe, resolved snapshot of a configured item sent by a human operator. */
+export type OperatorAction =
+  | { kind: "form"; form: Pick<FormSpec, "id" | "title" | "fields" | "successText"> }
+  | {
+      kind: "instagram";
+      connector: { id: string; type: "instagram"; label: string; caption?: string; url: string };
+    };
+
+export interface SessionMessage {
+  role: "visitor" | "ai" | "operator";
+  text: string;
+  ts: number;
+  action?: OperatorAction;
+}
+
 /** Message pushed over the DO WebSocket to the visitor's browser. */
 export type ServerEvent =
+  | { type: "call"; call: ReturnType<typeof import("./call").publicCall>; nonce?: string }
   | {
       type: "ready";
       handoffState: HandoffState;
       handedOff: boolean;
       /** Authoritative ring snapshot for clients reconnecting after backgrounding. */
-      messages?: { role: "visitor" | "ai" | "operator"; text: string; ts: number }[];
+      messages?: SessionMessage[];
     }
   | { type: "operator"; handoffState: "operator"; text: string; ts: number }
+  | { type: "action"; handoffState: "operator"; text: string; ts: number; action: OperatorAction }
   | { type: "handoff"; handoffState: "pending" | "operator" }
   /** The AI took the session back (operator resolved it, or went silent past the
    * HANDBACK_SILENCE_MINUTES alarm). Widget drops its "human joined" framing. */

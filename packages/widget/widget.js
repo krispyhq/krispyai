@@ -127,6 +127,22 @@
       String(Date.now()) + Math.random().toString(16).slice(2);
     localStorage.setItem(KEY, sessionId);
   }
+  // Call authorization is separate from the chat session ID visible to operators.
+  // No weak random fallback: calls stay unavailable without WebCrypto.
+  var visitorSecret = null;
+  if (crypto && crypto.getRandomValues) {
+    var callKey = "krispy_call_cap_" + cfg.tenant + "_" + sessionId;
+    try {
+      visitorSecret = localStorage.getItem(callKey);
+      if (!visitorSecret || !/^[A-Za-z0-9_-]{43}$/.test(visitorSecret)) {
+        var secretBytes = new Uint8Array(32);
+        crypto.getRandomValues(secretBytes);
+        visitorSecret = btoa(String.fromCharCode.apply(null, secretBytes))
+          .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+        localStorage.setItem(callKey, visitorSecret);
+      }
+    } catch { visitorSecret = null; }
+  }
 
   var history = []; // {role, content} — sent for context, capped server-side
 
@@ -142,8 +158,8 @@
     savedMsgs = [];
   }
   var restoring = false;
-  function persistMsg(cls, text) {
-    savedMsgs.push({ c: cls, t: String(text) });
+  function persistMsg(cls, text, action, ts) {
+    savedMsgs.push(cls === "action" ? { c: cls, a: action, ts: ts } : { c: cls, t: String(text) });
     if (savedMsgs.length > 60) savedMsgs = savedMsgs.slice(-60);
     try {
       localStorage.setItem(MSG_KEY, JSON.stringify(savedMsgs));
@@ -466,6 +482,8 @@
     ".msg .shot{display:block;max-width:100%;border-radius:8px;margin:2px 0}" +
     // Drop target — the whole panel, so a dragged file has a big landing zone.
     ".panel.kdrop{outline:2px dashed var(--k-primary);outline-offset:-6px}" +
+    ".kcall{display:none;margin:8px 12px;padding:13px;border-radius:16px;background:var(--k-card);border:1px solid var(--k-border);box-shadow:0 8px 20px rgba(36,33,46,.08);color:var(--k-espresso)}" +
+    ".kcall.on{display:block}.kcall-title{font-size:14px;font-weight:700}.kcall-note{font-size:12px;opacity:.75;margin-top:3px}.kcall-controls{display:flex;gap:8px;margin-top:10px}.kcall-controls button{flex:1;min-height:38px;border:1px solid var(--k-border);border-radius:11px;background:white;color:var(--k-espresso);font:inherit;font-size:13px;cursor:pointer}.kcall-controls .primary{background:var(--k-primary);border-color:var(--k-primary);color:var(--k-primary-ink)}" +
     // ── Composer (.ft) ──
     ".ft{" +
     "display:flex;border-top:1px solid var(--k-border);" +
@@ -736,6 +754,7 @@
     "</button>" +
     "</div>" +
     '<div class="log"></div>' +
+    '<div class="kcall" role="status" aria-live="polite"><div class="kcall-title"></div><div class="kcall-note"></div><div class="kcall-controls"></div><div class="kcall-audio"></div></div>' +
     // Composer: text input + paper-plane send button
     // Pending-attachment tray — empty and display:none until something is pasted.
     '<div class="att"><img class="attthumb" alt="">' +
@@ -776,6 +795,7 @@
     sendForm = $(".ft"),
     sendBtn = sendForm.querySelector("button");
   var avatarEl = $(".av");
+  var callEl = $(".kcall"), callTitle = $(".kcall-title"), callNote = $(".kcall-note"), callControls = $(".kcall-controls"), callAudio = $(".kcall-audio");
   var popEl = $(".pop"),
     popTxtEl = $(".popt");
   $(".ttl").textContent = cfg.title;
@@ -1354,6 +1374,10 @@
       counts[key] = (counts[key] || 0) + 1;
     });
     messages.forEach(function (message) {
+      if (message.action) {
+        renderOperatorAction(message.action, message.ts);
+        return;
+      }
       var cls = message.role === "visitor" ? "me" : message.role === "operator" ? "op" : "bot";
       var text = String(message.text || "");
       var key = cls + "\u0000" + text;
@@ -1363,6 +1387,7 @@
     // The server ring is authoritative for the next AI turn after reconnect.
     history.length = 0;
     messages.slice(-10).forEach(function (message) {
+      if (message.action) return;
       history.push({
         role: message.role === "visitor" ? "user" : "assistant",
         content: String(message.text || ""),
@@ -1456,7 +1481,8 @@
         restoring = true;
         for (var ri = 0; ri < savedMsgs.length; ri++) {
           var rm = savedMsgs[ri];
-          if (rm && rm.c && rm.t != null) add(rm.c, rm.t);
+          if (rm && rm.c === "action" && rm.a) renderOperatorAction(rm.a, rm.ts);
+          else if (rm && rm.c && rm.t != null) add(rm.c, rm.t);
         }
         restoring = false;
       } else if (opening.length) {
@@ -1532,6 +1558,108 @@
     el: host,
   };
 
+  // ── consent-based audio call ────────────────────────────────────────────
+  var callState = null, callNonce = null, callRoom = null, callExpiryTimer = null;
+  var livekitLoading = null;
+  var callVisitorConnected = false;
+  function callRequest(action, extra) {
+    return fetch(cfg.api + "/api/call", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(Object.assign({ tenantId: cfg.tenant, sessionId: sessionId, visitorSecret: visitorSecret, action: action }, extra || {})),
+    }).then(function (r) {
+      return r.json().then(function (data) {
+        if (!r.ok) throw new Error(data.error || "Call request failed");
+        return data;
+      });
+    });
+  }
+  function stopCallMedia() {
+    if (callRoom) { var old = callRoom; callRoom = null; old.disconnect(true); }
+    callAudio.replaceChildren();
+  }
+  function callButton(label, primary, fn) {
+    var button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    if (primary) button.className = "primary";
+    button.addEventListener("click", fn);
+    callControls.appendChild(button);
+  }
+  function renderCall(next, nonce) {
+    if (next && (!callState || next.id !== callState.id)) stopCallMedia();
+    callState = next;
+    if (nonce) callNonce = nonce;
+    clearTimeout(callExpiryTimer);
+    callControls.replaceChildren();
+    if (!next || ["declined", "canceled", "expired", "ended"].indexOf(next.status) >= 0) {
+      stopCallMedia();
+      callEl.classList.remove("on");
+      return;
+    }
+    callEl.classList.add("on");
+    if (next.status === "ringing") {
+      callTitle.textContent = "Incoming audio call";
+      callNote.textContent = "A team member would like to speak. Your microphone stays off until you accept.";
+      callButton("Decline", false, function () { callRequest("decline", { id: next.id, nonce: callNonce }).then(function (d) { renderCall(d.call); }).catch(showCallError); });
+      callButton("Accept", true, function () {
+        callRequest("accept", { id: next.id, nonce: callNonce }).then(function (d) {
+          renderCall(d.call);
+          return joinCall(next.id);
+        }).catch(showCallError);
+      });
+      callExpiryTimer = setTimeout(function () { callRequest("status").then(function (d) { renderCall(d.call, d.nonce); }).catch(showCallError); }, Math.max(0, next.expiresAt - Date.now()) + 100);
+    } else if (next.status === "accepted") {
+      callTitle.textContent = callRoom ? "Audio call connected" : "Audio call accepted";
+      callNote.textContent = callRoom ? "Your microphone is on." : "Join when you are ready to use your microphone.";
+      if (!callRoom) callButton("Join call", true, function () { joinCall(next.id).catch(showCallError); });
+      callButton("End call", false, function () {
+        stopCallMedia();
+        callRequest("end", { id: next.id, nonce: callNonce }).then(function (d) { renderCall(d.call); }).catch(showCallError);
+      });
+    }
+  }
+  function showCallError(error) {
+    callNote.textContent = error && error.message ? error.message.replace(/_/g, " ") : "Call could not connect.";
+  }
+  function loadLivekit(clientUrl) {
+    if (window.LivekitClient && window.LivekitClient.Room) return Promise.resolve(window.LivekitClient);
+    if (livekitLoading) return livekitLoading;
+    livekitLoading = new Promise(function (resolve, reject) {
+      var libraryScript = document.createElement("script");
+      libraryScript.src = clientUrl;
+      libraryScript.async = true;
+      libraryScript.onload = function () {
+        if (window.LivekitClient && window.LivekitClient.Room) resolve(window.LivekitClient);
+        else reject(new Error("Audio library unavailable"));
+      };
+      libraryScript.onerror = function () { reject(new Error("Audio library failed to load")); };
+      document.head.appendChild(libraryScript);
+    }).catch(function (error) { livekitLoading = null; throw error; });
+    return livekitLoading;
+  }
+  function joinCall(id) {
+    if (!callState || callState.id !== id || callState.status !== "accepted") return Promise.reject(new Error("Call is no longer active"));
+    if (callRoom) return Promise.resolve();
+    callNote.textContent = "Connecting…";
+    return callRequest("grant", { id: id }).then(function (grant) {
+      return loadLivekit(grant.clientUrl).then(function (LK) {
+        if (!callState || callState.id !== id || callState.status !== "accepted") throw new Error("Call is no longer active");
+        var room = new LK.Room();
+        room.on("trackSubscribed", function (track) { if (track.kind === "audio") callAudio.appendChild(track.attach()); });
+        room.on("trackUnsubscribed", function (track) { track.detach().forEach(function (el) { el.remove(); }); });
+        room.on("disconnected", function () { if (callRoom === room) { callRoom = null; callAudio.replaceChildren(); renderCall(callState); } });
+        return room.connect(grant.url, grant.token).then(function () {
+          if (!callState || callState.id !== id || callState.status !== "accepted") { room.disconnect(true); throw new Error("Call ended"); }
+          callRoom = room;
+          return room.localParticipant.setMicrophoneEnabled(true).then(function () {
+            if (!callState || callState.id !== id || callState.status !== "accepted") { stopCallMedia(); return; }
+            renderCall(callState);
+          });
+        }).catch(function (error) { room.disconnect(true); throw error; });
+      });
+    });
+  }
+
   // ── live channel (operator replies) ─────────────────────────────────────
   function scheduleWsReconnect(delay) {
     if (wsReconnectTimer != null) return;
@@ -1549,7 +1677,7 @@
         "/api/session/" +
         encodeURIComponent(sessionId) +
         "/ws?t=" +
-        encodeURIComponent(cfg.tenant);
+        encodeURIComponent(cfg.tenant) + (visitorSecret ? "&v=" + encodeURIComponent(visitorSecret) : "");
       ws = new WebSocket(wsUrl);
       ws.onmessage = function (e) {
         if (e.data === "pong") return;
@@ -1559,7 +1687,10 @@
         } catch {
           return;
         }
-        if (ev.type === "ready") {
+        if (ev.type === "call") {
+          renderCall(ev.call, ev.nonce);
+          if (ev.call && ev.call.status === "ringing") { notifyInbound(); open(); }
+        } else if (ev.type === "ready") {
           handoffState = ev.handoffState || (ev.handedOff ? "operator" : "ai");
           handedOff = handoffState !== "ai";
           if (handoffState === "operator") markHuman();
@@ -1570,6 +1701,12 @@
           handedOff = true;
           markHuman();
           add("op", ev.text);
+          notifyInbound();
+        } else if (ev.type === "action") {
+          handoffState = "operator";
+          handedOff = true;
+          markHuman();
+          renderOperatorAction(ev.action, ev.ts);
           notifyInbound();
         } else if (ev.type === "handoff") {
           handoffState = ev.handoffState || "pending";
@@ -1596,6 +1733,7 @@
       // keepalive so proxies don't idle-close (hibernation-friendly)
       ws.onopen = function () {
         wsBackoff = 3000; // healthy again — reset the backoff
+        if (callVisitorConnected) callRequest("status").then(function (d) { renderCall(d.call, d.nonce); }).catch(function () {});
         clearInterval(keepalive);
         keepalive = setInterval(function () {
           try {
@@ -1685,7 +1823,7 @@
     }
     return ctaRow;
   }
-  function renderCta(c) {
+  function renderCta(c, container) {
     if (!c || typeof c.url !== "string") return;
     if (!/^(https:\/\/|tel:)/i.test(c.url)) return; // only https/wa.me/tel hrefs render
     var item = document.createElement("div");
@@ -1713,7 +1851,37 @@
     lbl.textContent = c.label || DEFAULT_CTA_LABEL[c.type] || "Contact us";
     a.appendChild(lbl);
     item.appendChild(a);
-    ctaContainer().appendChild(item);
+    (container || ctaContainer()).appendChild(item);
+    log.scrollTop = log.scrollHeight;
+    return item;
+  }
+  function renderOperatorAction(action, ts) {
+    if (!action || !ts) return;
+    var id =
+      action.kind === "form"
+        ? action.form && action.form.id
+        : action.connector && action.connector.id;
+    if (!id) return;
+    var key = String(ts) + ":" + action.kind + ":" + id;
+    if (
+      Array.from(log.querySelectorAll("[data-krispy-action]")).some(function (node) {
+        return node.dataset.krispyAction === key;
+      })
+    )
+      return;
+    var node;
+    if (action.kind === "form") {
+      node = showForm(action.form, true);
+    } else if (action.kind === "instagram") {
+      var row = document.createElement("div");
+      row.className = "ctarow";
+      if (!renderCta(action.connector, row)) return;
+      log.appendChild(row);
+      node = row;
+    }
+    if (!node) return;
+    node.dataset.krispyAction = key;
+    if (!restoring) persistMsg("action", "", action, ts);
     log.scrollTop = log.scrollHeight;
   }
   function armCtas(firstMessage) {
@@ -1755,8 +1923,8 @@
   // Built entirely with createElement/textContent — NEVER innerHTML for any value
   // (form fields, options, CTA labels/urls are all tenant/visitor-controlled → XSS).
   var formOpen = false;
-  function showForm(form) {
-    if (formOpen || !form || !form.fields) return;
+  function showForm(form, fromOperator) {
+    if ((!fromOperator && formOpen) || !form || !Array.isArray(form.fields)) return;
     formOpen = true;
     // any form showing cancels the afterReplyMs fallback (incl. a [!FORM] trigger)
     formTimers.forEach(clearTimeout);
@@ -1856,6 +2024,7 @@
 
     log.appendChild(wrap); // into the log — scrolls with the transcript, never a sticky band
     wrap.scrollIntoView({ block: "nearest" });
+    return wrap;
   }
 
   // ── send ─────────────────────────────────────────────────────────────────
@@ -1887,6 +2056,7 @@
         tenantId: cfg.tenant,
         siteId: cfg.site || undefined,
         message: text,
+        visitorSecret: visitorSecret || undefined,
         history: history.slice(-10),
         source: openSource || undefined, // popup origin → session context (§3.5)
       }),
@@ -1896,6 +2066,16 @@
       })
       .then(function (res) {
         if (typing) typing.remove();
+        if (visitorSecret && !callVisitorConnected) {
+          callVisitorConnected = true;
+          // The first chat registered the separate call capability in its DO.
+          // Reconnect so this socket gets the call-visitor tag for private invites.
+          if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+          else if (ws && ws.readyState === WebSocket.CONNECTING) {
+            ws.addEventListener("open", function () { ws.close(); }, { once: true });
+          }
+          callRequest("status").then(function (d) { renderCall(d.call, d.nonce); }).catch(function () {});
+        }
         var responseState = res.handoffState || (res.handedOff ? "operator" : "ai");
         if (responseState === "operator") {
           handoffState = "operator";

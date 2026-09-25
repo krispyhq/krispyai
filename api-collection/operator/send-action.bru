@@ -1,0 +1,31 @@
+meta {
+  name: Operator - send visitor action card
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/operator/send-action
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{operatorToken}}
+}
+
+body:json {
+  {
+    "tenantId": "self",
+    "sessionId": "sess-demo-1",
+    "kind": "form",
+    "id": "consultation"
+  }
+}
+
+docs {
+  kind is form or instagram. id must match an item returned by /api/operator/actions.
+  The server resolves the current configured item for the session's recorded site,
+  stores a typed card in the session ring and broadcasts it to the visitor widget.
+  An optional siteId asserts the expected site. No raw URL or form fields are accepted.
+}

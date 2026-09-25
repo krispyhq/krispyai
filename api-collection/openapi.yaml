@@ -383,6 +383,136 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /api/operator/reply-drafts:
+    post:
+      tags: [public]
+      summary: Generate up to three editable, contextual operator reply drafts
+      operationId: operatorReplyDrafts
+      description: >
+        Operator-only read of the server-side 20-message session ring and tenant knowledge.
+        The session's recorded site selects knowledge and provider; an optional siteId is
+        only an assertion and a mismatch is rejected.
+        Uses the tenant's configured AI provider; direct Gemini remains restricted to the
+        approved tenant/site pilot. Never sends to the visitor. A request is limited to
+        20 generations per tenant/session/hour (coarse KV counter; concurrent bursts may
+        exceed the limit). Source material, transcript, output tokens
+        and generation time are bounded. Empty drafts mean no supported suggestion was
+        available. The source revision and last message timestamp let a client discard
+        drafts after any transcript change; if the ring changes during generation, the
+        server returns empty drafts with `stale: true` and the newer revision.
+      security:
+        - operatorBearer: []
+        - tenantSyncSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OperatorActionContext" }
+      responses:
+        "200":
+          description: Editable drafts, or an empty array when unavailable.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [drafts, sourceRevision, sourceLastMessageTs]
+                properties:
+                  drafts:
+                    type: array
+                    maxItems: 3
+                    items: { type: string, maxLength: 500 }
+                  sourceRevision: { type: [string, "null"], description: SHA-256 of the server-side ring. }
+                  sourceLastMessageTs: { type: [integer, "null"] }
+                  stale: { type: boolean }
+        "400": { description: Missing tenant/session or invalid siteId. }
+        "401": { description: Missing or invalid operator credentials. }
+        "403": { description: Operator belongs to another tenant or site assertion mismatches. }
+        "404": { description: Session has no recorded tenant identity. }
+        "429": { description: Session generation limit reached; drafts is empty. }
+
+  /api/operator/actions:
+    post:
+      tags: [public]
+      summary: List configured form and Instagram actions for a visitor session
+      operationId: operatorActions
+      description: >
+        Requires an operator bearer or tenant-sync secret. The session's durable identity
+        determines its site; optional siteId must match. Only configured visitor-facing
+        Instagram connectors with HTTPS URLs are returned. No connector credentials are exposed.
+      security:
+        - operatorBearer: []
+        - tenantSyncSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OperatorActionContext" }
+      responses:
+        "200":
+          description: Safe action choices for the session's site.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [forms, connectors]
+                properties:
+                  forms:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, title]
+                      properties:
+                        id: { type: string }
+                        title: { type: string }
+                  connectors:
+                    type: array
+                    items: { $ref: "#/components/schemas/OperatorInstagramConnector" }
+        "400": { description: Missing tenant/session or invalid siteId. }
+        "401": { description: Missing or invalid operator credentials. }
+        "403": { description: Tenant or site mismatch. }
+        "404": { description: Session has no recorded identity. }
+
+  /api/operator/send-action:
+    post:
+      tags: [public]
+      summary: Send a configured form or Instagram CTA card to a visitor
+      operationId: operatorSendAction
+      description: >
+        Authenticates and resolves the configured item from the session's tenant and site.
+        The resolved safe card is durably appended to the session ring and pushed by WebSocket.
+        Moves handoff state to operator and meters one handoff.
+      security:
+        - operatorBearer: []
+        - tenantSyncSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/OperatorActionContext" }
+                - type: object
+                  required: [kind, id]
+                  properties:
+                    kind: { type: string, enum: [form, instagram] }
+                    id: { type: string }
+      responses:
+        "200":
+          description: Card stored and broadcast.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, delivered, action]
+                properties:
+                  ok: { type: boolean, const: true }
+                  delivered: { type: integer, description: Number of live WebSocket recipients. }
+                  action: { $ref: "#/components/schemas/OperatorAction" }
+        "400": { description: Missing or malformed request fields. }
+        "401": { description: Missing or invalid operator credentials. }
+        "403": { description: Tenant or site mismatch. }
+        "404": { description: Session or configured action not found. }
+
   /api/operator/handoffs:
     post:
       tags: [public]
@@ -778,6 +908,48 @@ components:
         ts:
           type: integer
           description: Unix epoch millis, stamped at append time.
+        action: { $ref: "#/components/schemas/OperatorAction" }
+
+    OperatorActionContext:
+      type: object
+      required: [tenantId, sessionId]
+      properties:
+        tenantId: { type: string }
+        sessionId: { type: string }
+        siteId:
+          { type: string, description: Optional assertion against the session's recorded site. }
+
+    OperatorInstagramConnector:
+      type: object
+      required: [id, type, label, url]
+      properties:
+        id: { type: string }
+        type: { type: string, const: instagram }
+        label: { type: string }
+        caption: { type: string }
+        url: { type: string, format: uri, description: Configured HTTPS profile URL. }
+
+    OperatorAction:
+      oneOf:
+        - type: object
+          required: [kind, form]
+          properties:
+            kind: { type: string, const: form }
+            form:
+              type: object
+              required: [id, title, fields]
+              properties:
+                id: { type: string }
+                title: { type: string }
+                fields:
+                  type: array
+                  items: { $ref: "#/components/schemas/FormField" }
+                successText: { type: string }
+        - type: object
+          required: [kind, connector]
+          properties:
+            kind: { type: string, const: instagram }
+            connector: { $ref: "#/components/schemas/OperatorInstagramConnector" }
 
     OperatorReplyRequest:
       type: object
@@ -799,9 +971,10 @@ components:
           description: Newest activity first.
           items:
             type: object
-            required: [sessionId, lastMessage, handoffState, handedOff, ts, resolved]
+            required: [sessionId, siteId, lastMessage, handoffState, handedOff, ts, resolved]
             properties:
               sessionId: { type: string }
+              siteId: { type: string, description: Session's recorded site (default when absent). }
               lastMessage:
                 type: [string, "null"]
                 description: The ring-buffer tail (null when the ring is empty).

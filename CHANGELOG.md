@@ -10,6 +10,11 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+### Added
+
+- Operators can send a site's configured lead form or Instagram CTA directly into a
+  visitor conversation. The typed card is stored in session history and restored on reconnect.
+
 ### Changed
 
 - Instagram chat CTAs use Adi's recognizable filled Instagram glyph on the existing
