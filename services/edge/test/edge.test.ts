@@ -2710,7 +2710,7 @@ describe("operator app routes", () => {
       post("/api/operator/thread", { tenantId: "acme", sessionId: "nope" }),
       env,
     );
-    expect(await res.json()).toEqual({ messages: [] });
+    expect(await res.json()).toEqual({ messages: [], callReceipts: [] });
   });
 });
 

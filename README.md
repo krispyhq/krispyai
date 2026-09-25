@@ -267,9 +267,9 @@ Audio calls are opt-in through tenant `callSettings`. A team member can invite a
 An idle call suggestion can be dismissed for the current chat session without declining an incoming invitation or ending a call.
 
 A tenant-scoped coordinator model for future native calls is staged in the edge
-source with race tests. It does not change the current call routes. Its state,
-identity, timeout, and retry contract is described in the
-[`services/edge` README](./services/edge/README.md#coordinator-model-staged-behind-the-current-call-routes).
+source with race tests and a disabled identity/storage adapter. It does not
+change the current call routes. Its state, identity, timeout, and retry contract
+is described in the [integration design](./docs/operator-call-coordinator.md).
 
 Details: [`packages/widget/README.md`](./packages/widget/README.md).
 

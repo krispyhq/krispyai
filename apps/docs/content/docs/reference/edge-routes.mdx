@@ -52,6 +52,15 @@ accepted. The visitor nonce never appears in the operator response. `grant` retu
 room credentials only after acceptance. Accepting sets the session to operator handoff
 so the AI stays silent during the call. A new visitor request is limited to one per minute.
 
+The staged runtime 0.5 coordinator records a typed call receipt only when a call
+reaches a terminal state. `/api/operator/thread` returns `callReceipts` separately
+from its 20-message ring; the guest and operator sockets receive
+`{ type: "call_receipt", receipt }` live and on reconnect. Each receipt includes
+server timestamps, duration measured from verified two-party media connection,
+an `ended`/`missed`/`declined`/`canceled` outcome, and whether the connection
+and end times came from signed events or later room observations. It contains no recording or
+conversation summary. Runtime 0.4 call routes do not create these receipts.
+
 ### Operator bearer authorization
 
 The operator app sends its Better Auth bearer in `Authorization: Bearer <session token>`
