@@ -264,6 +264,11 @@ Audio calls are opt-in through tenant `callSettings`. A team member can invite a
 
 Details: [`packages/widget/README.md`](./packages/widget/README.md).
 
+If joining cannot start the microphone or the audio connection fails, the call
+card returns to **Join call** with a retry message. A hosting page must permit
+microphone access for its own origin in `Permissions-Policy`; the browser still
+asks the visitor for consent on Join.
+
 ## Documentation
 
 Full docs live in [`apps/docs`](./apps/docs) — a [Fumadocs](https://fumadocs.dev) site, themed to the Krispy palette. Run it locally with `bun run dev` in `apps/docs` (Next on `:3000`); it deploys to Cloudflare Pages (domain: `TODO`).

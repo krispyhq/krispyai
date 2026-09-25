@@ -226,6 +226,34 @@ describe("visitor audio call controller", () => {
     expect(app.callNote.textContent).toBe("Microphone unavailable");
   });
 
+  test("a blocked microphone returns to Join with an actionable error", async () => {
+    const app = harness();
+    app.renderCall(accepted);
+    app.click("Join call");
+    app.grant.resolve({ clientUrl: "library", url: "room", token: "token" });
+    for (let i = 0; i < 10 && !app.rooms.length; i++) await tick();
+    const denied = Object.assign(new Error("Permission denied"), { name: "NotAllowedError" });
+    app.rooms[0]!.localParticipant.setMicrophoneEnabled = () => Promise.reject(denied);
+    app.connect.resolve();
+    for (let i = 0; i < 10; i++) await tick();
+    expect(app.rooms[0]!.disconnected).toBe(true);
+    expect(app.callControls.children.some((item) => item.textContent === "Join call")).toBe(true);
+    expect(app.callNote.textContent).toContain("Allow it for this site");
+  });
+
+  test("a connection failure returns to Join with a retry explanation", async () => {
+    const app = harness();
+    app.renderCall(accepted);
+    app.click("Join call");
+    app.grant.resolve({ clientUrl: "library", url: "room", token: "token" });
+    for (let i = 0; i < 10 && !app.rooms.length; i++) await tick();
+    app.connect.reject(new Error("connection failed"));
+    for (let i = 0; i < 10; i++) await tick();
+    expect(app.rooms[0]!.disconnected).toBe(true);
+    expect(app.callControls.children.some((item) => item.textContent === "Join call")).toBe(true);
+    expect(app.callNote.textContent).toContain("Check your connection");
+  });
+
   test("backgrounding during connect disconnects and ends the server call", async () => {
     const app = harness();
     app.renderCall(accepted);
