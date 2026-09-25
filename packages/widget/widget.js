@@ -1500,6 +1500,9 @@
   var opened = false;
   function open() {
     hasInteracted = true; // opening counts as interaction (unlocks audio)
+    // A custom launcher may call open() synchronously from its own trusted
+    // click outside the widget host; the browser still enforces autoplay.
+    unlockIncomingRing();
     hidePopup(); // an open panel supersedes the teaser
     // Suppress popups while chatting: kill pending timers + disconnect observers.
     popupTimers.forEach(clearTimeout);
@@ -1646,8 +1649,9 @@
     }
   }
   function unlockIncomingRing(event) {
+    var path = event && typeof event.composedPath === "function" ? event.composedPath() : [];
     if (
-      !event.isTrusted ||
+      (event && (!event.isTrusted || path.indexOf(host) < 0)) ||
       muted ||
       !soundEnabled ||
       (callState && callState.status === "accepted")
@@ -1657,7 +1661,8 @@
     if (!AC) return;
     try {
       ringContext = ringContext || new AC();
-      // This trusted gesture unlocks future ringing without playing a sound.
+      // An active widget gesture may unlock future ringing without sound;
+      // calls from async open paths remain subject to browser autoplay policy.
       Promise.resolve(ringContext.resume()).catch(function () {});
     } catch {
       /* visible call controls remain available */

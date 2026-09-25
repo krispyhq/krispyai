@@ -89,6 +89,9 @@ invitation is accepted, declined, canceled, expires, or the page/socket leaves.
 The idle call suggestion and a visitor's own request stay silent. Hidden tabs do
 not ring; browser autoplay settings may still prevent audible playback until a
 trusted gesture unlocks audio on that page.
+The widget only attempts silent unlock on widget interaction, including an
+embedder's custom launcher opening the panel; unrelated page clicks do not
+create an audio context.
 
 The idle **Speak with a team member** suggestion has a **Dismiss call offer**
 button. Dismissal is remembered for the current tenant, site, and chat session,

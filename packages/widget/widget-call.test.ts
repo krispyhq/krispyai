@@ -75,11 +75,18 @@ function harness(
   const deviceChanges: { kind: string; id: string }[] = [];
   const rooms: FakeRoom[] = [];
   const listeners = new Map<string, () => void>();
-  const gestures = new Map<string, (event: { isTrusted: boolean }) => void>();
+  const gestures = new Map<
+    string,
+    (event: { isTrusted: boolean; composedPath?: () => object[] }) => void
+  >();
+  const host = {};
   const document = {
     visibilityState: "visible",
     createElement: (_tag: string) => element(),
-    addEventListener(name: string, fn: (event: { isTrusted: boolean }) => void) {
+    addEventListener(
+      name: string,
+      fn: (event: { isTrusted: boolean; composedPath?: () => object[] }) => void,
+    ) {
       gestures.set(name, fn);
     },
   };
@@ -174,6 +181,7 @@ function harness(
     "window",
     "fetch",
     "localStorage",
+    "host",
     `var handoffChoices = null, muted = false, soundEnabled = true; function refreshHandoffChoices() {} function requestVisitorCall() {}; ${source.slice(start, end)}; return { renderCall, joinCall, stopCallMedia, noteHandoffOffer, setCallOfferDismissed, setCallAvailable: function () { callCanRequest = true; callVisitorConnected = true; }, setNotificationMuted: function (value) { muted = value; } };`,
   ) as (...args: unknown[]) => {
     renderCall: (
@@ -201,6 +209,7 @@ function harness(
     window,
     fetch,
     localStorage,
+    host,
   );
   const click = (label: string) => {
     const button = callControls.children.find((item) => item.textContent === label);
@@ -225,6 +234,7 @@ function harness(
     document,
     listeners,
     gestures,
+    host,
     storage,
   };
 }
@@ -272,9 +282,11 @@ describe("visitor audio call controller", () => {
       }
     }
     const app = harness(true, new Map(), "session", RingAudio);
-    app.gestures.get("click")?.({ isTrusted: false });
+    app.gestures.get("click")?.({ isTrusted: false, composedPath: () => [app.host] });
     expect(contexts).toHaveLength(0);
-    app.gestures.get("click")?.({ isTrusted: true });
+    app.gestures.get("click")?.({ isTrusted: true, composedPath: () => [{}] });
+    expect(contexts).toHaveLength(0); // unrelated page click
+    app.gestures.get("click")?.({ isTrusted: true, composedPath: () => [app.host] });
     await tick();
     expect(contexts).toHaveLength(1);
     expect(tones).toBe(0);
