@@ -1774,8 +1774,20 @@
   }
   function showCallError(error) {
     if (document.visibilityState !== "visible") return;
-    callNote.textContent =
-      error && error.message ? error.message.replace(/_/g, " ") : "Call could not connect.";
+    var name = error && error.name;
+    if (name === "NotAllowedError" || name === "PermissionDeniedError")
+      callNote.textContent =
+        "Microphone access is blocked. Allow it for this site, then choose Join call again.";
+    else if (name === "NotFoundError" || name === "DevicesNotFoundError")
+      callNote.textContent = "No microphone was found. Connect one, then choose Join call again.";
+    else if (name === "NotReadableError" || name === "TrackStartError")
+      callNote.textContent =
+        "Your microphone could not start. Close other apps using it, then try again.";
+    else if (error && error.message === "Audio library failed to load")
+      callNote.textContent = "Audio could not load. Reload this page, then try again.";
+    else if (callRoom && error && error.message)
+      callNote.textContent = error.message.replace(/_/g, " ");
+    else callNote.textContent = "Audio could not connect. Check your connection and try again.";
   }
   function loadLivekit(clientUrl) {
     if (window.LivekitClient && window.LivekitClient.Room)
@@ -1807,6 +1819,7 @@
     if (callRoom) return Promise.resolve();
     if (callJoinPromise) return callJoinPromise;
     var epoch = callMediaEpoch;
+    var failedCurrentJoin = false;
     function active() {
       return (
         epoch === callMediaEpoch &&
@@ -1878,17 +1891,19 @@
               });
             })
             .catch(function (error) {
-              room.disconnect(true);
               if (active()) {
+                // Our own cleanup advances the epoch too. Preserve this error
+                // for the Join button; only external cancel/background is stale.
+                failedCurrentJoin = true;
                 stopCallMedia();
                 renderCall(callState);
-              }
+              } else room.disconnect(true);
               throw error;
             });
         });
       })
       .catch(function (error) {
-        if (epoch !== callMediaEpoch) return;
+        if (epoch !== callMediaEpoch && !failedCurrentJoin) return;
         throw error;
       })
       .finally(function () {

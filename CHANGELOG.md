@@ -12,6 +12,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Changed
 
+- The visitor call card now reports a microphone or connection failure after
+  Join instead of silently returning to the Join button.
 - Lead emails now use Krispy's readable branded layout and include a plain-text
   version. The optional configured Buttr inbox action opens the relevant session.
 - Resend lead delivery can carry an explicit idempotency key for safe retries.
