@@ -71,8 +71,12 @@ are cached per Worker isolate for 60 seconds.
 `{ drafts: string[], sourceRevision, sourceLastMessageTs, stale? }`. It reads the
 session transcript on the server, uses the tenant's configured knowledge and AI
 provider for the session's recorded site, and returns up to three editable suggestions.
+Links must appear in the tenant's configured sources or validated gateway context;
+sentence punctuation after a source link is accepted, while altered links are hidden.
 An optional `siteId` only asserts that recorded site; a mismatch returns `403`.
 It never sends a reply.
+When the transcript ends in an AI message, the latest visitor request is restated
+for drafting. The Delulus pilot requests structured JSON for this route only.
 The app requests them on demand and discards a result when the transcript changes.
 Uncertain or failed generation returns an empty array; repeated requests are capped
 at 20 per session per hour (`429`; concurrent bursts can exceed the coarse KV counter).

@@ -36,6 +36,17 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 - Bot-only conversations now archive after 24 hours of visitor inactivity (configurable
   with `AUTO_ARCHIVE_HOURS`), including eligible older sessions on inbox read. A new
   visitor turn reopens them; human requests and calls stay visible until manually archived.
+- Operator reply drafts now retain tenant-approved or validated knowledge links
+  with sentence punctuation, including links beyond the model prompt slice;
+  changed links remain filtered.
+- Operator reply drafts now focus on the latest visitor request after an AI turn,
+  and the Delulus pilot requests structured JSON for this action so useful replies
+  are not lost as non-JSON model output.
+
+- Preview edge deploys now sync the configured Gemini and LiveKit
+  bindings alongside the existing Worker secrets.
+- Preview widget deploys stage the pinned LiveKit browser UMD and license from
+  the public npm release, with a checked local package as an optional source.
 
 - Widget: restore the saved unread indicator at boot for every launcher, including the default circle and visits where theme config fails to load.
 

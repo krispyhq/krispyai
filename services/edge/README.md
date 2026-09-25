@@ -46,6 +46,12 @@ session. Handoffs, human replies, and call requests remain available for manual
 resolution even if ownership has returned to AI. An inbox read archives eligible
 older bot-only sessions that predate the timer; it leaves uncertain legacy human
 requests active.
+Reply suggestions remain editable and unsent. Checkout links in a suggestion must
+match the tenant's configured sources or validated knowledge gateway context;
+ordinary sentence punctuation after an approved URL does not hide the suggestion.
+When the saved transcript ends in an AI reply, drafting asks for a fresh operator
+response to the latest visitor request. The Delulus pilot requests structured JSON
+from Gemini for this action only; normal visitor chat keeps its existing output mode.
 
 | method | path                             | purpose                                                                                                  |
 | ------ | -------------------------------- | -------------------------------------------------------------------------------------------------------- |
