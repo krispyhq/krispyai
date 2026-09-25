@@ -130,10 +130,12 @@
   // Call authorization is separate from the chat session ID visible to operators.
   // No weak random fallback: calls stay unavailable without WebCrypto.
   var visitorSecret = null;
+  var restoredVisitorSecret = false;
   if (crypto && crypto.getRandomValues) {
     var callKey = "krispy_call_cap_" + cfg.tenant + "_" + sessionId;
     try {
       visitorSecret = localStorage.getItem(callKey);
+      restoredVisitorSecret = /^[A-Za-z0-9_-]{43}$/.test(visitorSecret || "");
     } catch {
       // Storage can be blocked while WebCrypto still works. Keep the capability
       // in memory for this page so a form-only visitor can submit safely.
@@ -189,6 +191,8 @@
   var ws = null;
   var keepalive = null;
   var wsReconnectTimer = null;
+  var pendingWsFrames = [];
+  var pageLeaving = false;
   var wsBackoff = 3000; // reconnect delay, exponential up to WS_BACKOFF_MAX (with jitter)
   var WS_BACKOFF_MAX = 30000;
 
@@ -1541,6 +1545,39 @@
       }
       if (!savedMsgs.length) renderStarters(); // fresh conversation only
       connectWs();
+      // A restored call-capable session can keep its socket while the panel is
+      // closed. Apply its chat snapshot only after local transcript restoration.
+      var buffered = pendingWsFrames.splice(0);
+      var readyOperatorMessages = Object.create(null);
+      buffered.forEach(function (frame) {
+        try {
+          var event = JSON.parse(frame);
+          if (event.type !== "ready" || !Array.isArray(event.messages)) return;
+          event.messages.forEach(function (message) {
+            if (message.role !== "operator" || !Number.isFinite(message.ts)) return;
+            var key = message.ts + "\u0000" + message.text;
+            readyOperatorMessages[key] = (readyOperatorMessages[key] || 0) + 1;
+          });
+        } catch {
+          /* malformed frames were ignored when received */
+        }
+      });
+      buffered.forEach(function (frame) {
+        if (!ws || !ws.onmessage) return;
+        try {
+          var event = JSON.parse(frame);
+          if (event.type === "operator" && Number.isFinite(event.ts)) {
+            var key = event.ts + "\u0000" + event.text;
+            if (readyOperatorMessages[key]) {
+              readyOperatorMessages[key]--;
+              return;
+            }
+          }
+        } catch {
+          return;
+        }
+        ws.onmessage({ data: frame });
+      });
     }
     syncViewport();
     setTimeout(function () {
@@ -2223,6 +2260,10 @@
     }).catch(function () {});
   }
   window.addEventListener("pagehide", function () {
+    pageLeaving = true;
+    clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = null;
+    if (ws && ws.readyState <= WebSocket.OPEN) ws.close();
     stopIncomingRing(true);
     endCallInBackground();
   });
@@ -2248,6 +2289,7 @@
   }
 
   function connectWs() {
+    if (pageLeaving || document.visibilityState !== "visible") return;
     if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
     try {
       var wsUrl =
@@ -2257,13 +2299,20 @@
         "/ws?t=" +
         encodeURIComponent(cfg.tenant) +
         (visitorSecret ? "&v=" + encodeURIComponent(visitorSecret) : "");
-      ws = new WebSocket(wsUrl);
-      ws.onmessage = function (e) {
+      var socket = new WebSocket(wsUrl);
+      ws = socket;
+      socket.onmessage = function (e) {
+        if (ws !== socket) return;
         if (e.data === "pong") return;
         var ev;
         try {
           ev = JSON.parse(e.data);
         } catch {
+          return;
+        }
+        if (!opened && ev.type !== "call") {
+          pendingWsFrames.push(e.data);
+          if (pendingWsFrames.length > 100) pendingWsFrames.shift();
           return;
         }
         if (ev.type === "call") {
@@ -2315,8 +2364,12 @@
           add("sys", "You're back with the AI assistant. A human can rejoin anytime.");
         }
       };
-      ws.onclose = function () {
+      socket.onclose = function () {
+        if (ws !== socket) return; // an older socket closed after its replacement
         stopIncomingRing(true);
+        clearInterval(keepalive);
+        keepalive = null;
+        if (pageLeaving || document.visibilityState !== "visible") return;
         // Exponential backoff capped at WS_BACKOFF_MAX, ±25% jitter (avoid a
         // thundering-herd reconnect when the edge recovers). Reset on open.
         var delay = wsBackoff * (0.75 + Math.random() * 0.5);
@@ -2324,13 +2377,14 @@
         scheduleWsReconnect(delay);
       }; // reconnect
       // keepalive so proxies don't idle-close (hibernation-friendly)
-      ws.onopen = function () {
+      socket.onopen = function () {
+        if (ws !== socket) return;
         wsBackoff = 3000; // healthy again — reset the backoff
         if (callVisitorConnected) syncCallStatus();
         clearInterval(keepalive);
         keepalive = setInterval(function () {
           try {
-            ws.send("ping");
+            socket.send("ping");
           } catch {
             /* closing */
           }
@@ -2345,10 +2399,14 @@
   // Force a reconnect on return so the ready snapshot backfills missed replies.
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState !== "visible") {
+      clearTimeout(wsReconnectTimer);
+      wsReconnectTimer = null;
+      if (ws && ws.readyState <= WebSocket.OPEN) ws.close();
       stopIncomingRing(true);
       endCallInBackground();
+      return;
     }
-    if (!opened || document.visibilityState !== "visible") return;
+    if (!opened && !restoredVisitorSecret) return;
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
       try {
         ws.close();
@@ -2358,6 +2416,12 @@
     } else {
       connectWs();
     }
+  });
+  window.addEventListener("pageshow", function () {
+    if (!pageLeaving) return;
+    // A back-forward-cache restore resumes the same JS realm after pagehide.
+    pageLeaving = false;
+    if (document.visibilityState === "visible" && (opened || restoredVisitorSecret)) connectWs();
   });
 
   var waitingMarked = false;
@@ -2798,10 +2862,11 @@
           // Reconnect so this socket gets the call-visitor tag for private invites.
           if (ws && ws.readyState === WebSocket.OPEN) ws.close();
           else if (ws && ws.readyState === WebSocket.CONNECTING) {
-            ws.addEventListener(
+            var pendingSocket = ws;
+            pendingSocket.addEventListener(
               "open",
               function () {
-                ws.close();
+                pendingSocket.close();
               },
               { once: true },
             );
@@ -3076,4 +3141,10 @@
     }
     sendMessage(text);
   });
+
+  // A returning visitor already owns a session-scoped capability. Reconnect its
+  // authenticated call socket while this page is visible, even before opening
+  // chat. The Durable Object still decides whether the capability was registered;
+  // a fresh, unregistered visitor never claims call presence here.
+  if (restoredVisitorSecret && document.visibilityState === "visible") connectWs();
 })();
