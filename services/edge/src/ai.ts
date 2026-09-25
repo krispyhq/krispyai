@@ -114,17 +114,21 @@ export function geminiAiRunner(env: Env, fetcher: AiFetch = fetch): AiRunner {
 export function workersAiRunner(env: Env, model = env.AI_MODEL || DEFAULT_MODEL): AiRunner {
   const maxTokens = Number(env.MAX_OUTPUT_TOKENS) || MAX_OUTPUT_TOKENS;
   return async (messages) => {
-    // Workers AI returns { response, usage:{ prompt_tokens, completion_tokens, total_tokens } }.
-    // Some models omit usage → we surface undefined and the caller estimates (labelled).
+    // Workers AI may return legacy `response` or OpenAI-shaped final content.
+    // Some models omit usage; the caller then estimates token counts.
     const res = (await env.AI.run(model, {
       messages,
       max_tokens: maxTokens,
       ...(model === FAST_MULTILINGUAL_MODEL ? { temperature: 0 } : {}),
     })) as {
-      response?: string;
+      response?: unknown;
+      choices?: Array<{ message?: { content?: unknown } }>;
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
-    const text = res?.response?.trim();
+    const legacy = typeof res?.response === "string" ? res.response : "";
+    const modern =
+      typeof res?.choices?.[0]?.message?.content === "string" ? res.choices[0].message.content : "";
+    const text = (legacy || modern).trim();
     if (!text) throw new Error("empty AI response");
     const u = res.usage;
     const usage: TokenUsage | undefined =

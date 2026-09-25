@@ -968,6 +968,34 @@ describe("workersAiRunner max_tokens", () => {
     expect(input().max_tokens).toBe(128);
   });
 
+  test("accepts an OpenAI-shaped final content string", async () => {
+    const { env } = fakeAiEnv();
+    (env.AI.run as unknown as () => Promise<unknown>) = async () => ({
+      choices: [{ message: { content: "modern reply", reasoning: "hidden" } }],
+      usage: { prompt_tokens: 3, completion_tokens: 2 },
+    });
+    const result = await workersAiRunner(env)([{ role: "user", content: "hey" }]);
+    expect(result.text).toBe("modern reply");
+    expect(result.usage).toEqual({ promptTokens: 3, completionTokens: 2, estimated: false });
+  });
+
+  test("does not fall back to reasoning when final content is empty", async () => {
+    const env = {
+      AI: {
+        run: async () => ({
+          choices: [{ message: { content: "", reasoning: "must never reach the visitor" } }],
+        }),
+      },
+    } as unknown as Env;
+    let message = "";
+    try {
+      await workersAiRunner(env)([{ role: "user", content: "hey" }]);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toBe("empty AI response");
+  });
+
   test("temperature 0 is sent only for the selected 8B candidate", async () => {
     const candidate = fakeAiEnv();
     await workersAiRunner(

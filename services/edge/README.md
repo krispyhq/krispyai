@@ -147,6 +147,8 @@ malformed identity fields fail closed.
   The explicitly selected `@cf/meta/llama-3.1-8b-instruct-fast` candidate uses temperature
   0 for repeatability; the default 70B model is unchanged. A control-only handoff still
   sends the visitor an acknowledgement while the human takes over.
+  It accepts both the legacy `response` field and OpenAI-shaped
+  `choices[0].message.content` final text; reasoning-only output fails closed.
 
 ## Run locally
 

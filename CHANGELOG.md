@@ -10,6 +10,12 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+### Changed
+
+- Edge AI adapter accepts both the legacy Workers AI `response` shape and the
+  OpenAI-shaped `choices[0].message.content` final text. Reasoning-only output fails
+  closed. The default model request remains unchanged.
+
 ### Added
 
 - Pending human handoffs now offer one compact choice card built from the site's
