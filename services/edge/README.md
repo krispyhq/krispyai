@@ -33,6 +33,31 @@ fires, just without a mention. See `docs → connect Telegram`.
 
 ## Endpoints
 
+### Coordinator model staged behind the current call routes
+
+`src/call-coordinator-model.ts` defines the future tenant-scoped call authority;
+the live `/api/call` routes still use the existing SessionDO until the full server
+and native runtime 0.5 path is tested. The model keeps an original 60-second
+visitor-request deadline (configurable by the eventual tenant policy), bounds
+pending requests, and permits one outstanding offer per operator/device. One
+winning installation claims an invitation; other devices receive an explicit
+lost-race disposition. A 30-second accepted-but-not-joined deadline starts room
+cleanup, while operator occupancy stays reserved until media termination is
+confirmed. A signed LiveKit event or an authenticated request followed by a
+server room query must verify media progress; a client callback alone is not
+proof. Projection and push effects remain in a retryable outbox.
+
+The coordinator is keyed by tenant, so it does not serialize other businesses.
+Cloud auth must supply the real user ID and resolved owner tenant ID; the device
+instance must be registered under that identity. Offer eligibility will use
+verified membership, a capable registered device, and explicit call availability;
+an app in the background is still reachable by native push. Focus/DND or a
+rejected delivery frees that device's offer for another operator or the site's
+configured fallback. Existing runtime 0.4 calls are
+not migrated or claimed by this model. A future timeout/busy fallback may show
+only the site's configured contact form or other approved route, with no invented
+queue time or callback promise.
+
 Configured lead forms can forward the visitor's recent chat to an email connector.
 Set `RESEND_API_KEY` and a verified `LEAD_EMAIL_FROM` through Infisical; a failed
 email delivery on an older cached widget returns `502 delivery_failed` so it
