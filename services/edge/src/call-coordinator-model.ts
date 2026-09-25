@@ -41,8 +41,12 @@ export interface CoordinatedCall {
   acceptedAt?: number;
   /** Accepted-but-never-joined calls close after this deadline. */
   joinDueAt?: number;
-  /** Set only after the server verifies LiveKit participant presence. */
+  /** Set only after the server verifies BOTH LiveKit participants present. */
   mediaConnectedAt?: number;
+  mediaStartProvenance?: "signed_event" | "observed_room_present";
+  /** Verified media end; may precede a delayed room-cleanup confirmation. */
+  mediaDisconnectedAt?: number;
+  mediaEndProvenance?: "signed_event" | "observed_room_absent" | "confirmed_room_delete";
   endedAt?: number;
   /** Outgoing calls reserve their operator before the visitor answers. */
   outgoingBy?: Pick<VerifiedCallOperator, "operatorId" | "deviceInstanceId">;
@@ -67,9 +71,75 @@ export interface CallReceipt {
   disposition: CallDisposition;
 }
 
+/** Durable, content-free transcript record; never derived from accept time. */
+export interface CallTimelineReceipt {
+  callId: string;
+  sessionId: string;
+  startedAt: number;
+  connectedAt: number | null;
+  connectedTimeProvenance: "signed_event" | "observed_room_present" | null;
+  endedAt: number;
+  connectedDurationMs: number;
+  outcome: "ended" | "missed" | "declined" | "canceled";
+  endTimeProvenance:
+    | "signed_event"
+    | "observed_room_absent"
+    | "confirmed_room_delete"
+    | "server_transition";
+  revision: number;
+}
+
+const CALL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const validCallTime = (value: unknown): value is number =>
+  typeof value === "number" &&
+  Number.isInteger(value) &&
+  value >= 0 &&
+  value <= 8_640_000_000_000_000;
+
+export function isCallTimelineReceipt(value: unknown): value is CallTimelineReceipt {
+  if (!value || typeof value !== "object") return false;
+  const fields = new Map<string, unknown>(Object.entries(value));
+  const callId = fields.get("callId");
+  const sessionId = fields.get("sessionId");
+  const connectedAt = fields.get("connectedAt");
+  const startedAt = fields.get("startedAt");
+  const endedAt = fields.get("endedAt");
+  const duration = fields.get("connectedDurationMs");
+  const startSource = fields.get("connectedTimeProvenance");
+  const outcome = fields.get("outcome");
+  const revision = fields.get("revision");
+  return (
+    typeof callId === "string" &&
+    CALL_UUID.test(callId) &&
+    typeof sessionId === "string" &&
+    sessionId.length > 0 &&
+    sessionId.length <= 200 &&
+    validCallTime(startedAt) &&
+    (connectedAt === null || validCallTime(connectedAt)) &&
+    validCallTime(endedAt) &&
+    startedAt <= endedAt &&
+    (connectedAt === null || (connectedAt >= startedAt && connectedAt <= endedAt)) &&
+    (connectedAt === null
+      ? startSource === null
+      : ["signed_event", "observed_room_present"].includes(String(startSource))) &&
+    typeof duration === "number" &&
+    Number.isFinite(duration) &&
+    duration >= 0 &&
+    (connectedAt === null ? duration === 0 : duration === endedAt - connectedAt) &&
+    ["ended", "missed", "declined", "canceled"].includes(String(outcome)) &&
+    (connectedAt === null ? outcome !== "ended" : outcome === "ended") &&
+    ["signed_event", "observed_room_absent", "confirmed_room_delete", "server_transition"].includes(
+      String(fields.get("endTimeProvenance")),
+    ) &&
+    typeof revision === "number" &&
+    Number.isInteger(revision) &&
+    revision > 0
+  );
+}
+
 export interface CallOutboxEvent {
   key: string;
-  kind: "status" | "offer" | "stop_offer" | "close_room" | "dispatch";
+  kind: "status" | "offer" | "stop_offer" | "close_room" | "dispatch" | "receipt";
   callId: string;
   revision: number;
   deviceInstanceId?: string;
@@ -85,6 +155,8 @@ export interface CoordinatorState {
   offers: Record<string, CallOffer>;
   /** Keyed by native actionEventId; stored durably with the state by the future DO. */
   receipts: Record<string, { fingerprint: string; result: CallReceipt; createdAt: number }>;
+  /** Projection is retried until SessionDO stores each callId outside the chat ring. */
+  timelineReceipts: Record<string, CallTimelineReceipt>;
   /** Retried until acknowledged; no push or projection is considered a transaction. */
   outbox: Record<string, CallOutboxEvent>;
 }
@@ -141,6 +213,8 @@ export type CallCommand =
       now: number;
       /** Occupancy releases only after the whole room is proven closed. */
       source: "signed_room_finished" | "verified_room_absent" | "close_room_response";
+      /** Verified event time; omitted for a room-query observation. */
+      occurredAt?: number;
     }
   | {
       type: "media_joined";
@@ -150,6 +224,8 @@ export type CallCommand =
       operator: VerifiedCallOperator;
       /** An authenticated client intent alone is insufficient. */
       source: "signed_livekit_event" | "verified_room_query";
+      /** Signed time of verified two-party presence, when available. */
+      occurredAt?: number;
     }
   | { type: "revoke_device"; deviceInstanceId: string; eventId: string; now: number }
   | { type: "revoke_operator"; operatorId: string; eventId: string; now: number };
@@ -186,6 +262,7 @@ export function createCoordinatorState(
     calls: {},
     offers: {},
     receipts: {},
+    timelineReceipts: {},
     outbox: {},
   };
 }
@@ -255,6 +332,35 @@ function terminal(call: CoordinatedCall): boolean {
   return ["ended", "declined", "canceled", "expired"].includes(call.status);
 }
 
+function recordTerminalReceipts(state: CoordinatorState): void {
+  for (const call of Object.values(state.calls)) {
+    if (!terminal(call) || call.endedAt == null || state.timelineReceipts[call.callId]) continue;
+    const mediaEnd = call.mediaDisconnectedAt ?? call.endedAt;
+    const connected = call.mediaConnectedAt != null;
+    const outcome: CallTimelineReceipt["outcome"] =
+      call.status === "declined"
+        ? "declined"
+        : call.status === "canceled"
+          ? "canceled"
+          : connected
+            ? "ended"
+            : "missed";
+    state.timelineReceipts[call.callId] = {
+      callId: call.callId,
+      sessionId: call.sessionId,
+      startedAt: call.createdAt,
+      connectedAt: call.mediaConnectedAt ?? null,
+      connectedTimeProvenance: call.mediaStartProvenance ?? null,
+      endedAt: mediaEnd,
+      connectedDurationMs: call.mediaConnectedAt != null ? mediaEnd - call.mediaConnectedAt : 0,
+      outcome,
+      endTimeProvenance: call.mediaEndProvenance ?? "server_transition",
+      revision: call.revision,
+    };
+    emit(state, call, "receipt");
+  }
+}
+
 function clone(state: CoordinatorState): CoordinatorState {
   return structuredClone(state);
 }
@@ -283,6 +389,7 @@ export function applyCallCommand(
 
   const finish = (result: CallReceipt) => {
     state.receipts[command.eventId] = { fingerprint, result, createdAt: command.now };
+    recordTerminalReceipts(state);
     return { state, result };
   };
   if ("operator" in command && command.operator && command.operator.tenantId !== state.tenantId)
@@ -471,13 +578,18 @@ export function applyCallCommand(
   }
 
   if (command.type === "cancel_operator") {
-    if (call.requestedBy !== "operator" || call.status !== "ringing" || !call.outgoingBy)
+    if (call.requestedBy !== "operator" || !call.outgoingBy)
       return finish(receipt(call, "unavailable", call.callId));
     if (
       call.outgoingBy.operatorId !== command.operator.operatorId ||
       call.outgoingBy.deviceInstanceId !== command.operator.deviceInstanceId
     )
       return finish(receipt(call, "answered_elsewhere", call.callId));
+    if (terminal(call))
+      return finish(
+        receipt(call, call.status === "expired" ? "expired" : "completed_self", call.callId),
+      );
+    if (call.status !== "ringing") return finish(receipt(call, "unavailable", call.callId));
     call.status = "canceled";
     call.endedAt = command.now;
     call.revision++;
@@ -539,6 +651,19 @@ export function applyCallCommand(
       return finish(receipt(call, "unavailable", call.callId));
     call.status = "ended";
     call.endedAt = command.now;
+    const exactSignedEnd =
+      command.source === "signed_room_finished" &&
+      command.occurredAt != null &&
+      Number.isFinite(command.occurredAt) &&
+      command.occurredAt >= (call.mediaConnectedAt ?? call.createdAt) &&
+      command.occurredAt <= command.now;
+    const verifiedAt = exactSignedEnd ? command.occurredAt! : command.now;
+    call.mediaDisconnectedAt = verifiedAt;
+    call.mediaEndProvenance = exactSignedEnd
+      ? "signed_event"
+      : command.source === "close_room_response"
+        ? "confirmed_room_delete"
+        : "observed_room_absent";
     call.revision++;
     emit(state, call, "status");
     dispatchNextWaiting(state, command.now);
@@ -554,7 +679,14 @@ export function applyCallCommand(
     )
       return finish(receipt(call, "unavailable", call.callId));
     if (!call.mediaConnectedAt) {
-      call.mediaConnectedAt = command.now;
+      const exactSignedStart =
+        command.source === "signed_livekit_event" &&
+        command.occurredAt != null &&
+        Number.isFinite(command.occurredAt) &&
+        command.occurredAt >= (call.acceptedAt ?? call.createdAt) &&
+        command.occurredAt <= command.now;
+      call.mediaConnectedAt = exactSignedStart ? command.occurredAt : command.now;
+      call.mediaStartProvenance = exactSignedStart ? "signed_event" : "observed_room_present";
       call.revision++;
       emit(state, call, "status");
     }
@@ -586,6 +718,7 @@ export function expireCoordinatedCalls(previous: CoordinatorState, now: number):
     }
   }
   dispatchNextWaiting(state, now);
+  recordTerminalReceipts(state);
   return state;
 }
 
@@ -644,6 +777,7 @@ export function pruneCoordinatorState(
     )
       continue;
     delete state.calls[callId];
+    delete state.timelineReceipts[callId];
   }
   for (const [eventId, entry] of Object.entries(state.receipts)) {
     if (entry.createdAt > cutoff) continue;

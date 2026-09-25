@@ -320,6 +320,7 @@ export type ServerEvent =
   | { type: "operator"; handoffState: "operator"; text: string; ts: number }
   | { type: "action"; handoffState: "operator"; text: string; ts: number; action: OperatorAction }
   | { type: "lead"; message: SessionMessage }
+  | { type: "call_receipt"; receipt: import("./call-coordinator-model").CallTimelineReceipt }
   | { type: "handoff"; handoffState: "pending" | "operator" }
   /** The AI took the session back (operator resolved it, or went silent past the
    * HANDBACK_SILENCE_MINUTES alarm). Widget drops its "human joined" framing. */
