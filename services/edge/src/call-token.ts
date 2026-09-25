@@ -74,12 +74,33 @@ export async function issueCallToken(
   now: number = Date.now(),
 ): Promise<{ url: string; token: string; expiresAt: number } | null> {
   if (!callRtcAvailable(config) || !canJoinCall(call, expectedId, now)) return null;
+  return issueRoomToken(config, call.room, call.id, role, now);
+}
+
+/** Caller verifies coordinator ownership, winner and accepted state before signing. */
+export async function issueCoordinatedCallToken(
+  config: CallRtcConfig,
+  callId: string,
+  role: "visitor" | "operator",
+  now: number = Date.now(),
+): Promise<{ url: string; token: string; expiresAt: number } | null> {
+  if (!callRtcAvailable(config)) return null;
+  return issueRoomToken(config, `krispy-${callId}`, callId, role, now);
+}
+
+async function issueRoomToken(
+  config: CallRtcConfig,
+  room: string,
+  callId: string,
+  role: "visitor" | "operator",
+  now: number,
+): Promise<{ url: string; token: string; expiresAt: number }> {
   const grant = await signClaims(
     config,
-    `${role}-${call.id}`,
+    `${role}-${callId}`,
     {
       roomJoin: true,
-      room: call.room,
+      room,
       canPublish: true,
       canPublishSources: ["microphone"],
       canPublishData: false,
@@ -125,5 +146,55 @@ export async function closeCallRoom(
     return false;
   } catch {
     return false;
+  }
+}
+
+export type CallRoomObservation = "both_active" | "room_absent" | "not_both" | "unknown";
+
+/** LiveKit's authenticated RoomService is the media-presence authority, never a client flag. */
+export async function observeCallRoom(
+  config: CallRtcConfig,
+  callId: string,
+  fetchImpl: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> = fetch,
+): Promise<CallRoomObservation> {
+  if (!callRtcAvailable(config)) return "unknown";
+  const room = `krispy-${callId}`;
+  const grant = await signClaims(
+    config,
+    `room-check-${crypto.randomUUID()}`,
+    { roomAdmin: true, room },
+    Date.now(),
+    30,
+  );
+  const url = new URL(config.url!);
+  url.protocol = url.protocol === "wss:" ? "https:" : "http:";
+  url.pathname = "/twirp/livekit.RoomService/ListParticipants";
+  url.search = "";
+  try {
+    const response = await fetchImpl(url.toString(), {
+      method: "POST",
+      headers: { authorization: `Bearer ${grant.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ room }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (response.status === 404) {
+      const body = (await response.json().catch(() => null)) as { code?: unknown } | null;
+      return body?.code === "not_found" ? "room_absent" : "unknown";
+    }
+    if (!response.ok) return "unknown";
+    const body = (await response.json().catch(() => null)) as {
+      participants?: { identity?: unknown; state?: unknown }[];
+    } | null;
+    if (!Array.isArray(body?.participants)) return "unknown";
+    const active = new Set(
+      body.participants
+        .filter((person) => person.state === 2 || person.state === "ACTIVE")
+        .map((person) => person.identity),
+    );
+    return active.has(`operator-${callId}`) && active.has(`visitor-${callId}`)
+      ? "both_active"
+      : "not_both";
+  } catch {
+    return "unknown";
   }
 }

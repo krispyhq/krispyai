@@ -5,6 +5,7 @@ import {
   createCoordinatorState,
   expireCoordinatedCalls,
   operatorMayReceiveGrant,
+  offerStillValid,
   pruneCoordinatorState,
   isCallTimelineReceipt,
   waitingCalls,
@@ -96,6 +97,40 @@ test("same user on two devices sees one winner; retries return its canonical cur
   expect(duplicate.result.revision).toBe(state.calls.one!.revision);
   expect(Object.keys(duplicate.state.outbox)).toHaveLength(outboxCount);
   expect(accept(state, "one", a2, "native-event-1").result.disposition).toBe("unavailable");
+});
+
+test("first device offer stays valid after a second offer revision, then winner suppresses both", () => {
+  let state = visitorCall(createCoordinatorState("tenant", { maxPending: 2 }), "one");
+  state = offer(state, "one", a1).state;
+  const firstOfferId = Object.values(state.outbox).find(
+    (event) => event.kind === "offer" && event.deviceInstanceId === a1.deviceInstanceId,
+  )?.key;
+  expect(firstOfferId).toBeDefined();
+  const firstRevision = state.calls.one!.revision;
+  state = offer(state, "one", a2).state;
+  expect(state.calls.one!.revision).toBeGreaterThan(firstRevision);
+  const secondOfferId = Object.values(state.outbox).find(
+    (event) => event.kind === "offer" && event.deviceInstanceId === a2.deviceInstanceId,
+  )?.key;
+  const validity = (who: VerifiedCallOperator, offerId: string) =>
+    offerStillValid(
+      state,
+      {
+        tenantId: "tenant",
+        callId: "one",
+        operatorId: who.operatorId,
+        deviceInstanceId: who.deviceInstanceId,
+        offerId,
+        expiresAt: state.calls.one!.expiresAt,
+      },
+      3,
+    );
+  expect(validity(a1, firstOfferId!)).toBe(true);
+  expect(validity(a2, secondOfferId!)).toBe(true);
+  expect(validity(a1, secondOfferId!)).toBe(false);
+  state = accept(state, "one", a1, "first-winner", 4).state;
+  expect(validity(a1, firstOfferId!)).toBe(false);
+  expect(validity(a2, secondOfferId!)).toBe(false);
 });
 
 test("a ringing offer reconciles as nonterminal and late native acceptance can release its claim", () => {

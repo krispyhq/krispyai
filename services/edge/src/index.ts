@@ -21,6 +21,8 @@ import { configuredAiRunner, DEFAULT_MODEL } from "./ai";
 import { knowledgeGatewayRunner } from "./knowledge-gateway";
 import { chatFlow } from "./chat";
 import { SessionDO, type RingMsg } from "./session-do";
+import { TenantCallCoordinatorDO } from "./tenant-call-do";
+import { handleGuestCoordinatedCall, handleInternalCoordinatorCall } from "./native-call-routes";
 import { buildPromptLeakScope, buildSystemPrompt } from "./system-prompt";
 import {
   parseOwnerReply,
@@ -69,6 +71,7 @@ import {
 } from "./store";
 
 export { SessionDO };
+export { TenantCallCoordinatorDO };
 
 interface WaitUntilContext {
   waitUntil(promise: Promise<unknown>): void;
@@ -244,6 +247,11 @@ async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promis
     if (request.method === "POST" && path === "/api/chat") return handleChat(request, env, ctx);
     if (request.method === "POST" && path === "/api/call")
       return handleCall(request, env, "visitor", ctx);
+    const nativeInternal = path.match(
+      /^\/api\/internal\/call-coordinator\/(availability|start|action|status|grant|revoke-device|offer-validity)$/,
+    );
+    if (request.method === "POST" && nativeInternal)
+      return handleInternalCoordinatorCall(request, env, nativeInternal[1]!);
     if (request.method === "POST" && path === "/api/operator/call")
       return handleCall(request, env, "operator", ctx);
     if (request.method === "POST" && path === "/api/contact") return handleContact(request, env);
@@ -363,7 +371,10 @@ async function handleCall(
     /* no client bundle configured */
   }
   const available = callRtcAvailable(rtc) && clientReady;
-  if (!available) return json(env, { error: "call_unavailable", available: false }, 503);
+  if (!available && !env.CALL_COORDINATOR && body.action === "status")
+    return json(env, { error: "call_unavailable", available: false }, 503);
+  if (!available && ["invite", "accept", "grant"].includes(body.action))
+    return json(env, { error: "call_unavailable", available: false }, 503);
   if (
     actor === "visitor" &&
     !["status", "invite", "accept", "decline", "cancel", "end", "grant"].includes(body.action)
@@ -378,11 +389,25 @@ async function handleCall(
   const identity = identityResponse.ok
     ? ((await identityResponse.json()) as { siteId?: string })
     : {};
-  const callSettings = (await readTenantConfig(env, tenantId, identity.siteId))?.callSettings;
+  const callConfig = await readTenantConfig(env, tenantId, identity.siteId);
+  const callSettings = callConfig?.callSettings;
   if (body.action === "invite" && !callSettings?.enabled)
     return json(env, { error: "call_disabled" }, 403);
   if (body.action === "invite" && actor === "visitor" && !callSettings?.visitorRequestsEnabled)
     return json(env, { error: "visitor_requests_disabled" }, 403);
+  if (actor === "visitor") {
+    const coordinated = await handleGuestCoordinatedCall(
+      env,
+      tenantId as string,
+      body.sessionId as string,
+      body,
+      clientUrl,
+      callConfig,
+    );
+    if (coordinated) return coordinated;
+  }
+  if (!available && body.action === "status")
+    return json(env, { error: "call_unavailable", available: false }, 503);
   const headers: Record<string, string> = { "x-call-actor": actor };
   if (actor === "visitor") headers["x-call-visitor-secret"] = body.visitorSecret as string;
   const path = "https://do/call";

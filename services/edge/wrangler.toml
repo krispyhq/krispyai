@@ -16,9 +16,17 @@ binding = "AI"
 name = "SESSION"
 class_name = "SessionDO"
 
+[[durable_objects.bindings]]
+name = "CALL_COORDINATOR"
+class_name = "TenantCallCoordinatorDO"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["SessionDO"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["TenantCallCoordinatorDO"]
 
 # topic<->session map, tenant config, usage counters.
 [[kv_namespaces]]
@@ -60,9 +68,15 @@ binding = "AI"
 [[env.preview.durable_objects.bindings]]
 name = "SESSION"
 class_name = "SessionDO"
+[[env.preview.durable_objects.bindings]]
+name = "CALL_COORDINATOR"
+class_name = "TenantCallCoordinatorDO"
 [[env.preview.migrations]]
 tag = "v1"
 new_sqlite_classes = ["SessionDO"]
+[[env.preview.migrations]]
+tag = "v2"
+new_sqlite_classes = ["TenantCallCoordinatorDO"]
 [[env.preview.kv_namespaces]]
 binding = "KRISPY_KV"
 id = "a018c2ee187c4617ac218f06b83efe97" # `bunx wrangler kv namespace create KRISPY_KV_preview`
@@ -82,9 +96,15 @@ binding = "AI"
 [[env.production.durable_objects.bindings]]
 name = "SESSION"
 class_name = "SessionDO"
+[[env.production.durable_objects.bindings]]
+name = "CALL_COORDINATOR"
+class_name = "TenantCallCoordinatorDO"
 [[env.production.migrations]]
 tag = "v1"
 new_sqlite_classes = ["SessionDO"]
+[[env.production.migrations]]
+tag = "v2"
+new_sqlite_classes = ["TenantCallCoordinatorDO"]
 [[env.production.kv_namespaces]]
 binding = "KRISPY_KV"
 id = "727ff93f7785455ba71745b160dd4809" # `bunx wrangler kv namespace create KRISPY_KV_production`
