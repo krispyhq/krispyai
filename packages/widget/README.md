@@ -86,7 +86,9 @@ A real incoming team invitation plays a repeating browser ringtone when sound is
 enabled and the browser permits audio. The visible **Accept** and **Decline**
 controls remain available if autoplay blocks sound. The ringtone stops when the
 invitation is accepted, declined, canceled, expires, or the page/socket leaves.
-The idle call suggestion and a visitor's own request stay silent.
+The idle call suggestion and a visitor's own request stay silent. Hidden tabs do
+not ring; browser autoplay settings may still prevent audible playback until a
+trusted gesture unlocks audio on that page.
 
 The idle **Speak with a team member** suggestion has a **Dismiss call offer**
 button. Dismissal is remembered for the current tenant, site, and chat session,

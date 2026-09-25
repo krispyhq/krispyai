@@ -75,9 +75,13 @@ function harness(
   const deviceChanges: { kind: string; id: string }[] = [];
   const rooms: FakeRoom[] = [];
   const listeners = new Map<string, () => void>();
+  const gestures = new Map<string, (event: { isTrusted: boolean }) => void>();
   const document = {
     visibilityState: "visible",
     createElement: (_tag: string) => element(),
+    addEventListener(name: string, fn: (event: { isTrusted: boolean }) => void) {
+      gestures.set(name, fn);
+    },
   };
   const localStorage = {
     getItem: (key: string) => storage.get(key) ?? null,
@@ -220,6 +224,7 @@ function harness(
     requests,
     document,
     listeners,
+    gestures,
     storage,
   };
 }
@@ -231,6 +236,63 @@ const tick = async () => {
 };
 
 describe("visitor audio call controller", () => {
+  test("trusted user gesture unlocks ringtone silently before an async invite", async () => {
+    const contexts: Array<{ closed: boolean }> = [];
+    let tones = 0;
+    class RingAudio {
+      currentTime = 0;
+      destination = {};
+      closed = false;
+      constructor() {
+        contexts.push(this);
+      }
+      resume() {
+        return Promise.resolve();
+      }
+      close() {
+        this.closed = true;
+        return Promise.resolve();
+      }
+      createOscillator() {
+        return {
+          type: "",
+          frequency: { value: 0 },
+          connect: (gain: object) => gain,
+          start: () => {
+            tones++;
+          },
+          stop() {},
+        };
+      }
+      createGain() {
+        return {
+          gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+          connect: () => this.destination,
+        };
+      }
+    }
+    const app = harness(true, new Map(), "session", RingAudio);
+    app.gestures.get("click")?.({ isTrusted: false });
+    expect(contexts).toHaveLength(0);
+    app.gestures.get("click")?.({ isTrusted: true });
+    await tick();
+    expect(contexts).toHaveLength(1);
+    expect(tones).toBe(0);
+    app.renderCall(null); // routine status refresh keeps the unlocked context
+    expect(contexts[0]!.closed).toBe(false);
+    app.renderCall({
+      id: "operator-invite",
+      status: "ringing",
+      requestedBy: "operator",
+      expiresAt: Date.now() + 60_000,
+    });
+    await tick();
+    expect(contexts).toHaveLength(1);
+    expect(tones).toBe(2);
+    app.renderCall({ id: "operator-invite", status: "accepted" });
+    expect(contexts[0]!.closed).toBe(true);
+  });
+
   test("only a real incoming invite rings, and delayed autoplay cannot ring a canceled call", async () => {
     const instances: FakeRingAudio[] = [];
     let tones = 0;

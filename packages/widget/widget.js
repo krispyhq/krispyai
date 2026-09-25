@@ -878,7 +878,7 @@
     if (!th) return;
     if (th.sound === false) {
       soundEnabled = false;
-      stopIncomingRing();
+      stopIncomingRing(true);
     }
     var pc = clampColor(th.primaryColor);
     if (pc) {
@@ -1130,13 +1130,16 @@
   // visitor coming back to a page whose config request failed should still be told
   // somebody answered them.
   restoreUnread();
-  muteBtn.addEventListener("click", function () {
+  muteBtn.addEventListener("click", function (event) {
     muted = !muted;
     localStorage.setItem(MUTE_KEY, muted ? "1" : "0");
     renderMute();
-    if (muted) stopIncomingRing();
-    else if (callState && callState.status === "ringing" && callState.requestedBy !== "visitor")
-      startIncomingRing(callState.id, callState.expiresAt);
+    if (muted) stopIncomingRing(true);
+    else {
+      unlockIncomingRing(event);
+      if (callState && callState.status === "ringing" && callState.requestedBy !== "visitor")
+        startIncomingRing(callState.id, callState.expiresAt);
+    }
   });
 
   // Popup teaser interactions: card click opens the chat (carrying the popup's
@@ -1623,7 +1626,8 @@
   var ringCallId = null;
   var ringEpoch = 0;
   var ringResumePending = false;
-  function stopIncomingRing() {
+  function stopIncomingRing(forceClose) {
+    var wasRinging = ringCallId !== null;
     ringEpoch++;
     ringCallId = null;
     clearInterval(ringTimer);
@@ -1631,7 +1635,7 @@
     clearTimeout(ringExpiryTimer);
     ringExpiryTimer = null;
     ringResumePending = false;
-    if (ringContext) {
+    if (ringContext && (wasRinging || forceClose)) {
       var old = ringContext;
       ringContext = null;
       try {
@@ -1641,6 +1645,27 @@
       }
     }
   }
+  function unlockIncomingRing(event) {
+    if (
+      !event.isTrusted ||
+      muted ||
+      !soundEnabled ||
+      (callState && callState.status === "accepted")
+    )
+      return;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    try {
+      ringContext = ringContext || new AC();
+      // This trusted gesture unlocks future ringing without playing a sound.
+      Promise.resolve(ringContext.resume()).catch(function () {});
+    } catch {
+      /* visible call controls remain available */
+    }
+  }
+  document.addEventListener("pointerdown", unlockIncomingRing, { capture: true });
+  document.addEventListener("keydown", unlockIncomingRing, { capture: true });
+  document.addEventListener("click", unlockIncomingRing, { capture: true });
   function ringPulse(epoch, id) {
     if (ringResumePending || !ringContext) return;
     ringResumePending = true;
@@ -1698,7 +1723,7 @@
     var AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     try {
-      ringContext = new AC();
+      ringContext = ringContext || new AC();
     } catch {
       return;
     }
@@ -1881,7 +1906,7 @@
       return;
     if (next && next.status === "ringing" && next.requestedBy !== "visitor")
       startIncomingRing(next.id, next.expiresAt);
-    else stopIncomingRing();
+    else stopIncomingRing(next && next.status === "accepted");
     if (next && (!callState || next.id !== callState.id)) stopCallMedia();
     callState = next;
     refreshHandoffChoices();
@@ -2193,7 +2218,7 @@
     }).catch(function () {});
   }
   window.addEventListener("pagehide", function () {
-    stopIncomingRing();
+    stopIncomingRing(true);
     endCallInBackground();
   });
   function syncCallStatus() {
@@ -2286,7 +2311,7 @@
         }
       };
       ws.onclose = function () {
-        stopIncomingRing();
+        stopIncomingRing(true);
         // Exponential backoff capped at WS_BACKOFF_MAX, ±25% jitter (avoid a
         // thundering-herd reconnect when the edge recovers). Reset on open.
         var delay = wsBackoff * (0.75 + Math.random() * 0.5);
@@ -2315,7 +2340,7 @@
   // Force a reconnect on return so the ready snapshot backfills missed replies.
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState !== "visible") {
-      stopIncomingRing();
+      stopIncomingRing(true);
       endCallInBackground();
     }
     if (!opened || document.visibilityState !== "visible") return;
