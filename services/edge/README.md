@@ -40,6 +40,12 @@ for another attempt.
 The authenticated operator action routes list configured forms and Instagram CTAs
 for a session's recorded site, then send a selected ID as a durable typed card.
 The visitor receives it over the session WebSocket and sees it again after reconnecting.
+Reply suggestions remain editable and unsent. Checkout links in a suggestion must
+match the tenant's configured sources or validated knowledge gateway context;
+ordinary sentence punctuation after an approved URL does not hide the suggestion.
+When the saved transcript ends in an AI reply, drafting asks for a fresh operator
+response to the latest visitor request. The Delulus pilot requests structured JSON
+from Gemini for this action only; normal visitor chat keeps its existing output mode.
 
 | method | path                             | purpose                                                                                                  |
 | ------ | -------------------------------- | -------------------------------------------------------------------------------------------------------- |

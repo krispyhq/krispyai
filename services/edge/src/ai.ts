@@ -38,6 +38,7 @@ export const MAX_OUTPUT_TOKENS = 256;
 export const GEMINI_MODEL = "gemini-3.1-flash-lite";
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
 type AiFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+export type JsonSchemaOutput = { name: string; schema: Record<string, unknown> };
 
 /** Direct Gemini is confined to the exact Longstory pilot installation. A
  * tenant model setting alone must never spend the shared Google credential. */
@@ -47,6 +48,7 @@ export function configuredAiRunner(
   siteId?: string,
   model = env.AI_MODEL || DEFAULT_MODEL,
   fetcher: AiFetch = fetch,
+  jsonSchema?: JsonSchemaOutput,
 ): AiRunner {
   if (model !== GEMINI_MODEL) return workersAiRunner(env, model);
   const pilotSite = env.KNOWLEDGE_SITE_ID || "default";
@@ -56,7 +58,7 @@ export function configuredAiRunner(
     tenantId === env.KNOWLEDGE_TENANT_ID &&
     selectedSite === pilotSite
   ) {
-    const google = geminiAiRunner(env, fetcher);
+    const google = geminiAiRunner(env, fetcher, jsonSchema);
     const fallback = workersAiRunner(env, DEFAULT_MODEL);
     return async (messages) => {
       try {
@@ -73,7 +75,11 @@ export function configuredAiRunner(
 }
 
 /** Google OpenAI-compatible API, using the same chat message contract as Workers AI. */
-export function geminiAiRunner(env: Env, fetcher: AiFetch = fetch): AiRunner {
+export function geminiAiRunner(
+  env: Env,
+  fetcher: AiFetch = fetch,
+  jsonSchema?: JsonSchemaOutput,
+): AiRunner {
   return async (messages) => {
     const key = env.GEMINI_API_KEY?.trim();
     if (!key) throw new Error("Gemini API key is not configured");
@@ -85,6 +91,14 @@ export function geminiAiRunner(env: Env, fetcher: AiFetch = fetch): AiRunner {
         messages,
         max_tokens: Number(env.MAX_OUTPUT_TOKENS) || MAX_OUTPUT_TOKENS,
         reasoning_effort: "minimal",
+        ...(jsonSchema
+          ? {
+              response_format: {
+                type: "json_schema",
+                json_schema: { name: jsonSchema.name, strict: true, schema: jsonSchema.schema },
+              },
+            }
+          : {}),
       }),
       signal: AbortSignal.timeout(15_000),
     });

@@ -52,6 +52,37 @@ describe("Gemini opt-in adapter", () => {
     expect(called).toBe(true);
   });
 
+  test("uses structured JSON only when the pilot caller requests it", async () => {
+    const schema = {
+      name: "operator_reply_drafts",
+      schema: {
+        type: "object",
+        properties: { drafts: { type: "array", items: { type: "string" } } },
+        required: ["drafts"],
+        additionalProperties: false,
+      },
+    };
+    let requestBody: Record<string, unknown> = {};
+    const runner = configuredAiRunner(
+      env(),
+      "delulus-tenant",
+      undefined,
+      GEMINI_MODEL,
+      async (_url, init) => {
+        requestBody = JSON.parse(String(init?.body));
+        return Response.json({
+          choices: [{ message: { content: '{"drafts":["A specific reply."]}' } }],
+        });
+      },
+      schema,
+    );
+    expect((await runner(messages)).text).toContain("A specific reply.");
+    expect(requestBody.response_format).toEqual({
+      type: "json_schema",
+      json_schema: { name: schema.name, strict: true, schema: schema.schema },
+    });
+  });
+
   test("missing key and provider errors use 70B; both providers failing still rejects", async () => {
     let fallbackCalls = 0;
     const ai = {
