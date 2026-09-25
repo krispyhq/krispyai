@@ -29,6 +29,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
   audio and notification settings permit, while the visible call controls remain
   available if autoplay blocks playback. The ring stops on call state changes.
 
+- A tenant-scoped operator-call coordinator state model and race tests are staged
+  for a future native runtime; live call routing remains on the existing SessionDO.
 - Visitor call cards expand to available microphone and speaker choices while
   keeping Mute and End call accessible in the compact view. Unsupported speaker
   selection is hidden.

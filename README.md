@@ -267,6 +267,11 @@ Audio calls are opt-in through tenant `callSettings`. A team member can invite a
 An idle call suggestion can be dismissed for the current chat session without declining an incoming invitation or ending a call.
 Real incoming invitations ring in the visitor browser when audio is permitted; the visible Accept/Decline card still works when autoplay blocks sound.
 
+A tenant-scoped coordinator model for future native calls is staged in the edge
+source with race tests. It does not change the current call routes. Its state,
+identity, timeout, and retry contract is described in the
+[`services/edge` README](./services/edge/README.md#coordinator-model-staged-behind-the-current-call-routes).
+
 Details: [`packages/widget/README.md`](./packages/widget/README.md).
 
 If joining cannot start the microphone or the audio connection fails, the call
