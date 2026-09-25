@@ -46,6 +46,7 @@ are cached per Worker isolate for 60 seconds.
 `{ forms: [{ id, title }], connectors: [{ id, type: "instagram", label, caption?, url }] }`.
 `POST /api/operator/send-action` adds `kind: "form" | "instagram"` and `id`; it returns
 `{ ok: true, delivered, action }`. Both use the operator bearer or tenant sync secret.
+`delivered` counts live visitor sockets; the operator's own live echo is excluded.
 `POST /api/operator/reply-drafts` takes `{ tenantId, sessionId, siteId? }` and returns
 `{ drafts: string[], sourceRevision, sourceLastMessageTs, stale? }`. It reads the
 session transcript on the server, uses the tenant's configured knowledge and AI

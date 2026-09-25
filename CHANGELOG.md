@@ -22,6 +22,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Fixed
 
+- Operator-sent action receipts now count connected visitor sockets only; the operator
+  still receives the live card echo without being mistaken for a visitor.
 - Edge deployments now sync the configured lead-email sender from Infisical alongside
   the Resend key, so lead delivery uses the verified address selected for the environment.
 - Lead forms now show success only after the server confirms email delivery. A failed

@@ -507,7 +507,11 @@ paths:
                 required: [ok, delivered, action]
                 properties:
                   ok: { type: boolean, const: true }
-                  delivered: { type: integer, description: Number of live WebSocket recipients. }
+                  delivered:
+                    {
+                      type: integer,
+                      description: Number of live visitor WebSocket recipients; operator echoes are excluded.,
+                    }
                   action: { $ref: "#/components/schemas/OperatorAction" }
         "400": { description: Missing or malformed request fields. }
         "401": { description: Missing or invalid operator credentials. }

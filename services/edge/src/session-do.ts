@@ -539,13 +539,18 @@ export class SessionDO {
       await this.state.storage.put("handoffDueAt", 0);
       await this.scheduleAlarm();
       await this.appendRing([{ role: "operator", text, ts, action }]);
-      const delivered = broadcast(this.state.getWebSockets(), {
+      const event = {
         type: "action",
         handoffState: "operator",
         text,
         ts,
         action,
-      });
+      } as const;
+      const operators = this.state.getWebSockets("operator");
+      const operatorSet = new Set(operators);
+      const visitors = this.state.getWebSockets().filter((socket) => !operatorSet.has(socket));
+      const delivered = broadcast(visitors, event);
+      broadcast(operators, event); // keep the operator thread live without counting its echo
       return Response.json({ ok: true, delivered });
     }
 

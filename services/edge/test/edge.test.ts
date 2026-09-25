@@ -1652,6 +1652,36 @@ describe("SessionDO ring buffer", () => {
     ]);
     expect(visitorFrames).toHaveLength(0);
   });
+
+  test("action delivery counts visitor sockets while echoing to operator sockets", async () => {
+    const action = {
+      kind: "instagram" as const,
+      connector: {
+        id: "ig",
+        type: "instagram" as const,
+        label: "DM us",
+        url: "https://instagram.com/example",
+      },
+    };
+    for (const withVisitor of [false, true]) {
+      const operatorFrames: string[] = [];
+      const visitorFrames: string[] = [];
+      const operator = { send: (data: string) => void operatorFrames.push(data) };
+      const visitor = { send: (data: string) => void visitorFrames.push(data) };
+      const state = fakeDOState();
+      Object.defineProperty(state, "getWebSockets", {
+        value: (tag?: string) =>
+          tag === "operator" ? [operator] : withVisitor ? [operator, visitor] : [operator],
+      });
+      const do_ = new SessionDO(state, env);
+      const response = await post(do_, "/action", { action });
+      expect(await response.json()).toEqual({ ok: true, delivered: withVisitor ? 1 : 0 });
+      expect(operatorFrames).toHaveLength(1);
+      expect(JSON.parse(operatorFrames[0]!)).toMatchObject({ type: "action", action });
+      expect(visitorFrames).toHaveLength(withVisitor ? 1 : 0);
+      expect(await msgs(do_)).toMatchObject([{ role: "operator", text: "DM us", action }]);
+    }
+  });
 });
 
 // ── hand-back: resolve + silence alarm (handoff is no longer forever) ─────────
