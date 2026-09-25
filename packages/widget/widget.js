@@ -1630,6 +1630,9 @@
       /* private mode: keep the in-memory choice */
     }
   }
+  function noteHandoffOffer(previousState, nextState) {
+    if (nextState === "pending" && previousState !== "pending") setCallOfferDismissed(false);
+  }
   function callRequest(action, extra) {
     return fetch(cfg.api + "/api/call", {
       method: "POST",
@@ -2150,7 +2153,7 @@
           renderOperatorAction(ev.action, ev.ts);
           notifyInbound();
         } else if (ev.type === "handoff") {
-          if (handoffState !== "pending") setCallOfferDismissed(false);
+          noteHandoffOffer(handoffState, ev.handoffState || "pending");
           handoffState = ev.handoffState || "pending";
           handedOff = true;
           clearFallbacks();
@@ -2668,7 +2671,7 @@
           return;
         } // human owns it — stay silent
         if (responseState === "pending") {
-          if (res.handoff && handoffState !== "pending") setCallOfferDismissed(false);
+          if (res.handoff) noteHandoffOffer(handoffState, responseState);
           handoffState = "pending";
           handedOff = true;
           clearFallbacks();

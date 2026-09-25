@@ -168,7 +168,7 @@ function harness(
     "window",
     "fetch",
     "localStorage",
-    `var handoffChoices = null; function refreshHandoffChoices() {} function requestVisitorCall() {}; ${source.slice(start, end)}; return { renderCall, joinCall, stopCallMedia, setCallOfferDismissed: typeof setCallOfferDismissed === "function" ? setCallOfferDismissed : function () {}, setCallAvailable: function () { callCanRequest = true; callVisitorConnected = true; } };`,
+    `var handoffChoices = null; function refreshHandoffChoices() {} function requestVisitorCall() {}; ${source.slice(start, end)}; return { renderCall, joinCall, stopCallMedia, noteHandoffOffer: typeof noteHandoffOffer === "function" ? noteHandoffOffer : function () {}, setCallOfferDismissed: typeof setCallOfferDismissed === "function" ? setCallOfferDismissed : function () {}, setCallAvailable: function () { callCanRequest = true; callVisitorConnected = true; } };`,
   ) as (...args: unknown[]) => {
     renderCall: (
       call: { id: string; status: string; requestedBy?: string; expiresAt?: number } | null,
@@ -176,6 +176,7 @@ function harness(
     joinCall: (id: string) => Promise<void>;
     stopCallMedia: () => void;
     setCallOfferDismissed: (dismissed: boolean) => void;
+    noteHandoffOffer: (previousState: string, nextState: string) => void;
     setCallAvailable: () => void;
   };
   const controller = factory(
@@ -258,7 +259,10 @@ describe("visitor audio call controller", () => {
       "Accept",
     ]);
     expect(reloaded.requests).toEqual([]);
-    reloaded.setCallOfferDismissed(false); // a later explicit handoff starts a new offer
+    reloaded.noteHandoffOffer("pending", "pending"); // repeated status is the same offer
+    reloaded.renderCall(null);
+    expect(reloaded.callControls.children).toHaveLength(0);
+    reloaded.noteHandoffOffer("ai", "pending"); // a later explicit handoff starts a new offer
     reloaded.renderCall(null);
     expect(reloaded.callControls.children.map((item) => item.textContent)).toContain(
       "Request a call",
