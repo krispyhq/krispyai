@@ -14,10 +14,11 @@
     "lint": "oxlint",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
-    "test": "bun --filter '@krispy*/*' test && bun test packages/widget/widget.test.ts packages/widget/widget-call.test.ts packages/widget/widget-handoff.test.ts",
+    "test": "bun --filter '@krispy*/*' test && bun test packages/widget/widget.test.ts packages/widget/widget-call.test.ts packages/widget/widget-handoff.test.ts packages/widget/widget-presence.test.ts packages/widget/widget-receipt.test.ts",
     "check": "bun run typecheck && bun run lint && bun run test"
   },
   "devDependencies": {
+    "happy-dom": "20.14.5",
     "oxfmt": "0.58.0",
     "oxlint": "1.73.0",
     "oxlint-tsgolint": "^0.24.0"

@@ -182,7 +182,7 @@ function harness(
     "fetch",
     "localStorage",
     "host",
-    `var handoffChoices = null, muted = false, soundEnabled = true; function refreshHandoffChoices() {} function requestVisitorCall() {}; ${source.slice(start, end)}; return { renderCall, joinCall, stopCallMedia, noteHandoffOffer, setCallOfferDismissed, setCallAvailable: function () { callCanRequest = true; callVisitorConnected = true; }, setNotificationMuted: function (value) { muted = value; } };`,
+    `var handoffChoices = null, muted = false, soundEnabled = true, ws = null, wsReconnectTimer = null, pageLeaving = false; function refreshHandoffChoices() {} function requestVisitorCall() {}; ${source.slice(start, end)}; return { renderCall, joinCall, stopCallMedia, noteHandoffOffer, setCallOfferDismissed, setCallAvailable: function () { callCanRequest = true; callVisitorConnected = true; }, setNotificationMuted: function (value) { muted = value; } };`,
   ) as (...args: unknown[]) => {
     renderCall: (
       call: { id: string; status: string; requestedBy?: string; expiresAt?: number } | null,

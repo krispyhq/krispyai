@@ -267,6 +267,7 @@ Audio calls are opt-in through tenant `callSettings`. A team member can invite a
 An idle call suggestion can be dismissed for the current chat session without declining an incoming invitation or ending a call.
 The widget can render durable runtime 0.5 call receipts with outcome, occurred time, and verified connected duration once the coordinator outbox emits them; no audio recording or content summary is stored.
 Real incoming invitations ring in the visitor browser when audio is permitted; the visible Accept/Decline card still works when autoplay blocks sound.
+Returning visitors with a registered call capability remain reachable while the page is visible and chat is closed; backgrounding closes the call socket.
 
 A tenant-scoped coordinator model for future native calls is staged in the edge
 source with race tests and a disabled identity/storage adapter. It does not

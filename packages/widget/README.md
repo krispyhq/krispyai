@@ -93,6 +93,12 @@ The widget only attempts silent unlock on widget interaction, including an
 embedder's custom launcher opening the panel; unrelated page clicks do not
 create an audio context.
 
+After a visitor has registered a call capability through chat, returning to the
+page reconnects its authenticated call socket while the page is visible, even
+with the chat panel closed. The server still verifies the stored capability;
+opening a new, unregistered page does not create call presence. Hidden pages and
+unloaded pages close the socket, and a visible return reconnects it.
+
 The idle **Speak with a team member** suggestion has a **Dismiss call offer**
 button. Dismissal is remembered for the current tenant, site, and chat session,
 including page reloads; a later new handoff or new chat session may show it again.
