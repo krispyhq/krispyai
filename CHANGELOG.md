@@ -56,6 +56,11 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Fixed
 
+- Returning visitors with a registered call capability now reconnect the
+  visitor call socket while the page is visible, even before reopening chat.
+  Background/unload closes the socket; new unregistered visitors remain
+  ineligible for operator invitations.
+
 - The visitor's idle audio-call offer now has a 44px dismiss control and stays
   dismissed for the current chat session across rerenders and reloads. Dismissing
   the offer does not decline an incoming invite or end a call.

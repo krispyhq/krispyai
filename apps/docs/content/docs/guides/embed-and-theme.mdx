@@ -183,6 +183,10 @@ in its inline style, which is what integrators had to do before the class existe
   An invited visitor accepts, then joins before the microphone turns on.
   A real incoming invitation rings when browser audio is allowed and notifications
   are unmuted; Accept and Decline remain visible when autoplay blocks sound.
+  Returning visitors with a previously registered call capability keep their
+  call socket connected while the page is visible even when chat is closed;
+  backgrounding or leaving the page closes it. The server still validates the
+  capability before an operator can invite them.
   The call card distinguishes waiting for the team member, connected, and reconnecting;
   Mute/Unmute and End call remain available during the call. Tap the call card to expand
   audio settings: permitted microphones can be switched without a new permission prompt;
