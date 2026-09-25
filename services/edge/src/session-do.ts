@@ -10,11 +10,13 @@
 //   GET  /state                → { handoffState, handedOff }   (chat's fallback path)
 //   GET  /context              → { handoffState, handedOff, messages }  (one combined read — the chat
 //                                flow's authoritative memory + handoff flag per turn)
-//   GET  /summary              → { handoffState, handedOff, resolved, lastMessage, ts }
+//   GET  /summary              → { handoffState, handedOff, resolved, lastMessage, ts, siteId }
+//   GET  /identity             → { tenantId, siteId } (operator action scope check)
 //   GET  /log                  → { messages }    (the 20-msg ring — thread read)
 //   POST /log {messages,seed?} → append to the ring (seed: only if the ring is empty)
 //   POST /operator {text}      → set operator state, broadcast + ring-append operator reply
 //                                (also cancels the silence hand-back alarm)
+//   POST /action {action}      → append a resolved form/Instagram card and broadcast it
 //   POST /handoff              → broadcast a handoff prompt (AI escalation)
 //   POST /resolve {resolved?}  → toggle (or force-set) the `resolved` flag (operator
 //                                inbox hygiene); resolving ALSO hands the session back
@@ -25,9 +27,19 @@
 // Silence hand-back: a visitor message while pending/operator-owned arms the DO alarm
 // (HANDBACK_SILENCE_MINUTES, default 5). An operator reply disarms it. If it fires,
 // the session hands back to the AI so a returning visitor never faces a muted bot.
-import type { Env, HandoffState, ServerEvent } from "./types";
+import type { Env, HandoffState, OperatorAction, ServerEvent, SessionMessage } from "./types";
 import { DO_INTERNAL_HEADER, doInternalSecret, readTenantConfig } from "./store";
 import { proposeKbSuggestion } from "./learn";
+import {
+  currentCall,
+  inviteCall,
+  publicCall,
+  transitionCall,
+  type CallState,
+  type CallAction,
+  CALL_MAX_DURATION_MS,
+} from "./call";
+import { closeCallRoom, issueCallToken } from "./call-token";
 
 interface Sendable {
   send(data: string): void;
@@ -54,11 +66,7 @@ export function broadcast(sockets: Sendable[], event: ServerEvent): number {
 // thread with zero Telegram round-trips.
 // ponytail: 20-msg ceiling; add pagination only when a thread needs scroll-back
 export const RING_MAX = 20;
-export interface RingMsg {
-  role: "visitor" | "ai" | "operator";
-  text: string;
-  ts: number;
-}
+export type RingMsg = SessionMessage;
 
 /** The first frame after every WS reconnect carries the durable ring snapshot.
  * Clients may have been backgrounded while a reply arrived, so the live event
@@ -113,6 +121,63 @@ export class SessionDO {
     return (await this.state.storage.get<RingMsg[]>("log")) ?? [];
   }
 
+  private async callState(): Promise<CallState | null> {
+    const stored = await this.state.storage.get<CallState>("call");
+    const current = currentCall(stored, Date.now());
+    if (current && current !== stored) {
+      await this.state.storage.put("call", current);
+      await this.sendCall(current);
+      if (stored?.status === "accepted") await this.closeEndedRoom(stored.room);
+      await this.scheduleAlarm();
+    }
+    return current;
+  }
+
+  private rtcConfig() {
+    return {
+      url: this.env.LIVEKIT_URL,
+      apiKey: this.env.LIVEKIT_API_KEY,
+      apiSecret: this.env.LIVEKIT_API_SECRET,
+    };
+  }
+
+  private async closeEndedRoom(room: string): Promise<boolean> {
+    const closed = await closeCallRoom(this.rtcConfig(), room);
+    if (closed) {
+      await this.state.storage.put("callCleanupRoom", "");
+      await this.state.storage.put("callCleanupDueAt", 0);
+    } else {
+      await this.state.storage.put("callCleanupRoom", room);
+      await this.state.storage.put("callCleanupDueAt", Date.now() + 30_000);
+    }
+    return closed;
+  }
+
+  /** One platform alarm serves handback, invitation expiry, call limit, and cleanup. */
+  private async scheduleAlarm(): Promise<void> {
+    const call = await this.state.storage.get<CallState>("call");
+    const handoffDue = await this.state.storage.get<number>("handoffDueAt");
+    const cleanupDue = await this.state.storage.get<number>("callCleanupDueAt");
+    const callDue =
+      call?.status === "ringing"
+        ? call.expiresAt
+        : call?.status === "accepted"
+          ? (call.acceptedAt ?? call.createdAt) + CALL_MAX_DURATION_MS
+          : 0;
+    const due = [handoffDue, callDue, cleanupDue].filter(
+      (n): n is number => typeof n === "number" && n > 0,
+    );
+    if (due.length) await this.state.storage.setAlarm(Math.min(...due));
+    else await this.state.storage.deleteAlarm();
+  }
+
+  private async sendCall(call: CallState | null): Promise<void> {
+    const basic = publicCall(call, Date.now());
+    broadcast(this.state.getWebSockets("operator"), { type: "call", call: basic });
+    const nonce = await this.state.storage.get<string>("callNonce");
+    broadcast(this.state.getWebSockets("call-visitor"), { type: "call", call: basic, nonce });
+  }
+
   private async appendRing(msgs: RingMsg[]): Promise<RingMsg[]> {
     const log = await this.ring();
     log.push(...msgs);
@@ -130,7 +195,8 @@ export class SessionDO {
    * broadcast {type:"resume"} to every socket (widget un-mutes its framing; the
    * Buttr thread sees the state flip). No-op when the bot already has the session. */
   private async handBack(opts: { note?: string } = {}): Promise<void> {
-    await this.state.storage.deleteAlarm();
+    await this.state.storage.put("handoffDueAt", 0);
+    await this.scheduleAlarm();
     // Reset the handoff-announce guard so a genuinely new future escalation can alert
     // again (see /handoff). Cleared for both pending and operator-owned sessions.
     await this.state.storage.put("handoffAnnounced", false);
@@ -178,12 +244,16 @@ export class SessionDO {
     }
   }
 
-  /** DO alarm — armed by a visitor message on a handed-off session, disarmed by any
-   * operator reply (and by /resolve). Firing = the operator went silent → hand back.
-   * The DO has ONE alarm slot; setAlarm overwrites, which is exactly the "reset the
-   * countdown on each new visitor message" semantics we want. */
+  /** Process only the deadlines that have elapsed, then schedule the next one. */
   async alarm(): Promise<void> {
-    await this.handBack({ note: HANDBACK_NOTE });
+    await this.callState();
+    const now = Date.now();
+    const handoffDue = await this.state.storage.get<number>("handoffDueAt");
+    if (handoffDue && handoffDue <= now) await this.handBack({ note: HANDBACK_NOTE });
+    const cleanupDue = await this.state.storage.get<number>("callCleanupDueAt");
+    const cleanupRoom = await this.state.storage.get<string>("callCleanupRoom");
+    if (cleanupDue && cleanupDue <= now && cleanupRoom) await this.closeEndedRoom(cleanupRoom);
+    await this.scheduleAlarm();
   }
 
   /** The internal (Worker-only) HTTP surface is state-mutating — require the shared
@@ -205,11 +275,22 @@ export class SessionDO {
       // already fans every ServerEvent to every socket, so an operator socket gets
       // the full union today; the tag is what lets operator-only events exist later.
       const operator = url.searchParams.get("role") === "operator";
-      this.state.acceptWebSocket(server, operator ? ["operator"] : undefined); // hibernatable — no idle billing
+      const visitorSecret = url.searchParams.get("v");
+      const registered = await this.state.storage.get<string>("callVisitorSecret");
+      const callVisitor = !operator && !!registered && visitorSecret === registered;
+      this.state.acceptWebSocket(
+        server,
+        operator ? ["operator"] : callVisitor ? ["call-visitor"] : undefined,
+      ); // hibernatable — no idle billing
       const handoffState = await this.handoffState();
       const event = readyEvent(handoffState, await this.ring());
       try {
         server.send(JSON.stringify(event));
+        if (operator || callVisitor) {
+          const call = publicCall(await this.callState(), Date.now());
+          const nonce = callVisitor ? await this.state.storage.get<string>("callNonce") : undefined;
+          server.send(JSON.stringify({ type: "call", call, nonce }));
+        }
       } catch {
         /* noop */
       }
@@ -218,6 +299,144 @@ export class SessionDO {
 
     // Everything past the WS upgrade is the internal Worker→DO surface — gated.
     if (!this.internalAuthed(request)) return new Response("forbidden", { status: 403 });
+
+    if (request.method === "POST" && url.pathname.endsWith("/call/visitor/register")) {
+      const body = (await request.json().catch(() => ({}))) as { secret?: string };
+      if (!body.secret || !/^[A-Za-z0-9_-]{43}$/.test(body.secret))
+        return Response.json({ error: "invalid_secret" }, { status: 400 });
+      const registered = await this.state.storage.get<string>("callVisitorSecret");
+      if (!registered) await this.state.storage.put("callVisitorSecret", body.secret);
+      return Response.json({ ok: !registered || registered === body.secret });
+    }
+
+    if (request.method === "POST" && url.pathname.endsWith("/call/grant")) {
+      const actor = request.headers.get("x-call-actor");
+      const registered = await this.state.storage.get<string>("callVisitorSecret");
+      if (actor !== "operator" && actor !== "visitor")
+        return Response.json({ error: "actor_required" }, { status: 403 });
+      if (
+        actor === "visitor" &&
+        (!registered || request.headers.get("x-call-visitor-secret") !== registered)
+      )
+        return Response.json({ error: "visitor_auth_required" }, { status: 403 });
+      const body = (await request.json().catch(() => ({}))) as { id?: string };
+      if (!body.id) return Response.json({ error: "stale_call" }, { status: 409 });
+      const rtc = {
+        url: this.env.LIVEKIT_URL,
+        apiKey: this.env.LIVEKIT_API_KEY,
+        apiSecret: this.env.LIVEKIT_API_SECRET,
+      };
+      const call = await this.callState();
+      if (!call) return Response.json({ error: "call_not_accepted" }, { status: 409 });
+      const grant = await issueCallToken(rtc, call, body.id, actor);
+      const afterSigning = await this.callState();
+      if (!grant || afterSigning?.status !== "accepted" || afterSigning.id !== body.id)
+        return Response.json({ error: "call_not_accepted" }, { status: 409 });
+      return Response.json(grant);
+    }
+
+    if (url.pathname.endsWith("/call")) {
+      const body =
+        request.method === "POST"
+          ? ((await request.json().catch(() => ({}))) as {
+              action?: "invite" | CallAction;
+              id?: string;
+              nonce?: string;
+              visitorSecret?: string;
+            })
+          : null;
+      const actor = request.headers.get("x-call-actor");
+      const visitorSecret = await this.state.storage.get<string>("callVisitorSecret");
+      if (
+        actor === "visitor" &&
+        (!visitorSecret || request.headers.get("x-call-visitor-secret") !== visitorSecret)
+      ) {
+        return Response.json({ error: "visitor_auth_required" }, { status: 403 });
+      }
+      if (actor !== "visitor" && actor !== "operator")
+        return Response.json({ error: "actor_required" }, { status: 403 });
+      if (request.method === "GET") {
+        const call = await this.callState();
+        const lastRequest = (await this.state.storage.get<number>("visitorCallRequestAt")) ?? 0;
+        return Response.json({
+          call: publicCall(call, Date.now()),
+          handoffState: await this.handoffState(),
+          visitorRequestReady:
+            (!call || ["declined", "canceled", "expired", "ended"].includes(call.status)) &&
+            Date.now() - lastRequest >= 60_000,
+          ...(actor === "visitor"
+            ? { nonce: await this.state.storage.get<string>("callNonce") }
+            : {}),
+        });
+      }
+      if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
+      const action = body?.action;
+      if (action === "invite") {
+        const previous = await this.callState();
+        if (
+          actor === "operator" &&
+          (!visitorSecret || this.state.getWebSockets("call-visitor").length === 0)
+        )
+          return Response.json({ error: "visitor_unavailable" }, { status: 409 });
+        if (actor === "visitor") {
+          const trigger = request.headers.get("x-call-request-trigger");
+          if (trigger !== "always" && (await this.handoffState()) === "ai")
+            return Response.json({ error: "handoff_required" }, { status: 409 });
+          const lastRequest = (await this.state.storage.get<number>("visitorCallRequestAt")) ?? 0;
+          if (previous?.status !== "ringing" && Date.now() - lastRequest < 60_000)
+            return Response.json({ error: "call_request_rate_limited" }, { status: 429 });
+        }
+        if (await this.state.storage.get<string>("callCleanupRoom"))
+          return Response.json({ error: "previous_call_cleanup_pending" }, { status: 503 });
+        const result = inviteCall(previous, Date.now(), crypto.randomUUID(), actor);
+        if (!result.ok) return Response.json({ error: result.reason }, { status: 409 });
+        if (result.changed) {
+          await this.state.storage.put("call", result.call);
+          await this.state.storage.put("callNonce", crypto.randomUUID());
+          if (actor === "visitor") await this.state.storage.put("visitorCallRequestAt", Date.now());
+          await this.sendCall(result.call);
+          await this.scheduleAlarm();
+        }
+        return Response.json({
+          call: publicCall(result.call, Date.now()),
+          changed: result.changed,
+          ...(actor === "visitor"
+            ? { nonce: await this.state.storage.get<string>("callNonce") }
+            : {}),
+        });
+      }
+      if (!action || !body?.id) return Response.json({ error: "invalid_action" }, { status: 400 });
+      const current = await this.callState();
+      const requester = current?.requestedBy ?? "operator";
+      if ((action === "accept" || action === "decline") && actor === requester)
+        return Response.json({ error: "wrong_actor" }, { status: 403 });
+      if (action === "cancel" && actor !== requester)
+        return Response.json({ error: "wrong_actor" }, { status: 403 });
+      if (actor === "visitor" && body.nonce !== (await this.state.storage.get<string>("callNonce")))
+        return Response.json({ error: "invalid_nonce" }, { status: 403 });
+      const result = transitionCall(current, action, Date.now(), body.id);
+      if (!result.ok) return Response.json({ error: result.reason }, { status: 409 });
+      if (result.changed) {
+        await this.state.storage.put("call", result.call);
+        if (action === "accept") {
+          await this.setHandoffState("operator");
+          await this.state.storage.put("handoffDueAt", 0);
+          broadcast(this.state.getWebSockets(), { type: "handoff", handoffState: "operator" });
+        }
+        await this.sendCall(result.call);
+        await this.scheduleAlarm();
+      }
+      if (action === "end") {
+        const closed = await this.closeEndedRoom(result.call.room);
+        await this.scheduleAlarm();
+        if (!closed)
+          return Response.json(
+            { error: "room_disconnect_failed", call: publicCall(result.call, Date.now()) },
+            { status: 502 },
+          );
+      }
+      return Response.json({ call: publicCall(result.call, Date.now()), room: result.call.room });
+    }
 
     if (request.method === "GET" && url.pathname.endsWith("/state")) {
       const handoffState = await this.handoffState();
@@ -263,6 +482,14 @@ export class SessionDO {
         resolved,
         lastMessage: last?.text ?? null,
         ts: last?.ts ?? null,
+        siteId: (await this.state.storage.get<string>("siteId")) ?? "default",
+      });
+    }
+
+    if (request.method === "GET" && url.pathname.endsWith("/identity")) {
+      return Response.json({
+        tenantId: (await this.state.storage.get<string>("tenantId")) ?? null,
+        siteId: (await this.state.storage.get<string>("siteId")) ?? "default",
       });
     }
 
@@ -297,7 +524,8 @@ export class SessionDO {
         // Pending/operator + visitor waiting → arm (or reset) silence hand-back.
         // Any operator reply disarms it (see /operator).
         if ((await this.handoffState()) !== "ai") {
-          await this.state.storage.setAlarm(Date.now() + this.silenceMs());
+          await this.state.storage.put("handoffDueAt", Date.now() + this.silenceMs());
+          await this.scheduleAlarm();
         }
       }
       // Mirror LIVE visitor/AI turns to operator sockets so an open Buttr thread
@@ -318,7 +546,8 @@ export class SessionDO {
       const { text } = (await request.json()) as { text: string };
       const ts = Date.now();
       await this.setHandoffState("operator");
-      await this.state.storage.deleteAlarm(); // the operator replied — disarm the silence hand-back
+      await this.state.storage.put("handoffDueAt", 0); // operator replied
+      await this.scheduleAlarm();
       await this.appendRing([{ role: "operator", text, ts }]);
       const n = broadcast(this.state.getWebSockets(), {
         type: "operator",
@@ -327,6 +556,29 @@ export class SessionDO {
         ts,
       });
       return Response.json({ ok: true, delivered: n });
+    }
+
+    if (request.method === "POST" && url.pathname.endsWith("/action")) {
+      const { action } = (await request.json()) as { action: OperatorAction };
+      const text = action.kind === "form" ? action.form.title : action.connector.label;
+      const ts = Date.now();
+      await this.setHandoffState("operator");
+      await this.state.storage.put("handoffDueAt", 0);
+      await this.scheduleAlarm();
+      await this.appendRing([{ role: "operator", text, ts, action }]);
+      const event = {
+        type: "action",
+        handoffState: "operator",
+        text,
+        ts,
+        action,
+      } as const;
+      const operators = this.state.getWebSockets("operator");
+      const operatorSet = new Set(operators);
+      const visitors = this.state.getWebSockets().filter((socket) => !operatorSet.has(socket));
+      const delivered = broadcast(visitors, event);
+      broadcast(operators, event); // keep the operator thread live without counting its echo
+      return Response.json({ ok: true, delivered });
     }
 
     // Toggle the resolved flag (operator "done with this one" — inbox hygiene).

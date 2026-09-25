@@ -80,13 +80,27 @@ chat. you don't wire this by hand — configuring a form is enough.
 `instagram` are **CTA-only**: the widget renders them as links for the visitor to tap;
 nothing is delivered server-side for them, and they never leave the server as data.
 
+An operator can send an existing form or Instagram CTA while talking with a visitor.
+The app lists the forms and visitor-facing Instagram connectors configured for that
+conversation's site. Selecting one places a card in the chat transcript. The form
+uses the same `/api/lead` delivery path as a bot-offered form, and the Instagram
+button uses the connector's configured HTTPS profile URL. Cards survive reconnects.
+
+While a conversation waits for a team member, the widget offers a compact
+"Talk to the team" card using only the site's configured forms and visitor-facing
+CTAs. A form choice expands the existing form in the chat transcript; `/api/lead`
+still receives the recent conversation. A visitor can also request an audio call
+when the site's call settings allow it and the call status confirms availability.
+Unconfigured choices stay hidden. The pending choice card closes when a team
+member takes over or the AI resumes; an expanded form keeps the visitor's input.
+
 ## the two capture paths
 
 - **`[!FORM:<id>]`** → the widget renders your `FormSpec`; on submit it `POST`s to
   `/api/lead`, which fans the values out to the scoped connectors.
-- **`[!HANDOFF]` with no form** → the widget renders a built-in default `FormSpec`
-  (name + a required email/phone field) through the same renderer, posting to `/api/lead`
-  like any other form. `/api/contact` remains as a back-compat shim for already-deployed
+- **`[!HANDOFF]` with no form** → the widget offers configured contact choices while
+  the team is pending. It does not create a default contact form or delivery route.
+  `/api/contact` remains as a back-compat shim for already-deployed
   widgets.
 
 ## write the config

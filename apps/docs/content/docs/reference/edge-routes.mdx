@@ -10,15 +10,16 @@ one Cloudflare Worker hosts all of these plus the `SessionDO`. CORS allow-origin
 
 ## public routes
 
-| method | path                             | body / query → response                                                                                                                                                                    |
-| ------ | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `POST` | `/api/chat`                      | `{ sessionId, message, tenantId?, history? }` → `{ reply, handoff, handoffState, handedOff, degraded?, formId?, form? }`                                                                   |
-| `POST` | `/api/contact`                   | `{ sessionId, tenantId?, name?, contact?, message? }` → `{ ok: true }` — legacy contact-capture shim (maps onto the lead fan-out)                                                          |
-| `POST` | `/api/lead`                      | `{ tenantId?, sessionId, formId?, values, history }` → `{ ok: true }` after a configured form's email delivery is accepted; `502 delivery_failed` keeps the widget form available to retry |
-| `GET`  | `/api/session/:id/ws?t=<tenant>` | WebSocket upgrade → `SessionDO`. `426` if not an upgrade. the visitor's live channel                                                                                                       |
-| `GET`  | `/api/widget/config?t=<tenant>`  | → `{ capabilities: { attachments }, theme, ctas, script, popups }` — the **public, secret-free** widget projection (whitelist only; no `persona`)                                          |
-| `GET`  | `/api/usage?t=<tenant>`          | → `{ tenantId, usage: { ai, handoff, tokens }, plan, entitled, status, limits, withinLimits }`                                                                                             |
-| `GET`  | `/health`                        | → `{ status: "ok", service: "edge" }`                                                                                                                                                      |
+| method | path                             | body / query → response                                                                                                                                                                        |
+| ------ | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST` | `/api/chat`                      | `{ sessionId, message, tenantId?, history? }` → `{ reply, handoff, handoffState, handedOff, degraded?, formId?, form? }`                                                                       |
+| `POST` | `/api/call`                      | Visitor call control with registered `visitorSecret`: `status`, `invite`, `accept`, `decline`, `cancel`, `end`, `grant`. Status includes `availableToRequest`; invite returns a private nonce. |
+| `POST` | `/api/contact`                   | `{ sessionId, tenantId?, name?, contact?, message? }` → `{ ok: true }` — legacy contact-capture shim (maps onto the lead fan-out)                                                              |
+| `POST` | `/api/lead`                      | `{ tenantId?, sessionId, formId?, values, history }` → `{ ok: true }` after a configured form's email delivery is accepted; `502 delivery_failed` keeps the widget form available to retry     |
+| `GET`  | `/api/session/:id/ws?t=<tenant>` | WebSocket upgrade → `SessionDO`. `426` if not an upgrade. the visitor's live channel                                                                                                           |
+| `GET`  | `/api/widget/config?t=<tenant>`  | → `{ capabilities: { attachments }, theme, ctas, forms, script, popups }` — the **public, secret-free** widget projection (whitelist only; no `persona` or form delivery routing)              |
+| `GET`  | `/api/usage?t=<tenant>`          | → `{ tenantId, usage: { ai, handoff, tokens }, plan, entitled, status, limits, withinLimits }`                                                                                                 |
+| `GET`  | `/health`                        | → `{ status: "ok", service: "edge" }`                                                                                                                                                          |
 
 ### `POST /api/chat` gate
 
@@ -32,6 +33,25 @@ replied; `operator` starts with the first human reply. Pending and operator-owne
 messages still reach the topic and server ring, while the AI stays silent. `handedOff` remains
 as a compatibility boolean and is true only for `operator`.
 
+### Audio calls
+
+Audio calls require RTC configuration and tenant `callSettings.enabled`. Operator invites
+require a connected visitor; visitor requests require `visitorRequestsEnabled` and, by
+default, a session already in `pending` or `operator` handoff state. Set
+`visitorRequestTrigger: "always"` to allow a visitor request before handoff. A visitor
+request sends one push to registered operator devices unless `notifyOnVisitorRequest` is
+false; push delivery runs after the invite response, and repeating the same ringing request
+does not send another. `availableToRequest` in
+visitor `status` says only that a request is allowed, not that an operator is online.
+
+Both `/api/call` and `/api/operator/call` use `POST` with `{ tenantId, sessionId, action,
+id?, nonce? }`; the visitor also sends its registered `visitorSecret`, while the operator
+uses its bearer or tenant sync secret. `call.requestedBy` identifies the requester. The
+recipient can `accept` or `decline`; the requester can `cancel`; either can `end` once
+accepted. The visitor nonce never appears in the operator response. `grant` returns
+room credentials only after acceptance. Accepting sets the session to operator handoff
+so the AI stays silent during the call. A new visitor request is limited to one per minute.
+
 ### Operator bearer authorization
 
 The operator app sends its Better Auth bearer in `Authorization: Bearer <session token>`
@@ -41,6 +61,29 @@ the cloud API's `GET /me` and compares the server-resolved `tenantId` with the r
 another tenant with `403`. During rollout, a `/me` response without `tenantId` falls back
 to its nonempty `id`; malformed identity fields fail closed with `401`. Verified tokens
 are cached per Worker isolate for 60 seconds.
+
+`POST /api/operator/actions` takes `{ tenantId, sessionId, siteId? }` and returns
+`{ forms: [{ id, title }], connectors: [{ id, type: "instagram", label, caption?, url }] }`.
+`POST /api/operator/send-action` adds `kind: "form" | "instagram"` and `id`; it returns
+`{ ok: true, delivered, action }`. Both use the operator bearer or tenant sync secret.
+`delivered` counts live visitor sockets; the operator's own live echo is excluded.
+`POST /api/operator/reply-drafts` takes `{ tenantId, sessionId, siteId? }` and returns
+`{ drafts: string[], sourceRevision, sourceLastMessageTs, stale? }`. It reads the
+session transcript on the server, uses the tenant's configured knowledge and AI
+provider for the session's recorded site, and returns up to three editable suggestions.
+An optional `siteId` only asserts that recorded site; a mismatch returns `403`.
+It never sends a reply.
+The app requests them on demand and discards a result when the transcript changes.
+Uncertain or failed generation returns an empty array; repeated requests are capped
+at 20 per session per hour (`429`; concurrent bursts can exceed the coarse KV counter).
+Direct Gemini remains limited to the approved
+pilot tenant and site.
+The server reads the session's recorded site and resolves the ID from that site's
+configured forms/connectors. An optional `siteId` must match. Missing session or ID
+returns `404`, a site mismatch returns `403`, and malformed fields return `400`.
+The typed card appears in `/api/operator/thread` history and the visitor WebSocket
+(`type: "action"`); reconnect `ready.messages` restores it. The form submits through
+the existing `/api/lead` path. The inbox row also includes the recorded `siteId`.
 
 Telegram is optional for the Buttr inbox. Before moving a session to `pending`, the Worker writes
 `handoff:<tenant>:<session>` to KV. With `includeActive: true`, the operator inbox also lists
@@ -90,8 +133,8 @@ or wrong secret returns **401** (config routes) / **403** (webhook, billing) and
 <Callout type="warn">
   `GET /api/tenant/config` returns the **full** config (bot token included) and is secret-guarded.
   `GET /api/widget/config` is the public read the browser uses — it returns **only** the whitelist
-  (`capabilities`, `theme`, `ctas`, `script`, `popups`) and never the token/prompt/persona. don't
-  confuse them. see [security](/docs/security).
+  (`capabilities`, `theme`, `ctas`, `forms`, `script`, `popups`) and never the token/prompt/persona
+  or form connector IDs. don't confuse them. see [security](/docs/security).
 </Callout>
 
 <Callout>

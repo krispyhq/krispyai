@@ -1559,6 +1559,7 @@ describe("SessionDO ring buffer", () => {
       resolved: false,
       lastMessage: null,
       ts: null,
+      siteId: "default",
     });
     await post(do_, "/log", {
       messages: [
@@ -1650,6 +1651,36 @@ describe("SessionDO ring buffer", () => {
       { type: "message", role: "ai", text: "getting a human", ts: 2222 },
     ]);
     expect(visitorFrames).toHaveLength(0);
+  });
+
+  test("action delivery counts visitor sockets while echoing to operator sockets", async () => {
+    const action = {
+      kind: "instagram" as const,
+      connector: {
+        id: "ig",
+        type: "instagram" as const,
+        label: "DM us",
+        url: "https://instagram.com/example",
+      },
+    };
+    for (const withVisitor of [false, true]) {
+      const operatorFrames: string[] = [];
+      const visitorFrames: string[] = [];
+      const operator = { send: (data: string) => void operatorFrames.push(data) };
+      const visitor = { send: (data: string) => void visitorFrames.push(data) };
+      const state = fakeDOState();
+      Object.defineProperty(state, "getWebSockets", {
+        value: (tag?: string) =>
+          tag === "operator" ? [operator] : withVisitor ? [operator, visitor] : [operator],
+      });
+      const do_ = new SessionDO(state, env);
+      const response = await post(do_, "/action", { action });
+      expect(await response.json()).toEqual({ ok: true, delivered: withVisitor ? 1 : 0 });
+      expect(operatorFrames).toHaveLength(1);
+      expect(JSON.parse(operatorFrames[0]!)).toMatchObject({ type: "action", action });
+      expect(visitorFrames).toHaveLength(withVisitor ? 1 : 0);
+      expect(await msgs(do_)).toMatchObject([{ role: "operator", text: "DM us", action }]);
+    }
   });
 });
 
@@ -1746,6 +1777,7 @@ describe("SessionDO hand-back", () => {
     await post(do_, "/log", { messages: [{ role: "visitor", text: "still waiting" }] });
     expect(await state.storage.getAlarm()).not.toBeNull();
 
+    await state.storage.put("handoffDueAt", Date.now() - 1);
     await do_.alarm();
     expect(await handedOff(do_)).toBe(false);
     expect(await (await get(do_, "/state")).json()).toMatchObject({ handoffState: "ai" });
@@ -1763,9 +1795,10 @@ describe("SessionDO hand-back", () => {
   });
 
   test("alarm fires → hand back: handedOff false + resume + bot-styled ring note", async () => {
-    const { do_, frames } = socketDO();
+    const { do_, state, frames } = socketDO();
     await post(do_, "/operator", { text: "human here" });
     await post(do_, "/log", { messages: [{ role: "visitor", text: "hello?" }] });
+    await state.storage.put("handoffDueAt", Date.now() - 1);
     await do_.alarm();
     expect(await handedOff(do_)).toBe(false);
     expect(resumes(frames)).toHaveLength(1);
@@ -1895,6 +1928,126 @@ describe("operator app routes", () => {
       headers: { "x-tenant-sync-secret": OP_SECRET },
       body: JSON.stringify(body),
     });
+
+  test("configured form and Instagram actions are site-bound, typed, and durable", async () => {
+    const env = opEnv({
+      AI: { run: async () => ({ response: "Hello." }) } as unknown as Ai,
+    });
+    await mergeTenantConfig(
+      env,
+      "self",
+      {
+        forms: [
+          {
+            id: "consult",
+            title: "Book a consultation",
+            fields: [{ name: "email", label: "Email", type: "email" }],
+          },
+        ],
+        connectors: [
+          {
+            id: "ig",
+            type: "instagram",
+            profileUrl: "https://instagram.com/example",
+            label: "Message us",
+          },
+          {
+            id: "hidden",
+            type: "instagram",
+            profileUrl: "https://instagram.com/private",
+            cta: false,
+          },
+          { id: "email", type: "email", toAddress: "team@example.com" },
+        ],
+      },
+      "shop",
+    );
+    const chat = await worker.fetch(
+      new Request("https://edge.test/api/chat", {
+        method: "POST",
+        body: JSON.stringify({
+          tenantId: "self",
+          siteId: "shop",
+          sessionId: "action-1",
+          message: "Hi",
+        }),
+      }),
+      env,
+    );
+    expect(chat.status).toBe(200);
+    const catalog = await worker.fetch(
+      post("/api/operator/actions", { tenantId: "self", sessionId: "action-1" }),
+      env,
+    );
+    expect(await catalog.json()).toEqual({
+      forms: [{ id: "consult", title: "Book a consultation" }],
+      connectors: [
+        { id: "ig", type: "instagram", label: "Message us", url: "https://instagram.com/example" },
+      ],
+    });
+    expect(
+      (
+        await worker.fetch(
+          post("/api/operator/send-action", {
+            tenantId: "self",
+            sessionId: "action-1",
+            siteId: "other",
+            kind: "form",
+            id: "consult",
+          }),
+          env,
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await worker.fetch(
+          post("/api/operator/send-action", {
+            tenantId: "self",
+            sessionId: "action-1",
+            kind: "instagram",
+            id: "hidden",
+          }),
+          env,
+        )
+      ).status,
+    ).toBe(404);
+    const sent = await worker.fetch(
+      post("/api/operator/send-action", {
+        tenantId: "self",
+        sessionId: "action-1",
+        kind: "form",
+        id: "consult",
+      }),
+      env,
+    );
+    expect(sent.status).toBe(200);
+    expect((await sent.json()).action).toMatchObject({ kind: "form", form: { id: "consult" } });
+    const sentIg = await worker.fetch(
+      post("/api/operator/send-action", {
+        tenantId: "self",
+        sessionId: "action-1",
+        kind: "instagram",
+        id: "ig",
+      }),
+      env,
+    );
+    expect(sentIg.status).toBe(200);
+    const thread = await worker.fetch(
+      post("/api/operator/thread", { tenantId: "self", sessionId: "action-1" }),
+      env,
+    );
+    const { messages } = (await thread.json()) as { messages: RingMsg[] };
+    expect(messages.filter((m) => m.action).map((m) => m.action?.kind)).toEqual([
+      "form",
+      "instagram",
+    ]);
+    expect(messages.at(-1)).toMatchObject({
+      role: "operator",
+      text: "Message us",
+      action: { connector: { url: "https://instagram.com/example" } },
+    });
+  });
 
   test("POST /api/operator/reply → DO operator broadcast + ring + app operator learned + metered", async () => {
     const env = opEnv();

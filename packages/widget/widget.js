@@ -127,6 +127,26 @@
       String(Date.now()) + Math.random().toString(16).slice(2);
     localStorage.setItem(KEY, sessionId);
   }
+  // Call authorization is separate from the chat session ID visible to operators.
+  // No weak random fallback: calls stay unavailable without WebCrypto.
+  var visitorSecret = null;
+  if (crypto && crypto.getRandomValues) {
+    var callKey = "krispy_call_cap_" + cfg.tenant + "_" + sessionId;
+    try {
+      visitorSecret = localStorage.getItem(callKey);
+      if (!visitorSecret || !/^[A-Za-z0-9_-]{43}$/.test(visitorSecret)) {
+        var secretBytes = new Uint8Array(32);
+        crypto.getRandomValues(secretBytes);
+        visitorSecret = btoa(String.fromCharCode.apply(null, secretBytes))
+          .replace(/\+/g, "-")
+          .replace(/\//g, "_")
+          .replace(/=+$/, "");
+        localStorage.setItem(callKey, visitorSecret);
+      }
+    } catch {
+      visitorSecret = null;
+    }
+  }
 
   var history = []; // {role, content} — sent for context, capped server-side
 
@@ -142,8 +162,8 @@
     savedMsgs = [];
   }
   var restoring = false;
-  function persistMsg(cls, text) {
-    savedMsgs.push({ c: cls, t: String(text) });
+  function persistMsg(cls, text, action, ts) {
+    savedMsgs.push(cls === "action" ? { c: cls, a: action, ts: ts } : { c: cls, t: String(text) });
     if (savedMsgs.length > 60) savedMsgs = savedMsgs.slice(-60);
     try {
       localStorage.setItem(MSG_KEY, JSON.stringify(savedMsgs));
@@ -466,6 +486,8 @@
     ".msg .shot{display:block;max-width:100%;border-radius:8px;margin:2px 0}" +
     // Drop target — the whole panel, so a dragged file has a big landing zone.
     ".panel.kdrop{outline:2px dashed var(--k-primary);outline-offset:-6px}" +
+    ".kcall{display:none;margin:8px 12px;padding:13px;border-radius:16px;background:var(--k-card);border:1px solid var(--k-border);box-shadow:0 8px 20px rgba(36,33,46,.08);color:var(--k-espresso)}" +
+    ".kcall.on{display:block}.kcall-title{font-size:14px;font-weight:700}.kcall-note{font-size:12px;opacity:.75;margin-top:3px}.kcall-controls{display:flex;gap:8px;margin-top:10px}.kcall-controls button{flex:1;min-height:38px;border:1px solid var(--k-border);border-radius:11px;background:white;color:var(--k-espresso);font:inherit;font-size:13px;cursor:pointer}.kcall-controls .primary{background:var(--k-primary);border-color:var(--k-primary);color:var(--k-primary-ink)}" +
     // ── Composer (.ft) ──
     ".ft{" +
     "display:flex;border-top:1px solid var(--k-border);" +
@@ -672,6 +694,13 @@
     ".cap button{padding:10px 14px;border:0;border-radius:12px;background:var(--k-primary);color:var(--k-primary-ink);font-size:14px;font-weight:720;letter-spacing:0}" +
     ".cap button:hover{background:var(--k-primary);filter:saturate(1.04)}" +
     ".cap a{border:0!important;border-radius:12px!important;background:var(--k-muted)!important;color:var(--k-espresso)!important;font-weight:650!important}" +
+    ".handoffchoices{align-self:stretch;padding:12px;background:var(--k-card);border-radius:18px;box-shadow:0 8px 22px rgba(36,33,46,.07);display:flex;flex-direction:column;gap:8px}" +
+    ".handoffchoices .choice-title{font-size:13px;font-weight:720;color:var(--k-espresso)}" +
+    ".handoffchoices .choice-actions{display:flex;flex-wrap:wrap;gap:7px}" +
+    ".handoffchoices .choice-actions button,.handoffchoices .choice-actions .cta{min-height:44px;padding:8px 11px;border:0;border-radius:12px;background:var(--k-muted);color:var(--k-espresso);font:600 13px var(--k-font);cursor:pointer;box-shadow:none}" +
+    ".handoffchoices .choice-actions .ctaitem{flex:1 1 auto}" +
+    ".handoffchoices .choice-actions .cta-instagram{background:linear-gradient(90deg,#833AB4,#E1306C,#F77737);color:#fff}" +
+    ".handoffchoices .choice-actions button:focus-visible{outline:3px solid var(--k-primary);outline-offset:2px}" +
     ".pop{max-width:278px;margin:0 0 11px auto;padding:13px 34px 13px 15px;background:rgba(255,255,255,.96);border:0;border-radius:18px;box-shadow:0 18px 48px rgba(36,33,46,.14);font-size:13px;line-height:1.45}" +
     "@keyframes kpopin{from{opacity:0;transform:translateY(12px) scale(.96)}to{opacity:1;transform:none}}" +
     ".pop.show{animation-duration:.38s;animation-timing-function:cubic-bezier(.2,.8,.2,1)}" +
@@ -736,6 +765,7 @@
     "</button>" +
     "</div>" +
     '<div class="log"></div>' +
+    '<div class="kcall" role="status" aria-live="polite"><div class="kcall-title"></div><div class="kcall-note"></div><div class="kcall-controls"></div><div class="kcall-audio"></div></div>' +
     // Composer: text input + paper-plane send button
     // Pending-attachment tray — empty and display:none until something is pasted.
     '<div class="att"><img class="attthumb" alt="">' +
@@ -776,6 +806,11 @@
     sendForm = $(".ft"),
     sendBtn = sendForm.querySelector("button");
   var avatarEl = $(".av");
+  var callEl = $(".kcall"),
+    callTitle = $(".kcall-title"),
+    callNote = $(".kcall-note"),
+    callControls = $(".kcall-controls"),
+    callAudio = $(".kcall-audio");
   var popEl = $(".pop"),
     popTxtEl = $(".popt");
   $(".ttl").textContent = cfg.title;
@@ -821,6 +856,9 @@
   var repliedOnce = false; // first AI reply arms the afterReplyMs form fallback
   var attachmentsEnabled = true; // old edges omit capabilities; preserve their behavior
   var ctaRow = null; // lazily-created CTA-row card inside .log
+  var handoffChoices = null; // one contextual choice card while a teammate is pending
+  var handoffChoiceKey = "";
+  var handoffChoiceDismissed = false;
   var startersEl = null; // starter-chip strip above the composer (fresh conversation only)
   var popShown = false; // a teaser card is currently visible (one at a time)
   var currentPopupSource = ""; // source of the teaser currently shown
@@ -1354,6 +1392,10 @@
       counts[key] = (counts[key] || 0) + 1;
     });
     messages.forEach(function (message) {
+      if (message.action) {
+        renderOperatorAction(message.action, message.ts);
+        return;
+      }
       var cls = message.role === "visitor" ? "me" : message.role === "operator" ? "op" : "bot";
       var text = String(message.text || "");
       var key = cls + "\u0000" + text;
@@ -1363,6 +1405,7 @@
     // The server ring is authoritative for the next AI turn after reconnect.
     history.length = 0;
     messages.slice(-10).forEach(function (message) {
+      if (message.action) return;
       history.push({
         role: message.role === "visitor" ? "user" : "assistant",
         content: String(message.text || ""),
@@ -1456,7 +1499,8 @@
         restoring = true;
         for (var ri = 0; ri < savedMsgs.length; ri++) {
           var rm = savedMsgs[ri];
-          if (rm && rm.c && rm.t != null) add(rm.c, rm.t);
+          if (rm && rm.c === "action" && rm.a) renderOperatorAction(rm.a, rm.ts);
+          else if (rm && rm.c && rm.t != null) add(rm.c, rm.t);
         }
         restoring = false;
       } else if (opening.length) {
@@ -1532,6 +1576,375 @@
     el: host,
   };
 
+  // ── consent-based audio call ────────────────────────────────────────────
+  var callState = null,
+    callNonce = null,
+    callRoom = null,
+    pendingCallRoom = null,
+    callJoinPromise = null,
+    callMediaEpoch = 0,
+    callMicPending = false,
+    callMicEnabled = false,
+    callReconnecting = false,
+    callExpiryTimer = null;
+  var livekitLoading = null;
+  var callVisitorConnected = false;
+  var callCanRequest = false;
+  var callStatusEpoch = 0;
+  function callRequest(action, extra) {
+    return fetch(cfg.api + "/api/call", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        Object.assign(
+          {
+            tenantId: cfg.tenant,
+            sessionId: sessionId,
+            visitorSecret: visitorSecret,
+            action: action,
+          },
+          extra || {},
+        ),
+      ),
+    }).then(function (r) {
+      return r.json().then(function (data) {
+        if (!r.ok) throw new Error(data.error || "Call request failed");
+        return data;
+      });
+    });
+  }
+  function stopCallMedia() {
+    callMediaEpoch++;
+    callJoinPromise = null;
+    callMicPending = false;
+    callMicEnabled = false;
+    callReconnecting = false;
+    if (pendingCallRoom) {
+      var pending = pendingCallRoom;
+      pendingCallRoom = null;
+      pending.disconnect(true);
+    }
+    if (callRoom) {
+      var old = callRoom;
+      callRoom = null;
+      old.disconnect(true);
+    }
+    callAudio.replaceChildren();
+  }
+  function callButton(label, primary, fn) {
+    var button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    if (primary) button.className = "primary";
+    button.addEventListener("click", fn);
+    callControls.appendChild(button);
+    return button;
+  }
+  function renderCall(next, nonce) {
+    if (
+      next &&
+      next.status === "accepted" &&
+      callState &&
+      callState.id === next.id &&
+      callState.status === "ended"
+    )
+      return;
+    if (next && (!callState || next.id !== callState.id)) stopCallMedia();
+    callState = next;
+    refreshHandoffChoices();
+    if (nonce) callNonce = nonce;
+    if (next && next.status === "accepted" && document.visibilityState !== "visible") {
+      endCallInBackground();
+      return;
+    }
+    clearTimeout(callExpiryTimer);
+    callControls.replaceChildren();
+    if (!next || ["declined", "canceled", "expired", "ended"].indexOf(next.status) >= 0) {
+      stopCallMedia();
+      if (
+        callCanRequest &&
+        !handoffChoices &&
+        visitorSecret &&
+        callVisitorConnected &&
+        document.visibilityState === "visible"
+      ) {
+        callEl.classList.add("on");
+        callTitle.textContent = "Speak with a team member";
+        callNote.textContent = "Request an audio call. Your microphone stays off until you join.";
+        callButton("Request a call", true, function () {
+          requestVisitorCall();
+        });
+      } else callEl.classList.remove("on");
+      return;
+    }
+    callEl.classList.add("on");
+    if (next.status === "ringing") {
+      if (next.requestedBy === "visitor") {
+        callTitle.textContent = "Call requested";
+        callNote.textContent = "Waiting for a team member to accept. Your microphone is off.";
+        callButton("Cancel request", false, function () {
+          callRequest("cancel", { id: next.id, nonce: callNonce })
+            .then(function (d) {
+              renderCall(d.call);
+            })
+            .catch(showCallError);
+        });
+      } else {
+        callTitle.textContent = "Incoming audio call";
+        callNote.textContent =
+          "A team member would like to speak. Your microphone stays off until you accept.";
+        callButton("Decline", false, function () {
+          callRequest("decline", { id: next.id, nonce: callNonce })
+            .then(function (d) {
+              renderCall(d.call);
+            })
+            .catch(showCallError);
+        });
+        callButton("Accept", true, function () {
+          callRequest("accept", { id: next.id, nonce: callNonce })
+            .then(function (d) {
+              renderCall(d.call);
+              return joinCall(next.id);
+            })
+            .catch(showCallError);
+        });
+      }
+      callExpiryTimer = setTimeout(
+        function () {
+          callRequest("status")
+            .then(function (d) {
+              renderCall(d.call, d.nonce);
+            })
+            .catch(showCallError);
+        },
+        Math.max(0, next.expiresAt - Date.now()) + 100,
+      );
+    } else if (next.status === "accepted") {
+      var remotePresent = callRoom && callRoom.remoteParticipants.size > 0;
+      callTitle.textContent = callReconnecting
+        ? "Audio call reconnecting"
+        : remotePresent
+          ? "Audio call connected"
+          : callRoom
+            ? "Waiting for a team member"
+            : "Audio call accepted";
+      callNote.textContent = callJoinPromise
+        ? "Connecting… Your microphone is off until you join."
+        : callRoom
+          ? (callMicEnabled ? "Microphone on" : "Microphone off") +
+            ". Calls work while this page stays in the foreground."
+          : "Join when ready. Calls end when this page goes into the background.";
+      if (!callRoom && !callJoinPromise)
+        callButton("Join call", true, function () {
+          joinCall(next.id).catch(showCallError);
+        });
+      if (callRoom) {
+        var micButton = callButton(
+          callMicPending ? "Updating…" : callMicEnabled ? "Mute" : "Unmute",
+          false,
+          function () {
+            setCallMicrophone(!callMicEnabled).catch(showCallError);
+          },
+        );
+        micButton.disabled = callMicPending;
+      }
+      callButton("End call", false, function () {
+        var id = next.id;
+        stopCallMedia();
+        renderCall(Object.assign({}, next, { status: "ended" }));
+        callRequest("end", { id: id, nonce: callNonce })
+          .then(function (d) {
+            renderCall(d.call);
+          })
+          .catch(showCallError);
+      });
+    }
+  }
+  function showCallError(error) {
+    if (document.visibilityState !== "visible") return;
+    callNote.textContent =
+      error && error.message ? error.message.replace(/_/g, " ") : "Call could not connect.";
+  }
+  function loadLivekit(clientUrl) {
+    if (window.LivekitClient && window.LivekitClient.Room)
+      return Promise.resolve(window.LivekitClient);
+    if (livekitLoading) return livekitLoading;
+    livekitLoading = new Promise(function (resolve, reject) {
+      var libraryScript = document.createElement("script");
+      libraryScript.src = clientUrl;
+      libraryScript.async = true;
+      libraryScript.onload = function () {
+        if (window.LivekitClient && window.LivekitClient.Room) resolve(window.LivekitClient);
+        else reject(new Error("Audio library unavailable"));
+      };
+      libraryScript.onerror = function () {
+        reject(new Error("Audio library failed to load"));
+      };
+      document.head.appendChild(libraryScript);
+    }).catch(function (error) {
+      livekitLoading = null;
+      throw error;
+    });
+    return livekitLoading;
+  }
+  function joinCall(id) {
+    if (!callState || callState.id !== id || callState.status !== "accepted")
+      return Promise.reject(new Error("Call is no longer active"));
+    if (document.visibilityState !== "visible")
+      return Promise.reject(new Error("Calls require this page in the foreground"));
+    if (callRoom) return Promise.resolve();
+    if (callJoinPromise) return callJoinPromise;
+    var epoch = callMediaEpoch;
+    function active() {
+      return (
+        epoch === callMediaEpoch &&
+        document.visibilityState === "visible" &&
+        callState &&
+        callState.id === id &&
+        callState.status === "accepted"
+      );
+    }
+    callJoinPromise = callRequest("grant", { id: id })
+      .then(function (grant) {
+        if (!active()) return;
+        return loadLivekit(grant.clientUrl).then(function (LK) {
+          if (!active()) return;
+          var room = new LK.Room();
+          pendingCallRoom = room;
+          room.on("trackSubscribed", function (track) {
+            if (active() && track.kind === "audio") callAudio.appendChild(track.attach());
+          });
+          room.on("trackUnsubscribed", function (track) {
+            track.detach().forEach(function (el) {
+              el.remove();
+            });
+          });
+          room.on("disconnected", function () {
+            if (pendingCallRoom === room) pendingCallRoom = null;
+            if (callRoom === room) {
+              callRoom = null;
+              callAudio.replaceChildren();
+              renderCall(callState);
+            }
+          });
+          room.on("participantConnected", function () {
+            if (active()) renderCall(callState);
+          });
+          room.on("participantDisconnected", function () {
+            if (active()) renderCall(callState);
+          });
+          room.on("reconnecting", function () {
+            if (active()) {
+              callReconnecting = true;
+              renderCall(callState);
+            }
+          });
+          room.on("reconnected", function () {
+            if (active()) {
+              callReconnecting = false;
+              renderCall(callState);
+            }
+          });
+          return room
+            .connect(grant.url, grant.token)
+            .then(function () {
+              if (!active()) {
+                room.disconnect(true);
+                return;
+              }
+              pendingCallRoom = null;
+              callRoom = room;
+              callMicPending = true;
+              return room.localParticipant.setMicrophoneEnabled(true).then(function () {
+                if (!active()) {
+                  stopCallMedia();
+                  return;
+                }
+                callMicPending = false;
+                callMicEnabled = true;
+                renderCall(callState);
+              });
+            })
+            .catch(function (error) {
+              room.disconnect(true);
+              if (active()) {
+                stopCallMedia();
+                renderCall(callState);
+              }
+              throw error;
+            });
+        });
+      })
+      .catch(function (error) {
+        if (epoch !== callMediaEpoch) return;
+        throw error;
+      })
+      .finally(function () {
+        if (epoch === callMediaEpoch) {
+          callJoinPromise = null;
+          if (callState && callState.id === id) renderCall(callState);
+        }
+      });
+    renderCall(callState);
+    return callJoinPromise;
+  }
+  function setCallMicrophone(enabled) {
+    if (!callRoom || callMicPending || document.visibilityState !== "visible")
+      return Promise.resolve();
+    var room = callRoom;
+    var epoch = callMediaEpoch;
+    callMicPending = true;
+    renderCall(callState);
+    return room.localParticipant.setMicrophoneEnabled(enabled).then(
+      function () {
+        if (epoch !== callMediaEpoch || room !== callRoom) return;
+        callMicEnabled = enabled;
+        callMicPending = false;
+        renderCall(callState);
+      },
+      function (error) {
+        if (epoch === callMediaEpoch && room === callRoom) {
+          callMicPending = false;
+          renderCall(callState);
+          throw error;
+        }
+      },
+    );
+  }
+  function endCallInBackground() {
+    if (!callState || callState.status !== "accepted") return;
+    var id = callState.id;
+    stopCallMedia();
+    callState = Object.assign({}, callState, { status: "ended" });
+    renderCall(callState);
+    // Keepalive lets pagehide send the end request while the document unloads.
+    fetch(cfg.api + "/api/call", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        tenantId: cfg.tenant,
+        sessionId: sessionId,
+        visitorSecret: visitorSecret,
+        action: "end",
+        id: id,
+        nonce: callNonce,
+      }),
+      keepalive: true,
+    }).catch(function () {});
+  }
+  window.addEventListener("pagehide", endCallInBackground);
+  function syncCallStatus() {
+    if (!visitorSecret || !callVisitorConnected) return;
+    var epoch = ++callStatusEpoch;
+    callRequest("status")
+      .then(function (d) {
+        if (epoch !== callStatusEpoch) return;
+        callCanRequest = d.availableToRequest === true;
+        renderCall(d.call, d.nonce);
+      })
+      .catch(function () {});
+  }
+
   // ── live channel (operator replies) ─────────────────────────────────────
   function scheduleWsReconnect(delay) {
     if (wsReconnectTimer != null) return;
@@ -1549,7 +1962,8 @@
         "/api/session/" +
         encodeURIComponent(sessionId) +
         "/ws?t=" +
-        encodeURIComponent(cfg.tenant);
+        encodeURIComponent(cfg.tenant) +
+        (visitorSecret ? "&v=" + encodeURIComponent(visitorSecret) : "");
       ws = new WebSocket(wsUrl);
       ws.onmessage = function (e) {
         if (e.data === "pong") return;
@@ -1559,23 +1973,40 @@
         } catch {
           return;
         }
-        if (ev.type === "ready") {
+        if (ev.type === "call") {
+          renderCall(ev.call, ev.nonce);
+          if (ev.call && ev.call.status === "ringing" && ev.call.requestedBy !== "visitor") {
+            notifyInbound();
+            open();
+          }
+        } else if (ev.type === "ready") {
           handoffState = ev.handoffState || (ev.handedOff ? "operator" : "ai");
           handedOff = handoffState !== "ai";
           if (handoffState === "operator") markHuman();
           else if (handoffState === "pending") markWaiting();
+          else removeHandoffChoices();
+          if (handoffState === "pending") refreshHandoffChoices();
           syncServerMessages(ev.messages);
+          syncCallStatus();
         } else if (ev.type === "operator") {
           handoffState = "operator";
           handedOff = true;
           markHuman();
           add("op", ev.text);
           notifyInbound();
+        } else if (ev.type === "action") {
+          handoffState = "operator";
+          handedOff = true;
+          markHuman();
+          renderOperatorAction(ev.action, ev.ts);
+          notifyInbound();
         } else if (ev.type === "handoff") {
           handoffState = ev.handoffState || "pending";
           handedOff = true;
           clearFallbacks();
           if (handoffState === "operator") markHuman();
+          else refreshHandoffChoices();
+          syncCallStatus();
         } else if (ev.type === "resume") {
           // The AI took the session back (operator resolved it or went quiet).
           // Reset both waiting/human framing so a later escalation can announce again.
@@ -1583,6 +2014,10 @@
           handedOff = false;
           waitingMarked = false;
           humanMarked = false;
+          callCanRequest = false;
+          removeHandoffChoices();
+          renderCall(callState);
+          syncCallStatus();
           add("sys", "You're back with the AI assistant. A human can rejoin anytime.");
         }
       };
@@ -1596,6 +2031,7 @@
       // keepalive so proxies don't idle-close (hibernation-friendly)
       ws.onopen = function () {
         wsBackoff = 3000; // healthy again — reset the backoff
+        if (callVisitorConnected) syncCallStatus();
         clearInterval(keepalive);
         keepalive = setInterval(function () {
           try {
@@ -1613,6 +2049,7 @@
   // Mobile browsers may suspend the socket without delivering a close event.
   // Force a reconnect on return so the ready snapshot backfills missed replies.
   document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState !== "visible") endCallInBackground();
     if (!opened || document.visibilityState !== "visible") return;
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
       try {
@@ -1629,12 +2066,16 @@
   function markWaiting() {
     if (waitingMarked) return;
     waitingMarked = true;
-    add("sys", "A team member has been notified and will reply here.");
+    add("sys", "Waiting for the team. You can keep typing here.");
     clearFallbacks();
+    if (ctaRow) ctaRow.remove();
+    refreshHandoffChoices();
   }
 
   var humanMarked = false;
   function markHuman() {
+    removeHandoffChoices();
+    if (callCanRequest) renderCall(callState);
     if (humanMarked) return;
     humanMarked = true;
     add("sys", "A team member has joined the chat.");
@@ -1647,6 +2088,97 @@
     ctaTimers = [];
     formTimers.forEach(clearTimeout);
     formTimers = [];
+    if (handoffState === "pending" && ctaRow) ctaRow.remove();
+  }
+
+  function removeHandoffChoices() {
+    if (handoffChoices) handoffChoices.remove();
+    handoffChoices = null;
+    handoffChoiceKey = "";
+  }
+  function requestVisitorCall() {
+    callCanRequest = false;
+    renderCall(null);
+    callRequest("invite")
+      .then(function (d) {
+        renderCall(d.call, d.nonce);
+      })
+      .catch(function (error) {
+        callCanRequest = true;
+        renderCall(null);
+        showCallError(error);
+      });
+  }
+  function refreshHandoffChoices() {
+    if (handoffState !== "pending" || handoffChoiceDismissed || formOpen) {
+      removeHandoffChoices();
+      return;
+    }
+    var availableForms = forms.filter(function (form) {
+      return form && form.id && Array.isArray(form.fields) && form.fields.length;
+    });
+    var availableCtas = ctas.filter(function (cta) {
+      return cta && typeof cta.url === "string" && /^(https:\/\/|tel:)/i.test(cta.url);
+    });
+    var canRequestCall =
+      callCanRequest &&
+      visitorSecret &&
+      callVisitorConnected &&
+      document.visibilityState === "visible" &&
+      (!callState || ["declined", "canceled", "expired", "ended"].indexOf(callState.status) >= 0);
+    if (!availableForms.length && !availableCtas.length && !canRequestCall) {
+      removeHandoffChoices();
+      return;
+    }
+    var key = JSON.stringify({
+      call: Boolean(canRequestCall),
+      forms: availableForms.map(function (form) {
+        return [form.id, form.title, form.fields, form.successText];
+      }),
+      ctas: availableCtas.map(function (cta) {
+        return [cta.id, cta.type, cta.label, cta.caption, cta.url];
+      }),
+    });
+    if (handoffChoices && handoffChoices.isConnected && handoffChoiceKey === key) {
+      if (log.lastElementChild !== handoffChoices) log.appendChild(handoffChoices);
+      return;
+    }
+    removeHandoffChoices();
+    var card = document.createElement("div");
+    card.className = "handoffchoices";
+    var title = document.createElement("div");
+    title.className = "choice-title";
+    title.textContent = "Talk to the team";
+    card.appendChild(title);
+    var actions = document.createElement("div");
+    actions.className = "choice-actions";
+    if (canRequestCall) {
+      var call = document.createElement("button");
+      call.type = "button";
+      call.textContent = "Request a call";
+      call.addEventListener("click", requestVisitorCall);
+      actions.appendChild(call);
+    }
+    availableForms.forEach(function (form) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.textContent = form.title || "Leave details";
+      button.addEventListener("click", function () {
+        handoffChoiceDismissed = true;
+        removeHandoffChoices();
+        showForm(form);
+      });
+      actions.appendChild(button);
+    });
+    availableCtas.forEach(function (cta) {
+      renderCta(cta, actions);
+    });
+    card.appendChild(actions);
+    handoffChoices = card;
+    handoffChoiceKey = key;
+    log.appendChild(card);
+    if (canRequestCall) callEl.classList.remove("on");
+    card.scrollIntoView({ block: "nearest" });
   }
 
   // ── CTA engine (§4) — social-connector cards inside .log ─────────────────────
@@ -1685,7 +2217,7 @@
     }
     return ctaRow;
   }
-  function renderCta(c) {
+  function renderCta(c, container) {
     if (!c || typeof c.url !== "string") return;
     if (!/^(https:\/\/|tel:)/i.test(c.url)) return; // only https/wa.me/tel hrefs render
     var item = document.createElement("div");
@@ -1713,7 +2245,37 @@
     lbl.textContent = c.label || DEFAULT_CTA_LABEL[c.type] || "Contact us";
     a.appendChild(lbl);
     item.appendChild(a);
-    ctaContainer().appendChild(item);
+    (container || ctaContainer()).appendChild(item);
+    log.scrollTop = log.scrollHeight;
+    return item;
+  }
+  function renderOperatorAction(action, ts) {
+    if (!action || !ts) return;
+    var id =
+      action.kind === "form"
+        ? action.form && action.form.id
+        : action.connector && action.connector.id;
+    if (!id) return;
+    var key = String(ts) + ":" + action.kind + ":" + id;
+    if (
+      Array.from(log.querySelectorAll("[data-krispy-action]")).some(function (node) {
+        return node.dataset.krispyAction === key;
+      })
+    )
+      return;
+    var node;
+    if (action.kind === "form") {
+      node = showForm(action.form, true);
+    } else if (action.kind === "instagram") {
+      var row = document.createElement("div");
+      row.className = "ctarow";
+      if (!renderCta(action.connector, row)) return;
+      log.appendChild(row);
+      node = row;
+    }
+    if (!node) return;
+    node.dataset.krispyAction = key;
+    if (!restoring) persistMsg("action", "", action, ts);
     log.scrollTop = log.scrollHeight;
   }
   function armCtas(firstMessage) {
@@ -1755,8 +2317,9 @@
   // Built entirely with createElement/textContent — NEVER innerHTML for any value
   // (form fields, options, CTA labels/urls are all tenant/visitor-controlled → XSS).
   var formOpen = false;
-  function showForm(form) {
-    if (formOpen || !form || !form.fields) return;
+  function showForm(form, fromOperator) {
+    if ((!fromOperator && formOpen) || !form || !Array.isArray(form.fields)) return;
+    removeHandoffChoices();
     formOpen = true;
     // any form showing cancels the afterReplyMs fallback (incl. a [!FORM] trigger)
     formTimers.forEach(clearTimeout);
@@ -1856,6 +2419,7 @@
 
     log.appendChild(wrap); // into the log — scrolls with the transcript, never a sticky band
     wrap.scrollIntoView({ block: "nearest" });
+    return wrap;
   }
 
   // ── send ─────────────────────────────────────────────────────────────────
@@ -1887,6 +2451,7 @@
         tenantId: cfg.tenant,
         siteId: cfg.site || undefined,
         message: text,
+        visitorSecret: visitorSecret || undefined,
         history: history.slice(-10),
         source: openSource || undefined, // popup origin → session context (§3.5)
       }),
@@ -1896,6 +2461,22 @@
       })
       .then(function (res) {
         if (typing) typing.remove();
+        if (visitorSecret && !callVisitorConnected) {
+          callVisitorConnected = true;
+          // The first chat registered the separate call capability in its DO.
+          // Reconnect so this socket gets the call-visitor tag for private invites.
+          if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+          else if (ws && ws.readyState === WebSocket.CONNECTING) {
+            ws.addEventListener(
+              "open",
+              function () {
+                ws.close();
+              },
+              { once: true },
+            );
+          }
+          syncCallStatus();
+        }
         var responseState = res.handoffState || (res.handedOff ? "operator" : "ai");
         if (responseState === "operator") {
           handoffState = "operator";
@@ -1907,9 +2488,11 @@
           handoffState = "pending";
           handedOff = true;
           clearFallbacks();
+          if (res.handoff) handoffChoiceDismissed = false;
         } else {
           handoffState = "ai";
           handedOff = false;
+          removeHandoffChoices();
         }
         if (res.reply) {
           add(res.degraded ? "op" : "bot", res.reply);
@@ -1928,6 +2511,7 @@
           // Later silent turns/reconnects need one truthful waiting line of their own.
           if (res.handoff) waitingMarked = true;
           else markWaiting();
+          refreshHandoffChoices();
         }
       })
       .catch(function () {

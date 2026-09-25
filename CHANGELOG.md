@@ -10,6 +10,16 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+### Added
+
+- Pending human handoffs now offer one compact choice card built from the site's
+  configured forms and contact CTAs, with an audio-call request only when available.
+  Form choices expand inline and retain visitor input if a team member takes over;
+  no unconfigured contact form or delivery route is created.
+
+- Operators can send a site's configured lead form or Instagram CTA directly into a
+  visitor conversation. The typed card is stored in session history and restored on reconnect.
+
 ### Changed
 
 - Instagram chat CTAs use Adi's recognizable filled Instagram glyph on the existing
@@ -17,6 +27,14 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Fixed
 
+- Visitor audio calls now show when the team member has actually joined, provide
+  Mute/Unmute controls, and stop media and end the call when the page leaves the foreground.
+  Pending joins cannot turn the microphone back on after a call ends. With tenant opt-in,
+  visitors can request calls after handoff and notify the operator app; the team member
+  accepts before either side joins. Operator push delivery no longer delays the visitor's
+  request confirmation.
+- Operator-sent action receipts now count connected visitor sockets only; the operator
+  still receives the live card echo without being mistaken for a visitor.
 - Edge deployments now sync the configured lead-email sender from Infisical alongside
   the Resend key, so lead delivery uses the verified address selected for the environment.
 - Lead forms now show success only after the server confirms email delivery. A failed

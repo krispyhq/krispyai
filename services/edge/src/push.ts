@@ -31,6 +31,7 @@ export async function pushToApp(
   sessionId: string,
   text: string,
   fetchImpl: FetchLike = fetch,
+  metadata?: { kind: "call_request"; callId: string; expiresAt: number },
 ): Promise<number> {
   try {
     if (!env.PUSH_TOKENS_URL) return 0;
@@ -47,10 +48,10 @@ export async function pushToApp(
     const body = text.split("\n", 1)[0]!.slice(0, BODY_MAX);
     const messages = tokens.map((to) => ({
       to,
-      title: "🙋 someone needs you",
+      title: metadata ? "Visitor requested a call" : "🙋 someone needs you",
       body,
       sound: "default",
-      data: { sessionId },
+      data: metadata ? { sessionId, ...metadata } : { sessionId },
     }));
     const push = await fetchImpl(EXPO_PUSH_URL, {
       method: "POST",

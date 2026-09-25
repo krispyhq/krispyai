@@ -37,11 +37,17 @@ Configured lead forms can forward the visitor's recent chat to an email connecto
 Set `RESEND_API_KEY` and a verified `LEAD_EMAIL_FROM` through Infisical; a failed
 email delivery returns `502 delivery_failed` so the widget keeps the form ready
 for another attempt.
+The authenticated operator action routes list configured forms and Instagram CTAs
+for a session's recorded site, then send a selected ID as a durable typed card.
+The visitor receives it over the session WebSocket and sees it again after reconnecting.
 
 | method | path                             | purpose                                                                                                  |
 | ------ | -------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | POST   | `/api/chat`                      | `{sessionId, message, tenantId?, history?}` → `{reply, handoff, handoffState, handedOff, degraded?}`     |
 | POST   | `/api/contact`                   | `[!HANDOFF]` contact-capture → owner's topic                                                             |
+| POST   | `/api/operator/actions`          | list configured forms and Instagram CTAs for an authenticated operator's session                         |
+| POST   | `/api/operator/send-action`      | send one configured form or Instagram card into that session                                             |
+| POST   | `/api/operator/reply-drafts`     | generate up to three editable, tenant-grounded operator replies; never sends them                        |
 | POST   | `/api/telegram/webhook`          | owner reply → push to visitor via DO                                                                     |
 | POST   | `/api/billing/entitlement`       | billing → gate: mirror an entitlement snapshot into KV _(secret-guarded)_                                |
 | GET    | `/api/tenant/config?t=<tenant>`  | read a tenant's config `{botToken, chatId, systemPrompt?, model?}`, 404 if none _(secret-guarded)_       |
@@ -194,3 +200,36 @@ Without the URL, chat and inbox persistence work but mobile push is skipped.
 A signed device build, notification permission, registered device token, and
 valid platform push credentials are also required; simulator chat tests do not
 prove notification delivery. Self-hosted installations may leave these unset.
+
+# Visitor audio calls (optional)
+
+Audio calls are off until the Worker has `LIVEKIT_URL`, `LIVEKIT_API_KEY`,
+`LIVEKIT_API_SECRET`, and `LIVEKIT_CLIENT_URL`. The first two credentials belong to
+the same LiveKit deployment as the `wss://` URL. Set the key and secret as Worker
+secrets; set the URLs as environment vars. `LIVEKIT_CLIENT_URL` must point to a
+trusted, pinned UMD build of `livekit-client` that exposes `window.LivekitClient`
+(for example, a self-hosted copy of the 2.22.3 UMD bundle). Serve it over HTTPS.
+The browser loads this bundle only after the visitor accepts a call. A local
+LiveKit server may use `ws://localhost` during development. There is no LiveKit
+deployment or credential in this repository, so a production call needs the
+operator to supply these four values and a reachable LiveKit service.
+
+An authenticated operator invites through `POST /api/operator/call` with
+`{tenantId,sessionId,action:"invite"}`. The widget's first chat message registers
+a separate random visitor capability in the session Durable Object. The invite
+is accepted only while a visitor socket presenting that capability is connected;
+otherwise the operator receives `visitor_unavailable`. It appears on that socket
+with a private invitation
+nonce. A visitor must explicitly accept before either participant can get a
+room token or the widget asks for microphone access. `status`, `cancel`, `end`,
+and `grant` use the same operator endpoint; visitor `status`, `accept`, `decline`,
+`end`, and `grant` use `POST /api/call` with the widget capability. Include the
+returned call ID for every action after `invite`; the visitor includes the
+nonce for `accept`, `decline`, and `end`. `grant` returns a two-minute,
+microphone-only LiveKit token for the single opaque room. Ending calls LiveKit's
+`DeleteRoom` API to disconnect participants. Self-hosted LiveKit cannot revoke a
+previously issued token, so a cached token may reconnect until its short expiry;
+new grants stop immediately when the Durable Object state ends. The invitation
+expires after 60 seconds; an accepted call has a one-hour ceiling. The session
+Durable Object schedules both deadlines alongside its existing handoff timer and
+retries room deletion if LiveKit is temporarily unavailable.
