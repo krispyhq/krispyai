@@ -54,7 +54,11 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
-function harness(outputSupported = true) {
+function harness(
+  outputSupported = true,
+  storage = new Map<string, string>(),
+  testSessionId = "session",
+) {
   const callTitle = element(),
     callNote = element(),
     callControls = element();
@@ -73,6 +77,15 @@ function harness(outputSupported = true) {
   const document = {
     visibilityState: "visible",
     createElement: (_tag: string) => element(),
+  };
+  const localStorage = {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      storage.set(key, value);
+    },
+    removeItem: (key: string) => {
+      storage.delete(key);
+    },
   };
   class FakeRoom {
     static getLocalDevices(kind: string, requestPermissions: boolean) {
@@ -154,15 +167,21 @@ function harness(outputSupported = true) {
     "document",
     "window",
     "fetch",
-    `var handoffChoices = null; function refreshHandoffChoices() {} function requestVisitorCall() {}; ${source.slice(start, end)}; return { renderCall, joinCall, stopCallMedia };`,
+    "localStorage",
+    `var handoffChoices = null; function refreshHandoffChoices() {} function requestVisitorCall() {}; ${source.slice(start, end)}; return { renderCall, joinCall, stopCallMedia, noteHandoffOffer: typeof noteHandoffOffer === "function" ? noteHandoffOffer : function () {}, setCallOfferDismissed: typeof setCallOfferDismissed === "function" ? setCallOfferDismissed : function () {}, setCallAvailable: function () { callCanRequest = true; callVisitorConnected = true; } };`,
   ) as (...args: unknown[]) => {
-    renderCall: (call: { id: string; status: string }) => void;
+    renderCall: (
+      call: { id: string; status: string; requestedBy?: string; expiresAt?: number } | null,
+    ) => void;
     joinCall: (id: string) => Promise<void>;
     stopCallMedia: () => void;
+    setCallOfferDismissed: (dismissed: boolean) => void;
+    noteHandoffOffer: (previousState: string, nextState: string) => void;
+    setCallAvailable: () => void;
   };
   const controller = factory(
-    { api: "https://example.invalid", tenant: "test" },
-    "session",
+    { api: "https://example.invalid", tenant: "test", site: "course" },
+    testSessionId,
     "secret",
     callEl,
     callExpand,
@@ -174,6 +193,7 @@ function harness(outputSupported = true) {
     document,
     window,
     fetch,
+    localStorage,
   );
   const click = (label: string) => {
     const button = callControls.children.find((item) => item.textContent === label);
@@ -197,6 +217,7 @@ function harness(outputSupported = true) {
     requests,
     document,
     listeners,
+    storage,
   };
 }
 const accepted = { id: "call-1", status: "accepted" };
@@ -207,6 +228,52 @@ const tick = async () => {
 };
 
 describe("visitor audio call controller", () => {
+  test("idle call offer dismisses across rerenders and reloads without touching a real invite", () => {
+    const storage = new Map<string, string>();
+    const app = harness(true, storage);
+    app.setCallAvailable();
+    app.renderCall(null);
+    expect(app.callTitle.textContent).toBe("Speak with a team member");
+    expect(app.callControls.children.map((item) => item.textContent)).toEqual([
+      "Request a call",
+      "Dismiss call offer",
+    ]);
+    app.click("Dismiss call offer");
+    expect(app.requests).toEqual([]);
+    app.renderCall(null);
+    expect(app.callControls.children).toHaveLength(0);
+
+    const reloaded = harness(true, storage);
+    reloaded.setCallAvailable();
+    reloaded.renderCall(null);
+    expect(reloaded.callControls.children).toHaveLength(0);
+    reloaded.renderCall({
+      id: "operator-invite",
+      status: "ringing",
+      requestedBy: "operator",
+      expiresAt: Date.now() + 60_000,
+    });
+    expect(reloaded.callTitle.textContent).toBe("Incoming audio call");
+    expect(reloaded.callControls.children.map((item) => item.textContent)).toEqual([
+      "Decline",
+      "Accept",
+    ]);
+    expect(reloaded.requests).toEqual([]);
+    reloaded.noteHandoffOffer("pending", "pending"); // repeated status is the same offer
+    reloaded.renderCall(null);
+    expect(reloaded.callControls.children).toHaveLength(0);
+    reloaded.noteHandoffOffer("ai", "pending"); // a later explicit handoff starts a new offer
+    reloaded.renderCall(null);
+    expect(reloaded.callControls.children.map((item) => item.textContent)).toContain(
+      "Request a call",
+    );
+    const newConversation = harness(true, storage, "new-session");
+    newConversation.setCallAvailable();
+    newConversation.renderCall(null);
+    expect(newConversation.callControls.children.map((item) => item.textContent)).toContain(
+      "Request a call",
+    );
+  });
   test("shows waiting until an operator joins and toggles the microphone", async () => {
     const app = harness();
     app.renderCall(accepted);

@@ -44,6 +44,10 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Fixed
 
+- The visitor's idle audio-call offer now has a 44px dismiss control and stays
+  dismissed for the current chat session across rerenders and reloads. Dismissing
+  the offer does not decline an incoming invite or end a call.
+
 - Lead emails show the Buttr mascot beside the Krispy wordmark when a public
   `EMAIL_ASSET_ORIGIN` is configured; text remains if images are blocked or unset.
 

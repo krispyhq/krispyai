@@ -1611,6 +1611,28 @@
   var callVisitorConnected = false;
   var callCanRequest = false;
   var callStatusEpoch = 0;
+  // An idle call invitation is a suggestion, not a server call. Keep its
+  // dismissal for this conversation across status refreshes and page reloads.
+  var callOfferKey =
+    "krispy_call_offer_dismissed_" + cfg.tenant + "_" + (cfg.site || "") + "_" + sessionId;
+  var callOfferDismissed = false;
+  try {
+    callOfferDismissed = localStorage.getItem(callOfferKey) === "1";
+  } catch {
+    /* private mode: keep the in-memory choice */
+  }
+  function setCallOfferDismissed(dismissed) {
+    callOfferDismissed = dismissed;
+    try {
+      if (dismissed) localStorage.setItem(callOfferKey, "1");
+      else localStorage.removeItem(callOfferKey);
+    } catch {
+      /* private mode: keep the in-memory choice */
+    }
+  }
+  function noteHandoffOffer(previousState, nextState) {
+    if (nextState === "pending" && previousState !== "pending") setCallOfferDismissed(false);
+  }
   function callRequest(action, extra) {
     return fetch(cfg.api + "/api/call", {
       method: "POST",
@@ -1774,6 +1796,7 @@
       if (
         callCanRequest &&
         !handoffChoices &&
+        !callOfferDismissed &&
         visitorSecret &&
         callVisitorConnected &&
         document.visibilityState === "visible"
@@ -1783,6 +1806,10 @@
         callNote.textContent = "Request an audio call. Your microphone stays off until you join.";
         callButton("Request a call", true, function () {
           requestVisitorCall();
+        });
+        callButton("Dismiss call offer", false, function () {
+          setCallOfferDismissed(true);
+          callEl.classList.remove("on");
         });
       } else callEl.classList.remove("on");
       return;
@@ -2126,6 +2153,7 @@
           renderOperatorAction(ev.action, ev.ts);
           notifyInbound();
         } else if (ev.type === "handoff") {
+          noteHandoffOffer(handoffState, ev.handoffState || "pending");
           handoffState = ev.handoffState || "pending";
           handedOff = true;
           clearFallbacks();
@@ -2247,6 +2275,7 @@
     });
     var canRequestCall =
       callCanRequest &&
+      !callOfferDismissed &&
       visitorSecret &&
       callVisitorConnected &&
       document.visibilityState === "visible" &&
@@ -2642,6 +2671,7 @@
           return;
         } // human owns it — stay silent
         if (responseState === "pending") {
+          if (res.handoff) noteHandoffOffer(handoffState, responseState);
           handoffState = "pending";
           handedOff = true;
           clearFallbacks();
