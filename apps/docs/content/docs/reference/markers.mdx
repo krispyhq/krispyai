@@ -21,8 +21,10 @@ it can't make).
 
 **server behavior:** strips the marker, keeps the human-readable text, sets `handoff: true`
 on the chat response, mirrors "🙋 AI asked for a human here" into the Telegram topic, and
-nudges the visitor's browser to open contact capture (via the DO). the bot's next replies
-stay live until an operator actually takes over.
+nudges the visitor's browser to open contact capture (via the DO). the SessionDO moves to
+`pending` immediately: later visitor messages still reach the operator topic and ring, while
+the bot stays silent. the first human reply moves it to `operator`; resolve/handback restores
+`ai`.
 
 ## `[!FORM:<id>]`
 

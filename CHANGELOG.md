@@ -10,9 +10,155 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+### Added
+
+- Pending human handoffs now offer one compact choice card built from the site's
+  configured forms and contact CTAs, with an audio-call request only when available.
+  Form choices expand inline and retain visitor input if a team member takes over;
+  no unconfigured contact form or delivery route is created.
+
+- Operators can send a site's configured lead form or Instagram CTA directly into a
+  visitor conversation. The typed card is stored in session history and restored on reconnect.
+
+### Changed
+
+- Instagram chat CTAs use Adi's recognizable filled Instagram glyph on the existing
+  network gradient, with a 44px mobile tap target.
+
 ### Fixed
 
-- Widget: **the remembered unread flag never came back for the default launcher.** `restoreUnread()` shipped in v0.2.1 inside `applyTheme`'s `launcherStyle === "pill"` branch, so every tenant on the circle — which is every tenant that has not opted into the pill — wrote `krispy_unread_<tenant>` on an inbound message and never read it back. The notice still died on the next navigation, which is the one thing persisting it was for. It now runs at boot for every launcher, and outside `applyTheme` for a second reason: the flag has nothing to do with the theme, and `applyTheme` only runs when the boot config fetch succeeds — a visitor returning to a page whose config request failed should still be told somebody answered them.
+- Widget: restore the saved unread indicator at boot for every launcher, including the default circle and visits where theme config fails to load.
+
+- Visitor audio calls now show when the team member has actually joined, provide
+  Mute/Unmute controls, and stop media and end the call when the page leaves the foreground.
+  Pending joins cannot turn the microphone back on after a call ends. With tenant opt-in,
+  visitors can request calls after handoff and notify the operator app; the team member
+  accepts before either side joins. Operator push delivery no longer delays the visitor's
+  request confirmation.
+- Operator-sent action receipts now count connected visitor sockets only; the operator
+  still receives the live card echo without being mistaken for a visitor.
+- Edge deployments now sync the configured lead-email sender from Infisical alongside
+  the Resend key, so lead delivery uses the verified address selected for the environment.
+- Lead forms now show success only after the server confirms email delivery. A failed
+  submission keeps the visitor's form filled and offers a retry.
+
+### Changed
+
+- Edge accepts a bare terminal `!HANDOFF` compatibility token only when it is a
+  standalone sentence-ending control marker. Ordinary prose and quoted mentions remain
+  text. The explicitly selected `@cf/meta/llama-3.1-8b-instruct-fast` candidate uses
+  temperature 0; the default 70B model remains unchanged. Control-only handoffs now
+  still send the visitor an acknowledgement.
+
+### Added
+
+- Edge operator inbox: `includeActive: true` lists every unresolved conversation,
+  including AI-only chats. Entitled chats use a dedicated tenant-scoped index while
+  legacy Telegram mappings and handoff-only notifications remain unchanged.
+
+### Changed
+
+- Deploy: the edge sync now transfers present optional knowledge gateway configuration
+  from Infisical through the per-key Worker secret API; absent keys are left unchanged
+  so unrelated or manually managed bindings are never reset.
+
+- Hosted preview now configures the operator push-token endpoint so handoffs can
+  notify registered Buttr devices instead of silently skipping push.
+
+- AI handoff guidance now distinguishes complete factual answers (including negative
+  answers and descriptions of included support) from requests that need a person.
+  The decision policy follows the security rules; explicit human requests, unknown
+  information, business approval requirements and outage fallback remain supported.
+
+- Edge preview: configure `API_ORIGIN` to the hosted dev API
+  (`https://api-preview.krispyai.com`) so Buttr operator bearer verification stays in the
+  preview environment. Production retains its separate API origin.
+
+- Widget: the chat now reads as one light messaging surface with an expressive Buttr launcher,
+  softer depth, modern sans typography, a floating composer, and transcript-native forms and
+  actions. Opening and closing use one reversible opacity/transform transition; reduced-motion
+  visitors receive the same states without the movement. Existing classes, embed attributes,
+  `window.krispy` methods, events, tenant theme fields, and host CSS variables are unchanged.
+- Widget: Buttr now floats on its transparent asset by default. `theme.launcherColor` remains an
+  explicit opt-in badge fill, and `"transparent"` can clear a previously configured fill.
+
+### Added
+
+- Edge: the optional private knowledge gateway can now return one bounded professional-method
+  reference alongside cited business evidence. Guidance is clearly separated from business
+  facts, remains below the existing security and handoff rules, and receives trusted current
+  UTC time during prompt composition; malformed or oversized guidance falls back unchanged.
+
+- Edge: an optional server-only knowledge gateway can add bounded, cited support evidence
+  to an AI turn for one exact tenant/site binding. It is disabled unless all gateway settings
+  are present, never runs for operator-owned sessions, and any timeout, scope mismatch, bad
+  response, or gateway failure falls back to the existing chat path without logging private data.
+
+- Widget: **bring your own launcher** — an embedder can suppress Krispy's launcher and drive the panel from their own mark. `data-launcher="none"` on the embed hides the built-in button (it stays in the DOM so the unread dot, nudge, glow and entrance paths are untouched); `window.krispy` exposes `open()` / `close()` / `toggle()` / `isOpen()` / `unread()` / `el`; and `krispy:open`, `krispy:close`, `krispy:unread` (`detail: { unread: boolean }`) fire on `document` so a custom launcher can show its own dot when an operator replies. The host element now carries `class="krispy-widget"` — before this, the only thing identifying it in the document was the z-index in its inline style, so integrators were selecting `div[style*="2147483000"]` and synthesising a `.click()` on the hidden built-in button through the open shadow root. **Every part is opt-in and the default embed is byte-for-byte unchanged**: leave `data-launcher` off and the launcher renders exactly as before; the global and the events are inert until something calls or listens.
+- Widget: `theme.avatar: "none"` hides the header avatar without leaving a flex gap and uses a neutral chat mark in the built-in launcher. Existing tenants and the default Buttr avatar remain unchanged.
+
+### Fixed
+
+- Edge preview: allow fetches to the separately deployed private knowledge Worker when
+  both Workers share a Cloudflare zone; the compatibility flag is preview-only and does
+  not alter production fetch behavior.
+
+- Edge: the private knowledge gateway now uses the Workers-supported manual redirect
+  mode and rejects redirect responses without following them, preserving the existing
+  fallback path for misconfigured or redirected endpoints.
+
+- Edge operator bearer verification now authorizes against the cloud API's server-resolved
+  tenant instead of always treating the user id as the tenant. Verified teammates can reach
+  the owner's handoff inbox, other tenants remain denied, and malformed identities fail closed;
+  legacy `/me` responses without `tenantId` retain the nonempty-id fallback.
+
+- Edge liveness throttling now tracks the embedding origin as well as the tenant/site.
+  A second installed origin records its first heartbeat immediately during the five-minute
+  window, while repeat boots from the same origin remain bounded.
+
+- Edge: first-message handoffs no longer duplicate the current visitor message when the browser
+  includes that message as the final `history` entry. Earlier identical questions remain intact.
+
+- Cloud chat now honors prompt, theme, forms, and Buttr handoff for app-only tenants without
+  requiring Telegram credentials. Business facts in an onboarding prompt can be repeated as
+  answers without tripping the control-instruction leak detector. Known questions remain with
+  the AI; explicit human requests enter `pending` without forcing a name, email, or phone form.
+  The widget also disables Telegram-backed screenshot paste/drop when the public capability
+  projection says attachments are unavailable.
+
+- Widget: mute and close controls now expose 44px touch targets on coarse-pointer devices while
+  keeping the compact desktop chrome. Public widget configuration revalidates once per boot, so
+  a warm browser tab no longer reuses stale tenant branding after a reload.
+
+- Widget: tenant accent colors no longer assume dark text. Krispy's brand ink remains the first
+  choice when it reaches 4.5:1 contrast; otherwise the widget chooses black or white by measured
+  contrast for visitor bubbles, send actions, forms, and primary CTAs.
+
+- CLI logo processing uses Sharp 0.35.4, resolving the libvips/libheif advisories
+  reported against the previous image-processing dependency.
+
+- Pill launcher style and label now pass through the public widget configuration.
+  The widget already supported both settings, but the edge projection omitted them.
+  The circular default and secret-free configuration boundary are unchanged.
+
+- Handoff: escalation now moves the SessionDO into an explicit `pending` state immediately,
+  before an operator replies. Later visitor messages still reach the operator topic and ring,
+  while AI generation and repeated contact forms stay off. The first operator reply changes the
+  state to `operator`; resolve or silence handback restores `ai`. Reconnecting while pending says
+  the team was notified instead of falsely saying a team member already joined. A dedicated,
+  Telegram-independent KV index makes app-only handoffs discoverable before the required DO
+  transition; the inbox also unions legacy topic keys. Failed index/state writes stop before
+  notification instead of claiming a handoff that the system cannot route.
+
+## [0.2.2] — 2026-08-18
+
+### Changed
+
+- Edge: **`ALLOWED_ORIGIN` accepts a comma-separated origin list.** The CORS header can only
+  carry one origin, so the list is matched against the request's own `Origin` and echoed back at
+  a single fetch boundary (`finalizeCors`); `Vary: Origin` rides along so a cache never serves
+  one origin's header to another. Single-origin and wildcard (`*`) behavior are unchanged, and
+  the 55 `json()`/`cors()` call sites are untouched. (PR #58.)
 
 ## [0.2.1] — 2026-07-28
 

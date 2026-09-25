@@ -13,14 +13,16 @@ the honest inventory of what's protected and how.
 the Worker never reads a `.env` at runtime. every secret lives in **Cloudflare**
 (`wrangler secret put`), never in the repo:
 
-| secret                    | guards                                                     |
-| ------------------------- | ---------------------------------------------------------- |
-| `TELEGRAM_BOT_TOKEN`      | the bot itself — the operator channel                      |
-| `TELEGRAM_CHAT_ID`        | your supergroup                                            |
-| `TELEGRAM_WEBHOOK_SECRET` | inbound webhook auth (`x-telegram-bot-api-secret-token`)   |
-| `TENANT_SYNC_SECRET`      | `/api/tenant/config` read + write (`x-tenant-sync-secret`) |
-| `BILLING_SYNC_SECRET`     | the optional billing → gate push (unused in self-host)     |
-| `RESEND_API_KEY`          | lead-email delivery                                        |
+| secret                     | guards                                                                  |
+| -------------------------- | ----------------------------------------------------------------------- |
+| `TELEGRAM_BOT_TOKEN`       | the bot itself — the operator channel                                   |
+| `TELEGRAM_CHAT_ID`         | your supergroup                                                         |
+| `TELEGRAM_WEBHOOK_SECRET`  | inbound webhook auth (`x-telegram-bot-api-secret-token`)                |
+| `TENANT_SYNC_SECRET`       | `/api/tenant/config` read + write (`x-tenant-sync-secret`)              |
+| `KNOWLEDGE_GATEWAY_SECRET` | bearer auth for the optional private retrieval gateway                  |
+| `BILLING_SYNC_SECRET`      | the optional billing → gate push (unused in self-host)                  |
+| `RESEND_API_KEY`           | lead-email delivery                                                     |
+| `LEAD_EMAIL_FROM`          | verified sender address for lead-email delivery (synced from Infisical) |
 
 the CLI's own config (`KRISPY_API`, `KRISPY_TENANT`, `TENANT_SYNC_SECRET`) is documented in
 `.env.example` → put fill-ins in a git-ignored `.env.local`. secret scanning (`gitleaks`)
@@ -49,7 +51,7 @@ the DOM, so the widget sanitizes at the boundary:
 - **colors** must match `#hex` (3–8 digits) or `rgb(...)`; anything else is dropped.
 - **radius** is clamped to `0–20`.
 - **font** strings that contain `;`, `{`, `}`, `<`, `>` are rejected.
-- **avatar** must be the literal `buttr` or an `https://` URL.
+- **avatar** must be the literal `buttr`, `none`, or an `https://` URL.
 - **bot/operator markdown** is built with `createElement` + `textContent` — **never**
   `innerHTML` (the load-bearing XSS guard). links render only for `http(s)`/`mailto`;
   `javascript:` / `data:` schemes are rejected and rendered as literal text.

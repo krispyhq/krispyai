@@ -10,15 +10,16 @@ one Cloudflare Worker hosts all of these plus the `SessionDO`. CORS allow-origin
 
 ## public routes
 
-| method | path                             | body / query → response                                                                                                           |
-| ------ | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `POST` | `/api/chat`                      | `{ sessionId, message, tenantId?, history? }` → `{ reply, handoff, handedOff, degraded?, formId?, form? }`                        |
-| `POST` | `/api/contact`                   | `{ sessionId, tenantId?, name?, contact?, message? }` → `{ ok: true }` — legacy contact-capture shim (maps onto the lead fan-out) |
-| `POST` | `/api/lead`                      | `{ tenantId?, sessionId, formId?, values, history }` → `{ ok: true }` — a form's captured values fan out to delivery connectors   |
-| `GET`  | `/api/session/:id/ws?t=<tenant>` | WebSocket upgrade → `SessionDO`. `426` if not an upgrade. the visitor's live channel                                              |
-| `GET`  | `/api/widget/config?t=<tenant>`  | → `{ theme, ctas, script, popups }` — the **public, secret-free** widget projection (whitelist only; no `persona`)                |
-| `GET`  | `/api/usage?t=<tenant>`          | → `{ tenantId, usage: { ai, handoff, tokens }, plan, entitled, status, limits, withinLimits }`                                    |
-| `GET`  | `/health`                        | → `{ status: "ok", service: "edge" }`                                                                                             |
+| method | path                             | body / query → response                                                                                                                                                                        |
+| ------ | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST` | `/api/chat`                      | `{ sessionId, message, tenantId?, history? }` → `{ reply, handoff, handoffState, handedOff, degraded?, formId?, form? }`                                                                       |
+| `POST` | `/api/call`                      | Visitor call control with registered `visitorSecret`: `status`, `invite`, `accept`, `decline`, `cancel`, `end`, `grant`. Status includes `availableToRequest`; invite returns a private nonce. |
+| `POST` | `/api/contact`                   | `{ sessionId, tenantId?, name?, contact?, message? }` → `{ ok: true }` — legacy contact-capture shim (maps onto the lead fan-out)                                                              |
+| `POST` | `/api/lead`                      | `{ tenantId?, sessionId, formId?, values, history }` → `{ ok: true }` after a configured form's email delivery is accepted; `502 delivery_failed` keeps the widget form available to retry     |
+| `GET`  | `/api/session/:id/ws?t=<tenant>` | WebSocket upgrade → `SessionDO`. `426` if not an upgrade. the visitor's live channel                                                                                                           |
+| `GET`  | `/api/widget/config?t=<tenant>`  | → `{ capabilities: { attachments }, theme, ctas, forms, script, popups }` — the **public, secret-free** widget projection (whitelist only; no `persona` or form delivery routing)              |
+| `GET`  | `/api/usage?t=<tenant>`          | → `{ tenantId, usage: { ai, handoff, tokens }, plan, entitled, status, limits, withinLimits }`                                                                                                 |
+| `GET`  | `/health`                        | → `{ status: "ok", service: "edge" }`                                                                                                                                                          |
 
 ### `POST /api/chat` gate
 
@@ -27,6 +28,92 @@ always entitled and unmetered. a non-self tenant with no valid snapshot gets
 `402 { error: "subscription_required" }`; over its cap it gets
 `429 { error: "usage_limit_reached" }`. missing `sessionId`/`message` → `400`.
 
+`handoffState` is explicit: `ai` answers; `pending` means a human was notified but has not
+replied; `operator` starts with the first human reply. Pending and operator-owned visitor
+messages still reach the topic and server ring, while the AI stays silent. `handedOff` remains
+as a compatibility boolean and is true only for `operator`.
+
+### Audio calls
+
+Audio calls require RTC configuration and tenant `callSettings.enabled`. Operator invites
+require a connected visitor; visitor requests require `visitorRequestsEnabled` and, by
+default, a session already in `pending` or `operator` handoff state. Set
+`visitorRequestTrigger: "always"` to allow a visitor request before handoff. A visitor
+request sends one push to registered operator devices unless `notifyOnVisitorRequest` is
+false; push delivery runs after the invite response, and repeating the same ringing request
+does not send another. `availableToRequest` in
+visitor `status` says only that a request is allowed, not that an operator is online.
+
+Both `/api/call` and `/api/operator/call` use `POST` with `{ tenantId, sessionId, action,
+id?, nonce? }`; the visitor also sends its registered `visitorSecret`, while the operator
+uses its bearer or tenant sync secret. `call.requestedBy` identifies the requester. The
+recipient can `accept` or `decline`; the requester can `cancel`; either can `end` once
+accepted. The visitor nonce never appears in the operator response. `grant` returns
+room credentials only after acceptance. Accepting sets the session to operator handoff
+so the AI stays silent during the call. A new visitor request is limited to one per minute.
+
+### Operator bearer authorization
+
+The operator app sends its Better Auth bearer in `Authorization: Bearer <session token>`
+(or as `?auth=<token>` for an operator WebSocket). The Worker verifies the token against
+the cloud API's `GET /me` and compares the server-resolved `tenantId` with the route's
+`tenantId`. This permits verified teammates to access the owner's tenant while rejecting
+another tenant with `403`. During rollout, a `/me` response without `tenantId` falls back
+to its nonempty `id`; malformed identity fields fail closed with `401`. Verified tokens
+are cached per Worker isolate for 60 seconds.
+
+`POST /api/operator/actions` takes `{ tenantId, sessionId, siteId? }` and returns
+`{ forms: [{ id, title }], connectors: [{ id, type: "instagram", label, caption?, url }] }`.
+`POST /api/operator/send-action` adds `kind: "form" | "instagram"` and `id`; it returns
+`{ ok: true, delivered, action }`. Both use the operator bearer or tenant sync secret.
+`delivered` counts live visitor sockets; the operator's own live echo is excluded.
+`POST /api/operator/reply-drafts` takes `{ tenantId, sessionId, siteId? }` and returns
+`{ drafts: string[], sourceRevision, sourceLastMessageTs, stale? }`. It reads the
+session transcript on the server, uses the tenant's configured knowledge and AI
+provider for the session's recorded site, and returns up to three editable suggestions.
+An optional `siteId` only asserts that recorded site; a mismatch returns `403`.
+It never sends a reply.
+The app requests them on demand and discards a result when the transcript changes.
+Uncertain or failed generation returns an empty array; repeated requests are capped
+at 20 per session per hour (`429`; concurrent bursts can exceed the coarse KV counter).
+Direct Gemini remains limited to the approved
+pilot tenant and site.
+The server reads the session's recorded site and resolves the ID from that site's
+configured forms/connectors. An optional `siteId` must match. Missing session or ID
+returns `404`, a site mismatch returns `403`, and malformed fields return `400`.
+The typed card appears in `/api/operator/thread` history and the visitor WebSocket
+(`type: "action"`); reconnect `ready.messages` restores it. The form submits through
+the existing `/api/lead` path. The inbox row also includes the recorded `siteId`.
+
+Telegram is optional for the Buttr inbox. Before moving a session to `pending`, the Worker writes
+`handoff:<tenant>:<session>` to KV. With `includeActive: true`, the operator inbox also lists
+unresolved AI-only conversations indexed under `conversation:<tenant>:<session>`. Topic links
+keep their separate legacy `session:` keys, so
+enabling Telegram later cannot overwrite discovery state. The inbox unions and de-duplicates both
+prefixes so conversations created before this index remain visible.
+
+Known business questions stay with the AI. An explicit human request enters `pending` immediately
+without requiring a name, email, phone, or order reference. Only a business-configured form can
+collect details. Screenshot paste/drop is advertised only when `capabilities.attachments` is true;
+the current attachment transport remains Telegram-backed.
+
+`history` is client-supplied context and may include the current visitor message as its final
+`user` entry (the browser widget sends it that way). When an empty session is handed off, the
+Worker seeds only prior history and appends the live visitor turn once. It removes one trailing
+exact match only; earlier repeated messages remain separate turns.
+
+If the Worker has the optional private knowledge gateway configured for the exact tenant/site,
+it sends the latest question to that server-only gateway immediately before the model call.
+The gateway response may contain bounded cited evidence plus one bounded professional-method
+reference. Evidence is business reference data; guidance is explicitly method reference only,
+not a business claim or an instruction. Both are placed before the existing system
+instructions with the existing security, scope, and handoff rules retaining priority. The
+request is capped at 64 KiB; guidance is capped at one item and 20,000 characters total.
+The Worker adds trusted current UTC time when composing usable retrieved material so expired
+deadlines are not manufactured. Missing configuration, operator-owned sessions, timeout,
+scope mismatch, malformed data, or gateway errors leave the original model messages
+unchanged. No gateway credential or provider setting is exposed through widget config.
+
 ## secret-guarded routes
 
 these carry a bot token or mutate config, so they require a shared-secret header. a missing
@@ -34,11 +121,11 @@ or wrong secret returns **401** (config routes) / **403** (webhook, billing) and
 
 | method | path                                             | auth header                                                  | purpose                                                                                                                                                                                                                                                                                       |
 | ------ | ------------------------------------------------ | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST` | `/api/telegram/webhook`                          | `x-telegram-bot-api-secret-token: <TELEGRAM_WEBHOOK_SECRET>` | owner's Telegram reply → push to the visitor via the DO, set `handedOff`                                                                                                                                                                                                                      |
+| `POST` | `/api/telegram/webhook`                          | `x-telegram-bot-api-secret-token: <TELEGRAM_WEBHOOK_SECRET>` | owner's Telegram reply → push to the visitor via the DO, move `pending` → `operator`                                                                                                                                                                                                          |
 | `GET`  | `/api/tenant/config?t=<tenant>`                  | `x-tenant-sync-secret: <TENANT_SYNC_SECRET>`                 | read a tenant's full config `{ botToken, chatId, systemPrompt?, model?, ... }` (404 if none)                                                                                                                                                                                                  |
 | `POST` | `/api/tenant/config`                             | `x-tenant-sync-secret: <TENANT_SYNC_SECRET>`                 | `{ tenantId, config }` → **merge** into the tenant's KV config. the CLI writes here. out-of-bounds configs are hard-rejected: oversized avatar/kbSources → `413`, bad avatar scheme or non-https CTA url → `400` (see [tenant config → write caps](/docs/reference/tenant-config#write-caps)) |
 | `POST` | `/api/billing/entitlement`                       | `x-billing-sync-secret: <BILLING_SYNC_SECRET>`               | mirror an entitlement snapshot into KV (for a hosted/multi-tenant deploy; unused in self-host)                                                                                                                                                                                                |
-| `GET`  | `/api/tenant/liveness?t=<tenant>`                | `x-tenant-sync-secret: <TENANT_SYNC_SECRET>`                 | "is my widget live?" — returns `{ seen: { at, origin?, url? } \| null }`, the last time the widget booted on a customer page (stamped, throttled, off every `GET /api/widget/config`) + the embedding origin/url. `null` until it phones home                                                 |
+| `GET`  | `/api/tenant/liveness?t=<tenant>`                | `x-tenant-sync-secret: <TENANT_SYNC_SECRET>`                 | "is my widget live?" — returns `{ seen: { at, origin?, url? } \| null }`, the last time the widget booted on a customer page (stamped, throttled per site and embedding origin, off every `GET /api/widget/config`) + the embedding origin/url. `null` until it phones home                   |
 | `GET`  | `/api/tenant/kb-suggestions?t=<tenant>&s=<site>` | `x-tenant-sync-secret: <TENANT_SYNC_SECRET>`                 | list pending relearning suggestions → `{ suggestions: KbSuggestion[] }` (machine-proposed Q→A from operator-touched sessions; own KV key `suggestions:<ns(t,s)>`, never public)                                                                                                               |
 | `POST` | `/api/tenant/kb-approve`                         | `x-tenant-sync-secret: <TENANT_SYNC_SECRET>`                 | `{ tenantId, siteId?, id }` → move the suggestion into `kbSources` (+ bump `kbVersion`) and drop it from pending → `{ ok: true, source }`. `404` if the id isn't pending                                                                                                                      |
 | `POST` | `/api/tenant/kb-dismiss`                         | `x-tenant-sync-secret: <TENANT_SYNC_SECRET>`                 | `{ tenantId, siteId?, id }` → drop the suggestion, no KB change → `{ ok: true }`                                                                                                                                                                                                              |
@@ -46,8 +133,8 @@ or wrong secret returns **401** (config routes) / **403** (webhook, billing) and
 <Callout type="warn">
   `GET /api/tenant/config` returns the **full** config (bot token included) and is secret-guarded.
   `GET /api/widget/config` is the public read the browser uses — it returns **only** the whitelist
-  (`theme`, `ctas`, `script`, `popups`) and never the token/prompt/persona. don't confuse them. see
-  [security](/docs/security).
+  (`capabilities`, `theme`, `ctas`, `forms`, `script`, `popups`) and never the token/prompt/persona
+  or form connector IDs. don't confuse them. see [security](/docs/security).
 </Callout>
 
 <Callout>
@@ -62,12 +149,16 @@ or wrong secret returns **401** (config routes) / **403** (webhook, billing) and
 
 the Worker forwards to a `SessionDO` per `(tenant, session)`; the browser never calls it
 directly. its surface: the WebSocket upgrade (visitor connects, receives
-`{ type: "ready", handedOff }`), `GET /state` (`{ handedOff }`), `POST /context { tenantId, siteId? }`
-(the chat flow's combined `{ handedOff, messages }` read — the body persists the tenant's
+`{ type: "ready", handoffState, handedOff }`), `GET /state` (`{ handoffState, handedOff }`),
+`POST /context { tenantId, siteId? }` (the chat flow's combined
+`{ handoffState, handedOff, messages }` read — the body persists the tenant's
 identity into DO storage **write-once** so the relearning handback, which fires from an alarm
 with no request in flight, can build the per-site `suggestions:` key + meter the AI call),
-`POST /operator {text}` (set `handedOff`, broadcast the operator reply), and `POST /handoff`
-(broadcast a handoff prompt). server → browser events: `ready`, `operator`, `handoff`, `resume`.
+`POST /operator {text}` (move pending → operator and broadcast the reply), and `POST /handoff`
+(move ai → pending and broadcast the waiting state). `POST /resolve` and silence handback move
+either human state back to ai. server → browser events: `ready`, `operator`, `handoff`, `resume`.
+On reconnect, `pending` renders a truthful waiting message; only `operator` says a team member
+joined.
 
 **Relearning.** On a real handback (operator had the session, then it resolves or the silence
 alarm fires) the DO makes **one** Workers-AI call to extract a Q→A the human answered that the
@@ -82,3 +173,20 @@ swallowed (never break resolve). The bot never self-modifies its KB — approval
 
 the repo mirrors routes into a Bruno collection (`api-collection/`). when you add or change
 a route, update the matching `.bru` request in the same change (per `CONTRIBUTING.md`).
+
+### Launcher appearance in public config
+
+`GET /api/widget/config` includes `theme.launcherStyle` (`circle` or `pill`) and
+`theme.launcherLabel` when configured. The widget displays up to 24 label characters;
+unset fields retain the circular launcher. These fields contain public display text,
+not credentials. Configure them through the authenticated tenant-config endpoint.
+
+### Hosted owner notifications
+
+The hosted edge needs `PUSH_TOKENS_URL` set to its matching cloud API
+`/internal/push/tokens` endpoint and `PUSH_TOKENS_SECRET` set to the shared
+server credential. The preview deployment config supplies the preview endpoint.
+Without the URL, chat and inbox persistence work but mobile push is skipped.
+A signed device build, notification permission, registered device token, and
+valid platform push credentials are also required; simulator chat tests do not
+prove notification delivery. Self-hosted installations may leave these unset.

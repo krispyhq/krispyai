@@ -27,44 +27,48 @@ drop one tag on any page, before `</body>`:
 these are the boot-time knobs read off the `<script>` tag. richer appearance is set via the
 theme (below), not attributes.
 
-| attribute     | required | default        | meaning                                                                                 |
-| ------------- | -------- | -------------- | --------------------------------------------------------------------------------------- |
-| `data-api`    | yes      | —              | your `@krispy/edge` Worker base URL                                                     |
-| `data-tenant` | no       | `self`         | tenant id (multi-tenant uses this)                                                      |
-| `data-site`   | no       | (default site) | site id for accounts running multiple websites — each has its own config/kbase/branding |
-| `data-title`  | no       | `Chat with us` | header text (theme `headerTitle` supersedes it)                                         |
-| `data-accent` | no       | `#e39a2b`      | brand color, used before the theme fetch lands                                          |
+| attribute       | required | default        | meaning                                                                                     |
+| --------------- | -------- | -------------- | ------------------------------------------------------------------------------------------- |
+| `data-api`      | yes      | —              | your `@krispy/edge` Worker base URL                                                         |
+| `data-tenant`   | no       | `self`         | tenant id (multi-tenant uses this)                                                          |
+| `data-site`     | no       | (default site) | site id for accounts running multiple websites — each has its own config/kbase/branding     |
+| `data-title`    | no       | `Chat with us` | header text (theme `headerTitle` supersedes it)                                             |
+| `data-accent`   | no       | `#e39a2b`      | brand color, used before the theme fetch lands                                              |
+| `data-launcher` | no       | (built-in)     | `none` suppresses the built-in launcher button — [bring your own](#bring-your-own-launcher) |
 
 ## theme (from KV, no redeploy)
 
 on open, the widget fetches `GET /api/widget/config?t=<tenant>` — a **public, secret-free**
 projection of your tenant's `theme`. change it in KV (via the CLI or your own tooling
 writing `POST /api/tenant/config`) and the widget picks it up on next load; no rebuild.
+The config response may be stored, but every widget boot revalidates it, so warm tabs pick up
+changes after a reload without generating one-off cache-buster URLs.
 
 the themeable fields (`WidgetTheme`):
 
-| field           | default          | what it controls                                                       |
-| --------------- | ---------------- | ---------------------------------------------------------------------- |
-| `primaryColor`  | `#e39a2b` (gold) | visitor bubble, send button, input focus ring                          |
-| `launcherColor` | transparent      | badge circle behind the launcher mascot                                |
-| `launcherStyle` | `"circle"`       | `"pill"` = labelled plate that collapses to the avatar while open      |
-| `launcherLabel` | the widget title | the word on the pill (≤24 chars); inert unless `launcherStyle:"pill"`  |
-| `glowColor`     | — (no glow)      | opt-in launcher glow tint (hex); unset = no glow layer at all          |
-| `position`      | `br`             | `br` (bottom-right) or `bl` (bottom-left)                              |
-| `avatar`        | —                | `"buttr"` (inline default), an `https://` URL, or a `data:image/…` URI |
-| `greeting`      | —                | first bot bubble shown when the panel opens                            |
-| `headerTitle`   | —                | header text (supersedes `data-title`)                                  |
-| `tagline`       | built-in         | header sub-line ("we usually reply in minutes")                        |
-| `radius`        | `14`             | panel/bubble corner radius, px, clamped 0–20                           |
-| `font`          | system stack     | a CSS `font-family` stack                                              |
-| `sound`         | `true`           | notification "ding" on inbound messages while the panel is closed      |
-| `sparkle`       | `false`          | idle sparkle loop on the launcher (shadow swell + conic ring)          |
-| `direction`     | `ltr`            | `rtl` flips the panel: bubble corners, input dir, mirrored send icon   |
-| `popupText`     | — (popup off)    | proactive teaser card above the launcher (see timing below)            |
-| `timing`        | see below        | `WidgetTiming` — attention/timing knobs                                |
+| field           | default          | what it controls                                                                 |
+| --------------- | ---------------- | -------------------------------------------------------------------------------- |
+| `primaryColor`  | `#e39a2b` (gold) | visitor bubble, send button, header halo, input focus ring                       |
+| `launcherColor` | transparent      | optional badge behind the launcher mascot; unset keeps Buttr floating            |
+| `launcherStyle` | `"circle"`       | `"pill"` = labelled plate that collapses to the avatar while open                |
+| `launcherLabel` | the widget title | the word on the pill (≤24 chars); inert unless `launcherStyle:"pill"`            |
+| `glowColor`     | — (no glow)      | opt-in launcher glow tint (hex); unset = no glow layer at all                    |
+| `position`      | `br`             | `br` (bottom-right) or `bl` (bottom-left)                                        |
+| `avatar`        | —                | `"buttr"` (inline default), `"none"`, an `https://` URL, or a `data:image/…` URI |
+| `greeting`      | —                | first bot bubble shown when the panel opens                                      |
+| `headerTitle`   | —                | header text (supersedes `data-title`)                                            |
+| `tagline`       | built-in         | header sub-line ("we usually reply in minutes")                                  |
+| `radius`        | `20`             | panel corner radius, px, clamped 0–20                                            |
+| `font`          | Bricolage/system | a CSS `font-family` stack                                                        |
+| `sound`         | `true`           | notification "ding" on inbound messages while the panel is closed                |
+| `sparkle`       | `false`          | idle sparkle loop on the launcher (shadow swell + conic ring)                    |
+| `direction`     | `ltr`            | `rtl` flips the panel: bubble corners, input dir, mirrored send icon             |
+| `popupText`     | — (popup off)    | proactive teaser card above the launcher (see timing below)                      |
+| `timing`        | see below        | `WidgetTiming` — attention/timing knobs                                          |
 
-every new knob is **inert until set** — a tenant that configures nothing keeps today's
-neutral widget, pixel for pixel. all launcher/popup animations respect
+Unset knobs keep their documented defaults. Tenant accents automatically keep Krispy's brand ink
+when it reaches 4.5:1 contrast; otherwise the widget chooses black or white by measured contrast.
+No foreground field is required. All launcher, popup, panel, and message animations respect
 `prefers-reduced-motion`.
 
 ### timing (`WidgetTiming`)
@@ -86,8 +90,77 @@ dismisses it for the cooldown window.
 <Callout type="warn">
 theme values cross a CSS trust boundary. the widget **sanitizes** them: colors must be
 `#hex` or `rgb(...)` (`glowColor` hex-only), radius is clamped 0–20, fonts reject `;{}<>`,
-timing is clamped, and avatars must be the literal `buttr`, an `https://` URL, or a
+timing is clamped, and avatars must be the literal `buttr`, `none`, an `https://` URL, or a
 `data:image/…` URI. anything else is dropped. see [security](/docs/security).
+</Callout>
+
+## bring your own launcher
+
+the theme restyles the built-in launcher — a circular `<img>` in the shadow root. that is
+enough for a color and a logo, and not enough for a brand with its own mark: an animated
+silhouette, a hover gesture, a word instead of an icon. so the launcher can be turned off
+and replaced with your own element.
+
+add `data-launcher="none"` to the script tag, then drive the panel yourself:
+
+```html
+<button id="support" type="button">support</button>
+
+<script>
+  var b = document.getElementById("support");
+  b.addEventListener("click", function () {
+    if (window.krispy) window.krispy.toggle(); // guard: the widget script is async
+  });
+  document.addEventListener("krispy:unread", function (e) {
+    b.dataset.unread = String(e.detail.unread); // your own dot when a reply lands
+  });
+</script>
+
+<script
+  src="https://YOUR-HOST/widget.js"
+  data-api="https://krispy-edge.YOU.workers.dev"
+  data-tenant="self"
+  data-launcher="none"
+  async
+></script>
+```
+
+### `window.krispy`
+
+commands, available once the script has run. it is a **singleton per page** — one host
+element, one session per tenant.
+
+| call              | returns   | meaning                                                 |
+| ----------------- | --------- | ------------------------------------------------------- |
+| `krispy.open()`   | —         | open the panel (no-op if already open)                  |
+| `krispy.close()`  | —         | close the panel                                         |
+| `krispy.toggle()` | —         | what the built-in launcher does                         |
+| `krispy.isOpen()` | `boolean` | is the panel open right now                             |
+| `krispy.unread()` | `boolean` | is there an unread inbound message                      |
+| `krispy.el`       | `Element` | the widget's host element (see the stable handle below) |
+
+### events on `document`
+
+state comes back as events rather than something you poll, because the panel also opens from
+paths you never called — a teaser popup, `autoOpenMs`, the panel's own `×` — and because a
+listener can be registered **before** the async script has run.
+
+| event           | `detail`              | fires when                                       |
+| --------------- | --------------------- | ------------------------------------------------ |
+| `krispy:open`   | —                     | the panel opened, from any path                  |
+| `krispy:close`  | —                     | the panel closed                                 |
+| `krispy:unread` | `{ unread: boolean }` | an inbound message landed while closed / cleared |
+
+### the host element
+
+`widget.js` appends one `<div class="krispy-widget">` to `<body>` and attaches an open shadow
+root to it. select it as `.krispy-widget` (or take `window.krispy.el`) — never on the z-index
+in its inline style, which is what integrators had to do before the class existed.
+
+<Callout>
+  every part of this is opt-in. leave `data-launcher` off and the built-in launcher renders exactly
+  as it always has; `window.krispy` and the events are added either way and are inert until
+  something calls or listens.
 </Callout>
 
 ## what the widget does
@@ -99,9 +172,17 @@ timing is clamped, and avatars must be the literal `buttr`, an `https://` URL, o
   inbound message while the panel is closed. respects a per-visitor mute (persisted) and the
   browser autoplay policy (silent until first interaction).
 - **mobile** — a keyboard-aware floating card via `visualViewport`, `16px` inputs to dodge
-  iOS zoom, and safe-area insets.
+  iOS zoom, safe-area insets, and 44px mute/close touch targets on coarse pointers.
 - **resilience** — the operator WebSocket reconnects with exponential backoff + jitter; the
   chat still works over plain `POST` if the socket is down.
+- **audio calls** — when enabled, a team member can invite a visitor; a visitor can also
+  request a call after human handoff if the tenant allows it. A request alerts the operator
+  app and waits for a team member to accept; the visitor explicitly joins afterward.
+  An invited visitor accepts, then joins before the microphone turns on.
+  The call card distinguishes waiting for the team member, connected, and reconnecting;
+  Mute/Unmute and End call remain available during the call. Calls require the page in the
+  foreground: switching tabs, minimizing the browser, navigating away, or closing the page
+  stops local media and ends the call. Closing only the chat panel leaves the call active.
 
 ## local demo
 

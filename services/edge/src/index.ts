@@ -17,10 +17,11 @@
 //   GET  /api/usage?t=<tenant>         metering readout (plan/usage hooks)
 //   GET  /health
 import type { ChatMessage } from "./ai";
-import { workersAiRunner, DEFAULT_MODEL } from "./ai";
+import { configuredAiRunner, DEFAULT_MODEL } from "./ai";
+import { knowledgeGatewayRunner } from "./knowledge-gateway";
 import { chatFlow } from "./chat";
 import { SessionDO, type RingMsg } from "./session-do";
-import { buildSystemPrompt } from "./system-prompt";
+import { buildPromptLeakScope, buildSystemPrompt } from "./system-prompt";
 import {
   parseOwnerReply,
   createForumTopic,
@@ -29,15 +30,20 @@ import {
   sendPhotoToTopic,
 } from "./telegram";
 import { authorizeOperator } from "./operator-auth";
+import { handleOperatorReplyDrafts } from "./reply-drafts";
+import { callRtcAvailable } from "./call-token";
 import { stampSeen, readSeen } from "./liveness";
 import { pushToApp } from "./push";
 import { renderLeadEmail, sendLeadEmail } from "./email";
-import type { Connector, Env, FormSpec, TenantConfig } from "./types";
+import type { Connector, Env, FormSpec, HandoffState, OperatorAction, TenantConfig } from "./types";
 import {
   getTenant,
+  hasTelegramConfig,
   resolveSiteId,
   getThreadForSession,
   getSessionForThread,
+  indexConversationSession,
+  indexHandoffSession,
   linkThreadSession,
   meter,
   meterUsage,
@@ -63,6 +69,10 @@ import {
 } from "./store";
 
 export { SessionDO };
+
+interface WaitUntilContext {
+  waitUntil(promise: Promise<unknown>): void;
+}
 
 const DEFAULT_TENANT = "self";
 
@@ -92,6 +102,25 @@ export function ringToHistory(
       content: m.text,
     }))
     .slice(-cap);
+}
+
+/** Browser clients append the current visitor message before POSTing /api/chat.
+ * During a first-message handoff that message is otherwise seeded into the empty
+ * ring and then mirrored again as the live turn. Remove only the final matching
+ * user entry; earlier identical messages are legitimate conversation history. */
+export function historySeed(
+  history: ChatMessage[] | undefined,
+  currentMessage: string,
+): { role: "visitor" | "ai"; text: string }[] {
+  const entries = history ?? [];
+  const last = entries.at(-1);
+  const seedEntries =
+    last?.role === "user" && last.content.trim() === currentMessage
+      ? entries.slice(0, -1)
+      : entries;
+  return seedEntries
+    .filter((m) => (m.role === "user" || m.role === "assistant") && m.content)
+    .map((m) => ({ role: m.role === "user" ? "visitor" : "ai", text: m.content }));
 }
 
 // ── visitor-text length caps (cost-DoS + prompt-stuffing guard at the entry) ──
@@ -126,12 +155,44 @@ const numEnv = (v?: string): number | undefined => {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 };
 
+/** ALLOWED_ORIGIN parsed: [] means "*" (unset/blank). A single entry keeps the
+ * historical behavior; two or more entries switch cors() to a placeholder that
+ * finalizeCors() rewrites per request at the fetch boundary — the CORS header
+ * can only ever carry ONE origin, so a list must be matched against the
+ * request's own Origin and echoed back, never joined. */
+export function allowedOrigins(env: Env): string[] {
+  return (env.ALLOWED_ORIGIN || "")
+    .split(",")
+    .map((s) => s.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+}
+
 function cors(env: Env): Record<string, string> {
+  const list = allowedOrigins(env);
   return {
-    "access-control-allow-origin": env.ALLOWED_ORIGIN || "*",
+    // With a list, the first entry stands in until finalizeCors() sees the
+    // request — a valid header at every call site, never a joined "a,b".
+    "access-control-allow-origin": list[0] || "*",
     "access-control-allow-methods": "GET,POST,OPTIONS",
     "access-control-allow-headers": "content-type,authorization",
   };
+}
+
+/** Rewrites the allow-origin header to echo the request's Origin when it is in
+ * the configured list. One boundary, zero changes at the 55 json()/cors() call
+ * sites. Skips WebSocket upgrades (101 has no CORS and its Response cannot be
+ * re-headered) and responses that never carried the header (e.g. 426/404 from
+ * the WS path). Adds `Vary: Origin` so caches never serve one origin's header
+ * to another. */
+export function finalizeCors(request: Request, res: Response, env: Env): Response {
+  const list = allowedOrigins(env);
+  if (list.length < 2 || res.status === 101 || !res.headers.has("access-control-allow-origin"))
+    return res;
+  const origin = (request.headers.get("Origin") || "").replace(/\/$/, "");
+  const out = new Response(res.body, res);
+  if (list.includes(origin)) out.headers.set("access-control-allow-origin", origin);
+  out.headers.append("vary", "Origin");
+  return out;
 }
 
 const json = (env: Env, data: unknown, status = 200) =>
@@ -166,7 +227,13 @@ function doFetch(
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx?: WaitUntilContext): Promise<Response> {
+    return finalizeCors(request, await route(request, env, ctx), env);
+  },
+};
+
+async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promise<Response> {
+  {
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -174,7 +241,11 @@ export default {
       return new Response(null, { status: 204, headers: cors(env) });
     if (path === "/health") return json(env, { status: "ok", service: "edge" });
 
-    if (request.method === "POST" && path === "/api/chat") return handleChat(request, env);
+    if (request.method === "POST" && path === "/api/chat") return handleChat(request, env, ctx);
+    if (request.method === "POST" && path === "/api/call")
+      return handleCall(request, env, "visitor", ctx);
+    if (request.method === "POST" && path === "/api/operator/call")
+      return handleCall(request, env, "operator", ctx);
     if (request.method === "POST" && path === "/api/contact") return handleContact(request, env);
     if (request.method === "POST" && path === "/api/lead") return handleLead(request, env);
     if (request.method === "POST" && path === "/api/attachment")
@@ -183,6 +254,12 @@ export default {
       return handleWebhook(request, env);
     if (request.method === "POST" && path === "/api/operator/reply")
       return handleOperatorReply(request, env);
+    if (request.method === "POST" && path === "/api/operator/reply-drafts")
+      return handleOperatorReplyDrafts(request, env, { doFetch, json });
+    if (request.method === "POST" && path === "/api/operator/actions")
+      return handleOperatorActions(request, env);
+    if (request.method === "POST" && path === "/api/operator/send-action")
+      return handleOperatorSendAction(request, env);
     if (request.method === "POST" && path === "/api/operator/handoffs")
       return handleOperatorHandoffs(request, env);
     if (request.method === "POST" && path === "/api/operator/thread")
@@ -236,17 +313,183 @@ export default {
     }
 
     return new Response("not found", { status: 404, headers: cors(env) });
-  },
-};
+  }
+}
 
 // ── POST /api/chat ───────────────────────────────────────────────────────────
-async function handleChat(request: Request, env: Env): Promise<Response> {
+/** Call control stays in the session DO. The caller cannot choose a room or role. */
+async function handleCall(
+  request: Request,
+  env: Env,
+  actor: "visitor" | "operator",
+  ctx?: WaitUntilContext,
+): Promise<Response> {
+  const parsed: unknown = await request.json().catch(() => null);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    return json(env, { error: "invalid_request" }, 400);
+  const body = parsed as Record<string, unknown>;
+  if (
+    typeof body.sessionId !== "string" ||
+    !body.sessionId ||
+    body.sessionId.length > 200 ||
+    typeof body.action !== "string" ||
+    !body.action ||
+    body.action.length > 20 ||
+    (body.tenantId !== undefined &&
+      (typeof body.tenantId !== "string" || !body.tenantId || body.tenantId.length > 200)) ||
+    (body.id !== undefined && (typeof body.id !== "string" || body.id.length > 100)) ||
+    (body.nonce !== undefined && (typeof body.nonce !== "string" || body.nonce.length > 100)) ||
+    (body.visitorSecret !== undefined && typeof body.visitorSecret !== "string")
+  )
+    return json(env, { error: "invalid_request" }, 400);
+  const tenantId = body.tenantId || DEFAULT_TENANT;
+  if (actor === "operator") {
+    const denied = await authorizeOperator(request, env, tenantId as string);
+    if (denied) return json(env, { error: denied.error }, denied.status);
+  } else if (!body.visitorSecret || !/^[A-Za-z0-9_-]{43}$/.test(body.visitorSecret as string)) {
+    return json(env, { error: "visitor_auth_required" }, 401);
+  }
+  const rtc = {
+    url: env.LIVEKIT_URL,
+    apiKey: env.LIVEKIT_API_KEY,
+    apiSecret: env.LIVEKIT_API_SECRET,
+  };
+  const clientUrl = env.LIVEKIT_CLIENT_URL;
+  let clientReady = false;
+  try {
+    const u = new URL(clientUrl || "");
+    clientReady = u.protocol === "https:" || (u.protocol === "http:" && u.hostname === "localhost");
+  } catch {
+    /* no client bundle configured */
+  }
+  const available = callRtcAvailable(rtc) && clientReady;
+  if (!available) return json(env, { error: "call_unavailable", available: false }, 503);
+  if (
+    actor === "visitor" &&
+    !["status", "invite", "accept", "decline", "cancel", "end", "grant"].includes(body.action)
+  )
+    return json(env, { error: "wrong_actor" }, 403);
+  if (
+    actor === "operator" &&
+    !["status", "invite", "accept", "decline", "cancel", "end", "grant"].includes(body.action)
+  )
+    return json(env, { error: "wrong_actor" }, 403);
+  const identityResponse = await doFetch(env, tenantId, body.sessionId, "https://do/identity");
+  const identity = identityResponse.ok
+    ? ((await identityResponse.json()) as { siteId?: string })
+    : {};
+  const callSettings = (await readTenantConfig(env, tenantId, identity.siteId))?.callSettings;
+  if (body.action === "invite" && !callSettings?.enabled)
+    return json(env, { error: "call_disabled" }, 403);
+  if (body.action === "invite" && actor === "visitor" && !callSettings?.visitorRequestsEnabled)
+    return json(env, { error: "visitor_requests_disabled" }, 403);
+  const headers: Record<string, string> = { "x-call-actor": actor };
+  if (actor === "visitor") headers["x-call-visitor-secret"] = body.visitorSecret as string;
+  const path = "https://do/call";
+  if (body.action === "grant") {
+    const response = await doFetch(env, tenantId, body.sessionId, "https://do/call/grant", {
+      method: "POST",
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({ id: body.id }),
+    });
+    const data = (await response.json()) as {
+      error?: string;
+      url?: string;
+      token?: string;
+      expiresAt?: number;
+    };
+    return response.ok
+      ? json(env, { ...data, clientUrl })
+      : json(env, { error: data.error || "call_not_accepted" }, response.status);
+  }
+  if (body.action === "status") {
+    const response = await doFetch(env, tenantId, body.sessionId, path, { headers });
+    if (!response.ok) return json(env, { error: "call_auth_failed" }, response.status);
+    const data = (await response.json()) as {
+      call: ReturnType<typeof import("./call").publicCall>;
+      nonce?: string;
+      handoffState?: HandoffState;
+      visitorRequestReady?: boolean;
+    };
+    return json(env, {
+      available:
+        !!callSettings?.enabled ||
+        data.call?.status === "accepted" ||
+        data.call?.status === "ringing",
+      call: data.call,
+      ...(actor === "visitor"
+        ? {
+            nonce: data.nonce,
+            availableToRequest:
+              !!callSettings?.enabled &&
+              !!callSettings.visitorRequestsEnabled &&
+              data.visitorRequestReady === true &&
+              (callSettings.visitorRequestTrigger === "always" ||
+                data.handoffState === "pending" ||
+                data.handoffState === "operator"),
+          }
+        : {}),
+    });
+  }
+  const response = await doFetch(env, tenantId, body.sessionId, path, {
+    method: "POST",
+    headers: {
+      ...headers,
+      "content-type": "application/json",
+      ...(actor === "visitor" && body.action === "invite"
+        ? { "x-call-request-trigger": callSettings?.visitorRequestTrigger ?? "after_handoff" }
+        : {}),
+    },
+    body: JSON.stringify({ action: body.action, id: body.id, nonce: body.nonce }),
+  });
+  const result = (await response.json()) as {
+    call?: ReturnType<typeof import("./call").publicCall>;
+    room?: string;
+    error?: string;
+    nonce?: string;
+    changed?: boolean;
+  };
+  if (!response.ok) return json(env, { error: result.error || "call_failed" }, response.status);
+  if (
+    actor === "visitor" &&
+    body.action === "invite" &&
+    result.changed &&
+    callSettings?.notifyOnVisitorRequest !== false
+  ) {
+    const push = pushToApp(
+      env,
+      tenantId,
+      body.sessionId,
+      "Open the conversation to respond.",
+      fetch,
+      {
+        kind: "call_request",
+        callId: result.call!.id,
+        expiresAt: result.call!.expiresAt,
+      },
+    );
+    if (ctx) ctx.waitUntil(push);
+    else await push;
+  }
+  return json(env, {
+    call: result.call,
+    ...(actor === "visitor" && body.action === "invite" ? { nonce: result.nonce } : {}),
+  });
+}
+
+async function handleChat(
+  request: Request,
+  env: Env,
+  executionCtx?: WaitUntilContext,
+): Promise<Response> {
+  const startedAt = performance.now();
   const body = (await request.json().catch(() => null)) as {
     sessionId?: string;
     message?: string;
     tenantId?: string;
     siteId?: string;
     history?: ChatMessage[];
+    visitorSecret?: string;
   } | null;
   if (!body?.sessionId || !body.message?.trim()) {
     return json(env, { error: "sessionId and message required" }, 400);
@@ -276,6 +519,20 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
   if (!withinPlan(await getUsage(env, tenantId), ent.plan_limits)) {
     return json(env, { error: "usage_limit_reached", plan: ent.plan }, 429);
   }
+  // First chat binds a separate random visitor capability to this session. The
+  // operator can see the session ID, but never this secret or invitation nonce.
+  if (body.visitorSecret && /^[A-Za-z0-9_-]{43}$/.test(body.visitorSecret)) {
+    await doFetch(env, tenantId, body.sessionId, "https://do/call/visitor/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ secret: body.visitorSecret }),
+    });
+  }
+  // Index only after entitlement and usage gates succeed. This dedicated namespace
+  // cannot overwrite the legacy Telegram session→thread map.
+  const indexPromise = indexConversationSession(env, tenantId, body.sessionId);
+  if (executionCtx) executionCtx.waitUntil(indexPromise);
+  else await indexPromise;
 
   const tenant = await getTenant(env, tenantId, siteId);
 
@@ -284,23 +541,44 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
   // now comes from the server-side ring instead of the client's claim. GUARDED:
   // timeout + any failure falls back to the client-sent history exactly as before
   // (warn-logged so drift is observable); a slow DO never slows chat down.
-  let ctx: { handedOff: boolean; messages: RingMsg[] } | null = null;
+  let ctx: { handoffState: HandoffState; handedOff: boolean; messages: RingMsg[] } | null = null;
   try {
     // POST (not GET) so the DO can persist tenantId+siteId write-once — the relearning
     // handback fires from an alarm with no request in flight and the DO can't derive them
-    // from its own name. Still returns { handedOff, messages } — same single subrequest.
+    // from its own name. Returns state + messages in the same single subrequest.
     const r = await doFetch(env, tenantId, body.sessionId, "https://do/context", {
       method: "POST",
       body: JSON.stringify({ tenantId, siteId }),
       signal: AbortSignal.timeout(RING_READ_TIMEOUT_MS),
     });
-    ctx = (await r.json()) as { handedOff: boolean; messages: RingMsg[] };
+    const raw = (await r.json()) as {
+      handoffState?: HandoffState;
+      handedOff: boolean;
+      messages: RingMsg[];
+    };
+    ctx = {
+      ...raw,
+      // Rolling-upgrade compatibility for a response from the old DO shape.
+      handoffState: raw.handoffState ?? (raw.handedOff ? "operator" : "ai"),
+    };
   } catch (e) {
     console.warn("ring context read failed — falling back to client history:", e);
   }
   // Client history is a SEED only: used when the ring is empty (first message of a
   // legacy session) or when the ring read failed (fallback path above).
   const history = ctx?.messages.length ? ringToHistory(ctx.messages) : clientHistory;
+
+  // Stage timings contain no visitor text or credentials. Preview can log them to
+  // distinguish retrieval/inference from KV and DO work when a reply stalls.
+  const flowStartedAt = performance.now();
+  let aiMs = 0;
+  let meterMs = 0;
+  const aiRunner = knowledgeGatewayRunner(
+    configuredAiRunner(env, tenantId, siteId, tenant?.model || env.AI_MODEL),
+    env,
+    tenantId,
+    siteId,
+  );
 
   // Telegram is optional: no config → topic ops no-op, chat still answers.
   const result = await chatFlow(
@@ -311,43 +589,62 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
         tenant?.persona,
         tenant?.kbSources,
       ),
-      // Leak-check scope = the INSTRUCTION portion only (same prompt WITHOUT the injected
-      // knowledge block), so a bot quoting its own kbSources verbatim isn't flagged as a
-      // prompt leak. Undefined when there's no knowledge (chatFlow falls back to systemPrompt,
-      // which is then identical) — avoids the extra build on the common no-KB path.
-      leakScope: tenant?.kbSources?.length
-        ? buildSystemPrompt(tenant?.systemPrompt, tenant?.forms, tenant?.persona)
-        : undefined,
+      // Leak-check only the control/security instructions. The onboarding prompt can
+      // also contain business facts, and quoting those is a correct answer, not a leak.
+      leakScope: buildPromptLeakScope(tenant?.forms, tenant?.persona),
       // Ring-derived (or seed) history in; chatFlow applies the sliding window +
       // counts turns (chokepoint).
       history,
       maxHistoryMsgs: numEnv(env.MAX_HISTORY_MSGS),
       maxAiTurns: numEnv(env.MAX_AI_TURNS),
-      ai: workersAiRunner(env, tenant?.model || env.AI_MODEL),
-      meter: (kind) => meter(env, tenantId, kind),
+      ai: async (messages) => {
+        const start = performance.now();
+        try {
+          return await aiRunner(messages);
+        } finally {
+          aiMs += performance.now() - start;
+        }
+      },
+      meter: async (kind) => {
+        const start = performance.now();
+        try {
+          await meter(env, tenantId, kind);
+        } finally {
+          meterMs += performance.now() - start;
+        }
+      },
       // Real per-turn usage → monthly counters (total + in/out split) AND a structured
       // log line (model + counts + estimated flag) for cost analytics via Logpush/tail.
       meterTokens: async (usage) => {
-        await meterUsage(env, tenantId, usage);
-        console.log(
-          "chat_usage",
-          JSON.stringify({
-            tenant: tenantId,
-            model: tenant?.model || env.AI_MODEL || DEFAULT_MODEL,
-            promptTokens: usage.promptTokens,
-            completionTokens: usage.completionTokens,
-            estimated: usage.estimated,
-          }),
-        );
+        const start = performance.now();
+        try {
+          await meterUsage(env, tenantId, usage);
+          console.log(
+            "chat_usage",
+            JSON.stringify({
+              tenant: tenantId,
+              model: tenant?.model || env.AI_MODEL || DEFAULT_MODEL,
+              promptTokens: usage.promptTokens,
+              completionTokens: usage.completionTokens,
+              estimated: usage.estimated,
+            }),
+          );
+        } finally {
+          meterMs += performance.now() - start;
+        }
       },
-      isHandedOff: ctx
-        ? async () => ctx.handedOff // already read in the combined /context fetch
+      getHandoffState: ctx
+        ? async () => ctx.handoffState // already read in the combined /context fetch
         : async (sessionId) => {
             const r = await doFetch(env, tenantId, sessionId, "https://do/state");
-            return ((await r.json()) as { handedOff: boolean }).handedOff;
+            const state = (await r.json()) as {
+              handoffState?: HandoffState;
+              handedOff: boolean;
+            };
+            return state.handoffState ?? (state.handedOff ? "operator" : "ai");
           },
       ensureTopic: async (sessionId, firstMessage) => {
-        if (!tenant) return 0;
+        if (!hasTelegramConfig(tenant)) return 0;
         const existing = await getThreadForSession(env, tenantId, sessionId);
         if (existing) return existing;
         const name = `${firstMessage.slice(0, 40)} · ${sessionId.slice(0, 6)}`;
@@ -356,22 +653,21 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
         return threadId;
       },
       toTopic: async (threadId, text) => {
-        if (tenant && threadId) await sendToTopic(tenant.botToken, tenant.chatId, threadId, text);
+        if (hasTelegramConfig(tenant) && threadId)
+          await sendToTopic(tenant.botToken, tenant.chatId, threadId, text);
       },
     },
     { sessionId: body.sessionId, message },
   );
+  const flowEndedAt = performance.now();
 
   // Mirror the turn into the session's ring buffer (operator-app inbox preview +
   // thread read) — best-effort, same posture as the Telegram mirror. On handoff,
   // seed the ring from the widget's re-sent history FIRST (the DO no-ops the seed
   // unless the ring is still empty), so pre-ring turns aren't lost.
+  const ringStartedAt = performance.now();
   {
-    const seed = result.handoff
-      ? (clientHistory ?? [])
-          .filter((m) => (m.role === "user" || m.role === "assistant") && m.content)
-          .map((m) => ({ role: m.role === "user" ? "visitor" : "ai", text: m.content }))
-      : [];
+    const seed = result.handoff ? historySeed(clientHistory, message) : [];
     const turn: { role: "visitor" | "ai"; text: string }[] = [{ role: "visitor", text: message }];
     if (result.reply) turn.push({ role: "ai", text: result.reply });
     if (seed.length) {
@@ -385,28 +681,43 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
       body: JSON.stringify({ messages: turn }),
     }).catch((e) => console.error("ring mirror failed (best-effort):", e));
   }
+  const ringEndedAt = performance.now();
 
   // If the AI escalated, nudge the visitor's browser to open contact capture AND fire
   // the ONE loud handoff alert into the topic — @mentioning the tenant's operators so a
   // human's phone buzzes (routine mirrors above are all silent). No operators known yet →
   // the alert still posts, just without a mention (fallback path).
   if (result.handoff) {
+    // Discovery must exist before the strongly-consistent state can become pending.
+    // This key is independent of Telegram, so a later topic link cannot race it.
+    await indexHandoffSession(env, tenantId, body.sessionId);
     // The DO's /handoff is idempotent per escalation: `announced` is true only the FIRST
     // time, so a jailbroken bot re-emitting [!HANDOFF] every turn can't spam the loud
-    // operator alert + push. Fail-open (default announced) if the DO read fails — a real
-    // handoff must never be silently dropped. handBack resets the flag for a later one.
+    // operator alert + push. The transition is required: never claim notification when
+    // the DO rejected it or returned a malformed acknowledgement.
     const hr = await doFetch(env, tenantId, body.sessionId, "https://do/handoff", {
       method: "POST",
     });
-    const { announced = true } = (await hr.json().catch(() => ({ announced: true }))) as {
+    if (!hr.ok) throw new Error(`handoff state transition failed (${hr.status})`);
+    const handoffAck = (await hr.json().catch(() => null)) as {
+      ok?: boolean;
       announced?: boolean;
-    };
+      handoffState?: HandoffState;
+    } | null;
+    if (
+      handoffAck?.ok !== true ||
+      typeof handoffAck.announced !== "boolean" ||
+      (handoffAck.handoffState !== "pending" && handoffAck.handoffState !== "operator")
+    ) {
+      throw new Error("handoff state transition returned an invalid acknowledgement");
+    }
+    const { announced } = handoffAck;
     if (announced) {
       // Wake the Buttr operator app — the push channel parallel to the Telegram alert.
       // Deliberately OUTSIDE the tenant/Telegram guard (an app-only tenant has no
       // Telegram config) and failure-tolerant by contract (push.ts never throws).
       await pushToApp(env, tenantId, body.sessionId, message);
-      if (tenant) {
+      if (hasTelegramConfig(tenant)) {
         const threadId = await getThreadForSession(env, tenantId, body.sessionId);
         if (threadId) {
           // 'app' operators get the push above — skip them here so they aren't
@@ -441,6 +752,23 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
       result.form = null;
     }
   }
+  if (env.CHAT_TIMING_DEBUG === "1") {
+    const endedAt = performance.now();
+    console.log(
+      "chat_timing",
+      JSON.stringify({
+        tenant: tenantId,
+        model: tenant?.model || env.AI_MODEL || DEFAULT_MODEL,
+        preFlowMs: Math.round(flowStartedAt - startedAt),
+        aiMs: Math.round(aiMs),
+        meterMs: Math.round(meterMs),
+        flowOtherMs: Math.round(flowEndedAt - flowStartedAt - aiMs - meterMs),
+        ringMs: Math.round(ringEndedAt - ringStartedAt),
+        postRingMs: Math.round(endedAt - ringEndedAt),
+        totalMs: Math.round(endedAt - startedAt),
+      }),
+    );
+  }
   return json(env, result);
 }
 
@@ -452,13 +780,9 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
  * had to describe it in words, which is exactly what they were already failing to
  * do when they reached for the chat.
  *
- * TELEGRAM IS THE STORE, and that is a deliberate choice over adding R2. Krispy's
- * Worker binds AI, Durable Objects and KV and nothing else; an object store would
- * be a new binding every self-hoster has to provision before the feature works at
- * all. Telegram already keeps the file, already renders it in the operator's
- * thread, and is already required — getTenant() returns null without both Telegram
- * secrets. So the image goes where the person who needs to see it already is, and
- * this ships to every existing deployment with no config change.
+ * TELEGRAM IS THE STORE for attachments, and that is a deliberate choice over adding
+ * R2. App-only Cloud tenants can chat and hand off through Buttr, but screenshot
+ * upload remains unavailable until a separate attachment store lands.
  *
  * The trade, stated plainly: the image is NOT in the visitor's transcript across a
  * reload (the widget shows it from a local object URL for the life of the page),
@@ -523,7 +847,7 @@ async function handleAttachment(request: Request, env: Env): Promise<Response> {
     return json(env, { error: "unsupported_type", allowed: Object.keys(ATTACH_TYPES) }, 415);
 
   const tenant = await getTenant(env, tenantId, siteId);
-  if (!tenant) return json(env, { error: "attachments_unavailable" }, 503);
+  if (!hasTelegramConfig(tenant)) return json(env, { error: "attachments_unavailable" }, 503);
 
   // NO TOPIC, NO UPLOAD. The topic is created by the first chat message, so this
   // can only ever add to a conversation the visitor already started — it cannot
@@ -602,7 +926,7 @@ async function handleLead(request: Request, env: Env): Promise<Response> {
   if (siteId instanceof Response) return siteId;
   if (!(await checkLeadRate(env, tenantId, b.sessionId)))
     return json(env, { error: "rate_limited" }, 429);
-  await deliverLead(env, {
+  const delivered = await deliverLead(env, {
     tenantId,
     siteId,
     sessionId: b.sessionId,
@@ -610,6 +934,7 @@ async function handleLead(request: Request, env: Env): Promise<Response> {
     values: b.values || {},
     history: Array.isArray(b.history) ? b.history : [],
   });
+  if (!delivered) return json(env, { error: "delivery_failed" }, 502);
   return json(env, { ok: true });
 }
 
@@ -619,7 +944,7 @@ async function handleLead(request: Request, env: Env): Promise<Response> {
  *   • Email    — Resend, silent no-op without a key (email.ts)
  * whatsapp/instagram connectors are never delivered here (CTA-only in the widget).
  */
-export async function deliverLead(env: Env, lead: LeadPayload): Promise<void> {
+export async function deliverLead(env: Env, lead: LeadPayload): Promise<boolean> {
   const tenant = await getTenant(env, lead.tenantId, lead.siteId);
   const form = tenant?.forms?.find((f) => f.id === lead.formId) ?? null;
   const connectors = tenant?.connectors ?? [];
@@ -629,7 +954,7 @@ export async function deliverLead(env: Env, lead: LeadPayload): Promise<void> {
     : connectors;
 
   // Telegram delivery — drop the values into the visitor's topic.
-  if (tenant) {
+  if (hasTelegramConfig(tenant)) {
     const threadId = await getThreadForSession(env, lead.tenantId, lead.sessionId);
     if (threadId) {
       const lines = Object.entries(lead.values)
@@ -650,10 +975,17 @@ export async function deliverLead(env: Env, lead: LeadPayload): Promise<void> {
   // rely on Telegram only).
   const waPhone = targets.find((c) => c.type === "whatsapp")?.phone;
   const emailTargets = targets.filter((c) => c.type === "email" && c.toAddress);
+  let emailDelivered = false;
   for (const c of emailTargets) {
     const mail = renderLeadEmail(form, lead.values, lead.history, waPhone);
-    await sendLeadEmail(env.RESEND_API_KEY, env.LEAD_EMAIL_FROM, c.toAddress, mail);
+    emailDelivered =
+      (await sendLeadEmail(env.RESEND_API_KEY, env.LEAD_EMAIL_FROM, c.toAddress, mail)) ||
+      emailDelivered;
   }
+  // A configured form must have a confirmed delivery route before its widget may
+  // show a success state. Legacy contact capture and self-hosts without forms keep
+  // their existing best-effort behavior.
+  return !form || !emailTargets.length || emailDelivered;
 }
 
 // ── POST /api/telegram/webhook ─────────────────────────────────────────────
@@ -683,8 +1015,8 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
       });
     }
     // "/done" (or "resolved") in the topic = the operator is finished → resolve the
-    // session AND hand it back to the AI (the DO clears handedOff + broadcasts
-    // {type:"resume"}). Force-set (not toggle) so a repeat /done can't un-resolve.
+    // session AND hand it back to the AI (the DO restores ai + broadcasts resume).
+    // Force-set (not toggle) so a repeat /done can't un-resolve.
     // The command is documented in the handoff alert (see sendHandoffAlert call).
     const cmd = reply.text.toLowerCase();
     if (cmd === "/done" || cmd === "resolved") {
@@ -693,7 +1025,7 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
         body: JSON.stringify({ resolved: true }),
       });
       const tenant = await getTenant(env, tenantId);
-      if (tenant) {
+      if (hasTelegramConfig(tenant)) {
         await sendToTopic(
           tenant.botToken,
           tenant.chatId,
@@ -725,8 +1057,107 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
 // numeric id; the app has none). Per-operator ids when the app grows multi-operator auth.
 const APP_OPERATOR_ID = 0;
 
+/** Resolve a session's authoritative site before reading any configured action. */
+async function operatorSessionSite(
+  env: Env,
+  tenantId: string,
+  sessionId: string,
+  claimedSiteId?: string,
+): Promise<string | Response> {
+  const identity = await doFetch(env, tenantId, sessionId, "https://do/identity");
+  const stored = (await identity.json()) as { tenantId: string | null; siteId: string };
+  if (stored.tenantId !== tenantId) return json(env, { error: "session_not_found" }, 404);
+  if (claimedSiteId && claimedSiteId !== stored.siteId)
+    return json(env, { error: "site_mismatch" }, 403);
+  return stored.siteId;
+}
+
+function operatorActionCatalog(config: TenantConfig | null) {
+  return {
+    forms: (config?.forms ?? [])
+      .filter((form) => form.id && Array.isArray(form.fields))
+      .map((form) => ({ id: form.id, title: form.title })),
+    connectors: publicWidgetConfig(config).ctas.filter(
+      (cta) => cta.type === "instagram" && cta.url?.startsWith("https://"),
+    ),
+  };
+}
+
+// Both routes require a real session. The DO's identity was written on its first
+// visitor chat turn; the supplied site is only an optional assertion against it.
+async function operatorActionContext(request: Request, env: Env) {
+  const body = (await request.json().catch(() => null)) as {
+    tenantId?: string;
+    sessionId?: string;
+    siteId?: string;
+    kind?: "form" | "instagram";
+    id?: string;
+  } | null;
+  if (!body?.tenantId || !body.sessionId)
+    return { error: json(env, { error: "tenantId and sessionId required" }, 400) };
+  const siteId = siteOr400(env, body.siteId);
+  if (siteId instanceof Response) return { error: siteId };
+  const denied = await authorizeOperator(request, env, body.tenantId);
+  if (denied) return { error: json(env, { error: denied.error }, denied.status) };
+  const actualSite = await operatorSessionSite(env, body.tenantId, body.sessionId, siteId);
+  if (actualSite instanceof Response) return { error: actualSite };
+  const config = await readTenantConfig(env, body.tenantId, actualSite);
+  return { body, config, actualSite };
+}
+
+async function handleOperatorActions(request: Request, env: Env): Promise<Response> {
+  const context = await operatorActionContext(request, env);
+  if (context.error) return context.error;
+  return json(env, operatorActionCatalog(context.config));
+}
+
+async function handleOperatorSendAction(request: Request, env: Env): Promise<Response> {
+  const context = await operatorActionContext(request, env);
+  if (context.error) return context.error;
+  const { body, config } = context;
+  if (!body?.id || (body.kind !== "form" && body.kind !== "instagram"))
+    return json(env, { error: "kind and id required" }, 400);
+  const catalog = operatorActionCatalog(config);
+  let action: OperatorAction;
+  if (body.kind === "form") {
+    const configured = config?.forms?.find((form) => form.id === body.id);
+    if (!configured || !catalog.forms.some((form) => form.id === body.id))
+      return json(env, { error: "action_not_found" }, 404);
+    action = {
+      kind: "form",
+      form: {
+        id: configured.id,
+        title: configured.title,
+        fields: configured.fields,
+        successText: configured.successText,
+      },
+    };
+  } else {
+    const configured = catalog.connectors.find((connector) => connector.id === body.id);
+    if (!configured?.url) return json(env, { error: "action_not_found" }, 404);
+    action = {
+      kind: "instagram",
+      connector: {
+        id: configured.id,
+        type: "instagram",
+        label: configured.label ?? "DM us on Instagram",
+        caption: configured.caption,
+        url: configured.url,
+      },
+    };
+  }
+  const response = await doFetch(env, body.tenantId!, body.sessionId!, "https://do/action", {
+    method: "POST",
+    body: JSON.stringify({ action }),
+  });
+  const { delivered } = (await response.json()) as { delivered: number };
+  await meter(env, body.tenantId!, "handoff");
+  return json(env, { ok: true, delivered, action });
+}
+
 // POST /api/operator/reply { tenantId, sessionId, text, operatorName? }
-// → visitor's widget receives { type: "operator", text } over its existing WS.
+// → visitor's widget receives { type: "operator", handoffState: "operator", text }
+// over its existing WS.
 async function handleOperatorReply(request: Request, env: Env): Promise<Response> {
   const b = (await request.json().catch(() => null)) as {
     tenantId?: string;
@@ -753,42 +1184,72 @@ async function handleOperatorReply(request: Request, env: Env): Promise<Response
   return json(env, { ok: true, delivered: true });
 }
 
-// POST /api/operator/handoffs { tenantId, includeResolved? } → the operator app's
-// inbox. Resolved sessions are EXCLUDED by default (inbox hygiene); pass
-// { includeResolved: true } to list them too (each row carries `resolved`).
-// No dedicated handoff index exists — the session→thread KV map doubles as the
-// session index; each session's DO answers one /summary (handoff flag + ring tail).
-// ponytail: first KV page only (1000 sessions) + one DO subrequest per session —
-// fine for an operator inbox; add a real handoff index if a tenant outgrows it.
+// POST /api/operator/handoffs { tenantId, includeResolved?, includeActive? } → the
+// operator app's inbox. includeActive also lists unresolved AI-only conversations;
+// push notifications remain reserved for real handoffs.
+// New handoffs use their own Telegram-independent KV index. Union the legacy
+// session→thread keys so already-deployed conversations remain visible, then ask
+// each distinct session's DO for one /summary (handoff state + ring tail).
+// ponytail: first KV page for each prefix (up to 2000 distinct sessions) + one DO
+// subrequest per session — move to a paginated index if a tenant outgrows it.
 async function handleOperatorHandoffs(request: Request, env: Env): Promise<Response> {
   const b = (await request.json().catch(() => null)) as {
     tenantId?: string;
     includeResolved?: boolean;
+    includeActive?: boolean;
   } | null;
   if (!b?.tenantId) return json(env, { error: "tenantId required" }, 400);
   const denied = await authorizeOperator(request, env, b.tenantId);
   if (denied) return json(env, { error: denied.error }, denied.status);
   const tenantId = b.tenantId;
   const includeResolved = b.includeResolved === true;
-  const prefix = `session:${tenantId}:`;
-  const list = await env.KRISPY_KV.list({ prefix });
+  const includeActive = b.includeActive === true;
+  const conversationPrefix = `conversation:${encodeURIComponent(tenantId)}:`;
+  const handoffPrefix = `handoff:${tenantId}:`;
+  const legacyPrefix = `session:${tenantId}:`;
+  const [conversationList, handoffList, legacyList] = await Promise.all([
+    env.KRISPY_KV.list({ prefix: conversationPrefix }),
+    env.KRISPY_KV.list({ prefix: handoffPrefix }),
+    env.KRISPY_KV.list({ prefix: legacyPrefix }),
+  ]);
+  const sessionIds = [
+    ...new Set([
+      ...(includeActive
+        ? conversationList.keys.map(({ name }) =>
+            decodeURIComponent(name.slice(conversationPrefix.length)),
+          )
+        : []),
+      ...handoffList.keys.map(({ name }) => name.slice(handoffPrefix.length)),
+      ...legacyList.keys.map(({ name }) => name.slice(legacyPrefix.length)),
+    ]),
+  ];
   const rows = await Promise.all(
-    list.keys.map(async ({ name }) => {
-      const sessionId = name.slice(prefix.length);
+    sessionIds.map(async (sessionId) => {
       const r = await doFetch(env, tenantId, sessionId, "https://do/summary");
       const s = (await r.json()) as {
+        handoffState?: HandoffState;
         handedOff: boolean;
         resolved?: boolean;
         lastMessage: string | null;
         ts: number | null;
+        siteId?: string;
       };
+      const handoffState = s.handoffState ?? (s.handedOff ? "operator" : "ai");
       const resolved = s.resolved === true;
-      // Default inbox = handed-off & unresolved. Resolving hands the session back to
-      // the AI (handedOff flips false), so resolved rows are listed by their resolved
+      // Default inbox = waiting/operator & unresolved. Resolving hands the session back to
+      // the AI, so resolved rows are listed by their resolved
       // flag instead — includeResolved keeps the app's history/undo-swipe view alive.
-      const listed = resolved ? includeResolved : s.handedOff;
+      const listed = resolved ? includeResolved : includeActive || handoffState !== "ai";
       return listed
-        ? { sessionId, lastMessage: s.lastMessage, handedOff: s.handedOff, ts: s.ts, resolved }
+        ? {
+            sessionId,
+            lastMessage: s.lastMessage,
+            handoffState,
+            handedOff: s.handedOff,
+            ts: s.ts,
+            siteId: s.siteId ?? "default",
+            resolved,
+          }
         : null;
     }),
   );
@@ -817,7 +1278,7 @@ async function handleOperatorThread(request: Request, env: Env): Promise<Respons
 
 // POST /api/operator/resolve { tenantId, sessionId } → toggle the session's
 // resolved flag in its DO. Resolving ALSO hands the session back to the AI
-// (handedOff=false + {type:"resume"} — the DO owns that). Resolved sessions drop
+// (`handoffState=ai` + resume — the DO owns that). Resolved sessions drop
 // out of the default inbox; a new live visitor message un-resolves them WITHOUT
 // re-handing-off (the DO handles both on ring-append).
 async function handleOperatorResolve(request: Request, env: Env): Promise<Response> {
@@ -903,10 +1364,27 @@ const AVATAR_SCHEME = /^(https:\/\/|data:image\/(png|webp|jpeg);base64,)/;
 function tenantConfigCapError(
   cfg: Partial<TenantConfig>,
 ): { error: string; status: number } | null {
+  if (cfg.callSettings !== undefined) {
+    const settings = cfg.callSettings;
+    if (
+      !settings ||
+      typeof settings !== "object" ||
+      Array.isArray(settings) ||
+      (settings.enabled !== undefined && typeof settings.enabled !== "boolean") ||
+      (settings.visitorRequestsEnabled !== undefined &&
+        typeof settings.visitorRequestsEnabled !== "boolean") ||
+      (settings.notifyOnVisitorRequest !== undefined &&
+        typeof settings.notifyOnVisitorRequest !== "boolean") ||
+      (settings.visitorRequestTrigger !== undefined &&
+        settings.visitorRequestTrigger !== "after_handoff" &&
+        settings.visitorRequestTrigger !== "always")
+    )
+      return { error: "invalid_call_settings", status: 400 };
+  }
   const avatar = cfg.theme?.avatar;
   if (avatar !== undefined) {
     if (avatar.length > AVATAR_MAX_CHARS) return { error: "avatar_too_large", status: 413 };
-    if (avatar !== "buttr" && !AVATAR_SCHEME.test(avatar))
+    if (avatar !== "buttr" && avatar !== "none" && !AVATAR_SCHEME.test(avatar))
       return { error: "avatar_scheme_invalid", status: 400 };
   }
   // Free-text theme strings render verbatim in the public widget — bound them so a
@@ -1057,10 +1535,17 @@ async function handleWidgetConfig(request: Request, env: Env): Promise<Response>
   // Free heartbeat: this fetch fires on every page load, so stamp the site's
   // last-seen record (throttled in-isolate, best-effort — never blocks the boot).
   await stampSeen(env, t, request, siteId);
-  // Short public cache — the boot config (now up to ~10–30KB with a data-URI avatar)
-  // is otherwise refetched uncached on every page load. 60s keeps edits near-live.
-  return Response.json(publicWidgetConfig(cfg), {
-    headers: { ...cors(env), "Cache-Control": "public, max-age=60" },
+  // Browsers may store this public projection, but every widget boot must revalidate it:
+  // tenant branding and forms can change while a Safari tab remains warm. Revalidation
+  // avoids stale config without creating an unbounded set of cache-buster URLs.
+  const capabilities = {
+    attachments:
+      t === DEFAULT_TENANT
+        ? !!env.TELEGRAM_BOT_TOKEN && !!env.TELEGRAM_CHAT_ID
+        : !!cfg?.botToken && !!cfg.chatId,
+  };
+  return Response.json(publicWidgetConfig(cfg, capabilities), {
+    headers: { ...cors(env), "Cache-Control": "public, max-age=0, must-revalidate" },
   });
 }
 

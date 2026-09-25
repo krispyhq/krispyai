@@ -7,7 +7,7 @@
 //   degrade to a human handoff rather than dropping the visitor.
 import type { ChatMessage, AiResult, TokenUsage } from "./ai";
 import { parseHandoff, parseForm, detectPromptLeak } from "./system-prompt";
-import type { FormSpec } from "./types";
+import type { FormSpec, HandoffState } from "./types";
 
 export const FALLBACK_REPLY = "Thanks — a teammate will jump in here shortly.";
 
@@ -32,8 +32,8 @@ export interface ChatDeps {
   ensureTopic: (sessionId: string, firstMessage: string) => Promise<number>;
   /** Post text into the owner's topic (no-op when Telegram off). */
   toTopic: (threadId: number, text: string) => Promise<void>;
-  /** True if an operator has already taken over this session (bot must stay silent). */
-  isHandedOff: (sessionId: string) => Promise<boolean>;
+  /** Who owns the next reply. Pending and operator states both keep the bot silent. */
+  getHandoffState: (sessionId: string) => Promise<HandoffState>;
   /** Run the AI. May throw → graceful degradation. */
   ai: (messages: ChatMessage[]) => Promise<AiResult>;
   /** Increment a usage counter. */
@@ -66,6 +66,8 @@ export interface ChatResult {
   handoff: boolean;
   /** An operator already owns this session. */
   handedOff: boolean;
+  /** `pending` means a human was notified but has not replied yet. */
+  handoffState: HandoffState;
   /** AI was unavailable and we fell back to a human. */
   degraded?: boolean;
   /** The model asked to raise this lead form (id parsed from [!FORM:<id>]). */
@@ -98,8 +100,14 @@ export async function chatFlow(deps: ChatDeps, input: ChatInput): Promise<ChatRe
   // Owner always sees the visitor's message, even after handoff.
   await toTopic(threadId, `👤 ${input.message}`);
 
-  if (await deps.isHandedOff(input.sessionId)) {
-    return { reply: null, handoff: false, handedOff: true };
+  const handoffState = await deps.getHandoffState(input.sessionId);
+  if (handoffState !== "ai") {
+    return {
+      reply: null,
+      handoff: false,
+      handedOff: handoffState === "operator",
+      handoffState,
+    };
   }
 
   const history = deps.history ?? [];
@@ -110,7 +118,7 @@ export async function chatFlow(deps: ChatDeps, input: ChatInput): Promise<ChatRe
   if (aiTurns >= (deps.maxAiTurns ?? MAX_AI_TURNS)) {
     await deps.meter("handoff");
     await toTopic(threadId, "🙋 Long chat with no resolution — bringing in a human.");
-    return { reply: FALLBACK_REPLY, handoff: true, handedOff: false };
+    return { reply: FALLBACK_REPLY, handoff: true, handedOff: false, handoffState: "pending" };
   }
 
   // Sliding window: cap the prior turns the AI sees; system + latest user added on top.
@@ -137,12 +145,22 @@ export async function chatFlow(deps: ChatDeps, input: ChatInput): Promise<ChatRe
   } catch {
     // AI down — keep the loop alive by routing to a human.
     await toTopic(threadId, "⚠️ AI unavailable — visitor is waiting for you.");
-    return { reply: FALLBACK_REPLY, handoff: true, handedOff: false, degraded: true };
+    return {
+      reply: FALLBACK_REPLY,
+      handoff: true,
+      handedOff: false,
+      handoffState: "pending",
+      degraded: true,
+    };
   }
 
   const { text, handoff } = parseHandoff(raw);
   // Orthogonal form marker — parsed off the already-handoff-stripped text.
-  const { text: clean, formId } = parseForm(text);
+  const parsed = parseForm(text);
+  // A bare control-only response still needs a visitor-facing acknowledgement;
+  // never return an empty bubble while the handoff is pending.
+  const clean = parsed.text || (handoff ? FALLBACK_REPLY : parsed.text);
+  const { formId } = parsed;
 
   // Output guardrail: a jailbroken model can leak its system prompt or re-emit control
   // tokens despite SECURITY_INSTRUCTION. Deterministic, zero-latency catch on the
@@ -152,7 +170,7 @@ export async function chatFlow(deps: ChatDeps, input: ChatInput): Promise<ChatRe
     console.warn("prompt_leak_suppressed");
     await deps.meter("handoff");
     await toTopic(threadId, "🛡️ Suppressed a suspected prompt-leak — bringing in a human.");
-    return { reply: FALLBACK_REPLY, handoff: true, handedOff: false };
+    return { reply: FALLBACK_REPLY, handoff: true, handedOff: false, handoffState: "pending" };
   }
 
   if (handoff) {
@@ -160,5 +178,11 @@ export async function chatFlow(deps: ChatDeps, input: ChatInput): Promise<ChatRe
     await toTopic(threadId, "🙋 AI asked for a human here.");
   }
   await toTopic(threadId, `🤖 ${clean}`);
-  return { reply: clean, handoff, handedOff: false, formId };
+  return {
+    reply: clean,
+    handoff,
+    handedOff: false,
+    handoffState: handoff ? "pending" : "ai",
+    formId,
+  };
 }

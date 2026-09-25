@@ -10,7 +10,7 @@ import {
   BREVITY_INSTRUCTION,
 } from "../src/system-prompt";
 import { renderLeadEmail, sendLeadEmail } from "../src/email";
-import { deliverLead, ringToHistory, RING_HISTORY_MAX } from "../src/index";
+import { deliverLead, historySeed, ringToHistory, RING_HISTORY_MAX } from "../src/index";
 import { parseOwnerReply, sendToTopic, buildMentions, sendHandoffAlert } from "../src/telegram";
 import {
   broadcast,
@@ -27,7 +27,12 @@ import {
   _authCache,
   AUTH_CACHE_TTL_MS,
 } from "../src/operator-auth";
-import { workersAiRunner, MAX_OUTPUT_TOKENS, type ChatMessage } from "../src/ai";
+import {
+  FAST_MULTILINGUAL_MODEL,
+  workersAiRunner,
+  MAX_OUTPUT_TOKENS,
+  type ChatMessage,
+} from "../src/ai";
 import {
   chatFlow,
   FALLBACK_REPLY,
@@ -38,6 +43,7 @@ import {
 import {
   kThreadToSession,
   kSessionToThread,
+  kHandoffSession,
   kUsage,
   monthKey,
   meter,
@@ -46,6 +52,9 @@ import {
   getUsageDetail,
   getTokens,
   getThreadForSession,
+  getSessionForThread,
+  indexHandoffSession,
+  indexConversationSession,
   linkThreadSession,
   getTenant,
   withinPlan,
@@ -82,6 +91,17 @@ function fakeEnv(extra: Partial<Env> = {}): Env {
     },
     ...extra,
   } as unknown as Env;
+}
+
+async function rejection(promise: Promise<unknown>): Promise<Error> {
+  let caught: unknown;
+  try {
+    await promise;
+  } catch (error) {
+    caught = error;
+  }
+  if (!(caught instanceof Error)) throw new Error("Expected the promise to reject");
+  return caught;
 }
 
 // ── a Map-backed fake DurableObjectState (storage only; sockets are no-ops) ──
@@ -133,6 +153,40 @@ describe("parseHandoff", () => {
     expect(r.handoff).toBe(true);
     expect(r.text).toBe("Let me get someone.");
     expect(r.text).not.toContain("[!HANDOFF]");
+  });
+  test("bare terminal marker → compatibility handoff", () => {
+    expect(parseHandoff("I will connect you with a teammate. !HANDOFF")).toEqual({
+      text: "I will connect you with a teammate.",
+      handoff: true,
+    });
+  });
+  test("bare marker is not recognized in ordinary prose or quotes", () => {
+    expect(parseHandoff("The customer typed !HANDOFF")).toEqual({
+      text: "The customer typed !HANDOFF",
+      handoff: false,
+    });
+    expect(parseHandoff('The token "!HANDOFF" is reserved.')).toEqual({
+      text: 'The token "!HANDOFF" is reserved.',
+      handoff: false,
+    });
+    expect(parseHandoff("The token `!HANDOFF` is reserved.")).toEqual({
+      text: "The token `!HANDOFF` is reserved.",
+      handoff: false,
+    });
+    expect(parseHandoff("I will connect you.!HANDOFF")).toEqual({
+      text: "I will connect you.!HANDOFF",
+      handoff: false,
+    });
+    expect(parseHandoff("Arbitrary bracket ] !HANDOFF")).toEqual({
+      text: "Arbitrary bracket ] !HANDOFF",
+      handoff: false,
+    });
+  });
+  test("bare marker combines with the orthogonal form marker", () => {
+    expect(parseHandoff("I can help you book a call. [!FORM:book] !HANDOFF")).toEqual({
+      text: "I can help you book a call. [!FORM:book]",
+      handoff: true,
+    });
   });
   test("buildSystemPrompt always restates the handoff contract", () => {
     expect(buildSystemPrompt()).toContain(HANDOFF_MARKER);
@@ -300,6 +354,7 @@ describe("store", () => {
   test("key builders are stable", () => {
     expect(kThreadToSession("self", 7)).toBe("thread:self:7");
     expect(kSessionToThread("self", "s1")).toBe("session:self:s1");
+    expect(kHandoffSession("self", "s1")).toBe("handoff:self:s1");
     expect(kUsage("self", "ai", "202607")).toBe("usage:self:202607:ai");
     expect(monthKey(new Date(Date.UTC(2026, 6, 3)))).toBe("202607");
   });
@@ -307,6 +362,19 @@ describe("store", () => {
     const env = fakeEnv();
     await linkThreadSession(env, "self", 99, "sess-abc");
     expect(await getThreadForSession(env, "self", "sess-abc")).toBe(99);
+  });
+  test("handoff discovery stays independent from a later Telegram topic link", async () => {
+    const env = fakeEnv();
+    await indexHandoffSession(env, "self", "sess-app");
+    expect(await env.KRISPY_KV.get(kHandoffSession("self", "sess-app"))).toBe("1");
+    expect(await env.KRISPY_KV.get(kSessionToThread("self", "sess-app"))).toBeNull();
+    expect(await getThreadForSession(env, "self", "sess-app")).toBeNull();
+
+    await linkThreadSession(env, "self", 99, "sess-app");
+    await indexHandoffSession(env, "self", "sess-app");
+    expect(await env.KRISPY_KV.get(kHandoffSession("self", "sess-app"))).toBe("1");
+    expect(await getThreadForSession(env, "self", "sess-app")).toBe(99);
+    expect(await getSessionForThread(env, "self", 99)).toBe("sess-app");
   });
   test("meter increments per kind, getUsage reads back", async () => {
     const env = fakeEnv();
@@ -345,6 +413,17 @@ describe("store", () => {
     expect(t?.systemPrompt).toBe("kv prompt");
     const overridden = await getTenant({ ...env, SYSTEM_PROMPT: "env prompt" } as any, "self");
     expect(overridden?.systemPrompt).toBe("env prompt");
+  });
+  test("getTenant keeps app-only Cloud prompt config without Telegram credentials", async () => {
+    const env = fakeEnv();
+    await mergeTenantConfig(env, "delulus", {
+      systemPrompt: "Answer from the Delulus curriculum.",
+      theme: { headerTitle: "Delulus" },
+    });
+    expect(await getTenant(env, "delulus")).toEqual({
+      systemPrompt: "Answer from the Delulus curriculum.",
+      theme: { headerTitle: "Delulus" },
+    });
   });
   test("plan gate", () => {
     expect(withinPlan({ ai: 0, handoff: 0 }, planFor("self"))).toBe(true);
@@ -519,9 +598,14 @@ describe("tenant config routes", () => {
     expect(await readTenantConfig(env, "t1")).toBeNull();
   });
 
-  test("avatar scheme: https/data-image/buttr pass, http and data:text rejected", async () => {
+  test("avatar scheme: https/data-image/buttr/none pass, http and data:text rejected", async () => {
     const env = fakeEnv({ TENANT_SYNC_SECRET: SECRET });
-    for (const avatar of ["buttr", "https://cdn.example/logo.png", "data:image/webp;base64,AA"]) {
+    for (const avatar of [
+      "buttr",
+      "none",
+      "https://cdn.example/logo.png",
+      "data:image/webp;base64,AA",
+    ]) {
       expect((await postCfg(env, { theme: { avatar } })).status).toBe(200);
     }
     for (const avatar of [
@@ -686,9 +770,19 @@ describe("broadcast", () => {
         throw new Error("closed");
       },
     };
-    const n = broadcast([live, dead, live], { type: "operator", text: "hi" });
+    const n = broadcast([live, dead, live], {
+      type: "operator",
+      handoffState: "operator",
+      text: "hi",
+      ts: 1,
+    });
     expect(n).toBe(2);
-    expect(JSON.parse(seen[0]!)).toEqual({ type: "operator", text: "hi" });
+    expect(JSON.parse(seen[0]!)).toEqual({
+      type: "operator",
+      handoffState: "operator",
+      text: "hi",
+      ts: 1,
+    });
   });
 });
 
@@ -701,7 +795,7 @@ describe("chatFlow", () => {
       systemPrompt: "sys",
       ensureTopic: async () => 5,
       toTopic: async (_t, text) => void topic.push(text),
-      isHandedOff: async () => false,
+      getHandoffState: async () => "ai",
       ai: async () => ({ text: "Sure, 9am." }),
       meter: async (k) => void metered.push(k),
       ...over,
@@ -713,7 +807,13 @@ describe("chatFlow", () => {
     const { base, topic, metered } = deps();
     const r = await chatFlow(base, { sessionId: "s", message: "hours?" });
     // formId rides along (null — no [!FORM:] in this reply); U3 added it to ChatResult.
-    expect(r).toEqual({ reply: "Sure, 9am.", handoff: false, handedOff: false, formId: null });
+    expect(r).toEqual({
+      reply: "Sure, 9am.",
+      handoff: false,
+      handedOff: false,
+      handoffState: "ai",
+      formId: null,
+    });
     expect(topic).toContain("👤 hours?");
     expect(topic).toContain("🤖 Sure, 9am.");
     expect(metered).toEqual(["ai"]);
@@ -722,7 +822,7 @@ describe("chatFlow", () => {
   test("handed off: bot stays silent, still mirrors visitor msg, no AI/meter", async () => {
     let aiCalled = false;
     const { base, topic, metered } = deps({
-      isHandedOff: async () => true,
+      getHandoffState: async () => "operator",
       ai: async () => {
         aiCalled = true;
         return { text: "x" };
@@ -730,10 +830,32 @@ describe("chatFlow", () => {
     });
     const r = await chatFlow(base, { sessionId: "s", message: "still there?" });
     expect(r.handedOff).toBe(true);
+    expect(r.handoffState).toBe("operator");
     expect(r.reply).toBeNull();
     expect(aiCalled).toBe(false);
     expect(metered).toEqual([]);
     expect(topic).toContain("👤 still there?");
+  });
+
+  test("handoff pending: bot stays silent before an operator replies", async () => {
+    let aiCalled = false;
+    const { base, topic, metered } = deps({
+      getHandoffState: async () => "pending",
+      ai: async () => {
+        aiCalled = true;
+        return { text: "x" };
+      },
+    });
+    const result = await chatFlow(base, { sessionId: "s", message: "are they coming?" });
+    expect(result).toEqual({
+      reply: null,
+      handoff: false,
+      handedOff: false,
+      handoffState: "pending",
+    });
+    expect(aiCalled).toBe(false);
+    expect(metered).toEqual([]);
+    expect(topic).toContain("👤 are they coming?");
   });
 
   test("[!HANDOFF] in reply → handoff true, handoff metered", async () => {
@@ -744,6 +866,37 @@ describe("chatFlow", () => {
     expect(r.handoff).toBe(true);
     expect(r.reply).toBe("A teammate will help.");
     expect(metered).toEqual(["ai", "handoff"]);
+  });
+
+  test("bare terminal handoff from an explicit person request is escalated", async () => {
+    const { base, metered } = deps({
+      ai: async () => ({ text: "A teammate will help. !HANDOFF" }),
+    });
+    const r = await chatFlow(base, { sessionId: "s", message: "I want a person" });
+    expect(r.handoff).toBe(true);
+    expect(r.reply).toBe("A teammate will help.");
+    expect(metered).toEqual(["ai", "handoff"]);
+  });
+
+  test("control-only handoff still acknowledges the visitor", async () => {
+    const { base, metered } = deps({ ai: async () => ({ text: "!HANDOFF" }) });
+    const r = await chatFlow(base, { sessionId: "s", message: "I want a person" });
+    expect(r.handoff).toBe(true);
+    expect(r.reply).toBe(FALLBACK_REPLY);
+    expect(r.handoffState).toBe("pending");
+    expect(metered).toEqual(["ai", "handoff"]);
+  });
+
+  test("bracket and Hebrew control-only handoffs never return an empty reply", async () => {
+    for (const text of ["[!HANDOFF]", "!HANDOFF"]) {
+      const { base } = deps({ ai: async () => ({ text }) });
+      const result = await chatFlow(base, {
+        sessionId: "s-he",
+        message: "אני רוצה לדבר עם אדם",
+      });
+      expect(result.handoff).toBe(true);
+      expect(result.reply).toBe(FALLBACK_REPLY);
+    }
   });
 
   test("Telegram mirror throws → AI reply still returns (mirror best-effort, P2)", async () => {
@@ -799,7 +952,7 @@ describe("workersAiRunner max_tokens", () => {
       },
       ...over,
     } as unknown as Env;
-    return { env, input: () => seen as { max_tokens?: number } };
+    return { env, input: () => seen as { max_tokens?: number; temperature?: number } };
   };
 
   test("caps output at MAX_OUTPUT_TOKENS by default", async () => {
@@ -814,6 +967,18 @@ describe("workersAiRunner max_tokens", () => {
     await workersAiRunner(env)([{ role: "user", content: "hey" }]);
     expect(input().max_tokens).toBe(128);
   });
+
+  test("temperature 0 is sent only for the selected 8B candidate", async () => {
+    const candidate = fakeAiEnv();
+    await workersAiRunner(
+      candidate.env,
+      FAST_MULTILINGUAL_MODEL,
+    )([{ role: "user", content: "hey" }]);
+    expect(candidate.input().temperature).toBe(0);
+    const defaultModel = fakeAiEnv();
+    await workersAiRunner(defaultModel.env)([{ role: "user", content: "hey" }]);
+    expect(defaultModel.input().temperature).toBeUndefined();
+  });
 });
 
 describe("chatFlow turn-tax bounds", () => {
@@ -825,7 +990,7 @@ describe("chatFlow turn-tax bounds", () => {
       systemPrompt: "sys",
       ensureTopic: async () => 5,
       toTopic: async () => {},
-      isHandedOff: async () => false,
+      getHandoffState: async () => "ai",
       ai: async (msgs) => {
         sawMessages = msgs;
         return { text: "ok" };
@@ -945,7 +1110,7 @@ describe("token telemetry — real usage vs estimate fallback", () => {
       systemPrompt: "sys",
       ensureTopic: async () => 0,
       toTopic: async () => {},
-      isHandedOff: async () => false,
+      getHandoffState: async () => "ai",
       ai: async () => ({ text: "ok" }),
       meter: async () => {},
       meterTokens: async (u) => void (seen = u),
@@ -1151,6 +1316,57 @@ describe("deliverLead fan-out", () => {
     expect(urls.some((u) => u.includes("api.resend.com"))).toBe(false);
     expect(urls.some((u) => u.includes("api.telegram.org"))).toBe(true);
   });
+
+  test("configured inquiry includes the conversation and only acknowledges accepted email", async () => {
+    const env = fakeEnv({ RESEND_API_KEY: "re_test", LEAD_EMAIL_FROM: "hello@example.test" });
+    await mergeTenantConfig(env, "acme", {
+      forms: [
+        {
+          id: "inquiry",
+          title: "Send this chat",
+          fields: [{ name: "email", label: "Email", type: "email", required: true }],
+          connectorIds: ["owner"],
+        },
+      ],
+      connectors: [{ id: "owner", type: "email", toAddress: "owner@example.test" }],
+    });
+    const request = (sessionId: string) =>
+      worker.fetch(
+        new Request("https://edge.test/api/lead", {
+          method: "POST",
+          body: JSON.stringify({
+            tenantId: "acme",
+            sessionId,
+            formId: "inquiry",
+            values: { email: "visitor@example.test" },
+            history: [{ role: "user", content: "Can you help with a business inquiry?" }],
+          }),
+        }),
+        env,
+      );
+    const originalFetch = globalThis.fetch;
+    const sent: unknown[] = [];
+    try {
+      globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+        sent.push(JSON.parse(String(init?.body)));
+        return new Response("rejected", { status: 422 });
+      }) as typeof fetch;
+      const rejected = await request("rejected");
+      expect(rejected.status).toBe(502);
+      expect(await rejected.json()).toEqual({ error: "delivery_failed" });
+      expect(JSON.stringify(sent[0])).toContain("Can you help with a business inquiry?");
+
+      globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+        sent.push(JSON.parse(String(init?.body)));
+        return Response.json({ id: "email_accepted" });
+      }) as typeof fetch;
+      const accepted = await request("accepted");
+      expect(accepted.status).toBe(200);
+      expect(await accepted.json()).toEqual({ ok: true });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 // ── lead rate limit (anti-spam / cost on the unauth lead routes) ─────────────
@@ -1220,7 +1436,7 @@ describe("SessionDO internal auth", () => {
       new Request("https://do/state", { headers: { [DO_INTERNAL_HEADER]: secret } }),
     );
     expect(ok.status).toBe(200);
-    expect(await ok.json()).toEqual({ handedOff: false });
+    expect(await ok.json()).toEqual({ handoffState: "ai", handedOff: false });
   });
 });
 
@@ -1273,7 +1489,54 @@ describe("SessionDO ring buffer", () => {
     const do_ = new SessionDO(fakeDOState(), env);
     await post(do_, "/operator", { text: "on my way" });
     expect(await msgs(do_)).toMatchObject([{ role: "operator", text: "on my way" }]);
-    expect(await (await get(do_, "/state")).json()).toEqual({ handedOff: true });
+    expect(await (await get(do_, "/state")).json()).toEqual({
+      handoffState: "operator",
+      handedOff: true,
+    });
+  });
+
+  test("handoff lifecycle distinguishes waiting, operator takeover, resolve, and reopen", async () => {
+    const do_ = new SessionDO(fakeDOState(), env);
+
+    expect(await (await post(do_, "/handoff", {})).json()).toMatchObject({
+      ok: true,
+      announced: true,
+      handoffState: "pending",
+    });
+    expect(await (await get(do_, "/state")).json()).toEqual({
+      handoffState: "pending",
+      handedOff: false,
+    });
+    expect(await (await post(do_, "/context", { tenantId: "self" })).json()).toMatchObject({
+      handoffState: "pending",
+      handedOff: false,
+    });
+
+    await post(do_, "/operator", { text: "I’m here" });
+    expect(await (await get(do_, "/state")).json()).toEqual({
+      handoffState: "operator",
+      handedOff: true,
+    });
+
+    await post(do_, "/resolve", { resolved: true });
+    expect(await (await get(do_, "/state")).json()).toEqual({
+      handoffState: "ai",
+      handedOff: false,
+    });
+
+    expect((await (await post(do_, "/handoff", {})).json()).announced).toBe(true);
+    expect(await (await get(do_, "/state")).json()).toMatchObject({ handoffState: "pending" });
+  });
+
+  test("legacy announced state upgrades to pending without a storage migration", async () => {
+    const state = fakeDOState();
+    await state.storage.put("handoffAnnounced", true);
+    const do_ = new SessionDO(state, env);
+
+    expect(await (await get(do_, "/state")).json()).toEqual({
+      handoffState: "pending",
+      handedOff: false,
+    });
   });
 
   test("seed only fills an EMPTY ring (per-turn appends beat it)", async () => {
@@ -1291,10 +1554,12 @@ describe("SessionDO ring buffer", () => {
   test("/summary = handoff flag + resolved + ring tail (empty ring → nulls)", async () => {
     const do_ = new SessionDO(fakeDOState(), env);
     expect(await (await get(do_, "/summary")).json()).toEqual({
+      handoffState: "ai",
       handedOff: false,
       resolved: false,
       lastMessage: null,
       ts: null,
+      siteId: "default",
     });
     await post(do_, "/log", {
       messages: [
@@ -1387,6 +1652,36 @@ describe("SessionDO ring buffer", () => {
     ]);
     expect(visitorFrames).toHaveLength(0);
   });
+
+  test("action delivery counts visitor sockets while echoing to operator sockets", async () => {
+    const action = {
+      kind: "instagram" as const,
+      connector: {
+        id: "ig",
+        type: "instagram" as const,
+        label: "DM us",
+        url: "https://instagram.com/example",
+      },
+    };
+    for (const withVisitor of [false, true]) {
+      const operatorFrames: string[] = [];
+      const visitorFrames: string[] = [];
+      const operator = { send: (data: string) => void operatorFrames.push(data) };
+      const visitor = { send: (data: string) => void visitorFrames.push(data) };
+      const state = fakeDOState();
+      Object.defineProperty(state, "getWebSockets", {
+        value: (tag?: string) =>
+          tag === "operator" ? [operator] : withVisitor ? [operator, visitor] : [operator],
+      });
+      const do_ = new SessionDO(state, env);
+      const response = await post(do_, "/action", { action });
+      expect(await response.json()).toEqual({ ok: true, delivered: withVisitor ? 1 : 0 });
+      expect(operatorFrames).toHaveLength(1);
+      expect(JSON.parse(operatorFrames[0]!)).toMatchObject({ type: "action", action });
+      expect(visitorFrames).toHaveLength(withVisitor ? 1 : 0);
+      expect(await msgs(do_)).toMatchObject([{ role: "operator", text: "DM us", action }]);
+    }
+  });
 });
 
 // ── hand-back: resolve + silence alarm (handoff is no longer forever) ─────────
@@ -1476,6 +1771,19 @@ describe("SessionDO hand-back", () => {
     expect(await state.storage.getAlarm()).toBeNull();
   });
 
+  test("visitor waiting on a pending handoff arms handback; the alarm restores AI", async () => {
+    const { do_, state, frames } = socketDO();
+    await post(do_, "/handoff", {});
+    await post(do_, "/log", { messages: [{ role: "visitor", text: "still waiting" }] });
+    expect(await state.storage.getAlarm()).not.toBeNull();
+
+    await state.storage.put("handoffDueAt", Date.now() - 1);
+    await do_.alarm();
+    expect(await handedOff(do_)).toBe(false);
+    expect(await (await get(do_, "/state")).json()).toMatchObject({ handoffState: "ai" });
+    expect(resumes(frames)).toHaveLength(1);
+  });
+
   test("HANDBACK_SILENCE_MINUTES env knob tunes the alarm", async () => {
     const { do_, state } = socketDO(fakeEnv({ HANDBACK_SILENCE_MINUTES: "1" }));
     await post(do_, "/operator", { text: "hi" });
@@ -1487,9 +1795,10 @@ describe("SessionDO hand-back", () => {
   });
 
   test("alarm fires → hand back: handedOff false + resume + bot-styled ring note", async () => {
-    const { do_, frames } = socketDO();
+    const { do_, state, frames } = socketDO();
     await post(do_, "/operator", { text: "human here" });
     await post(do_, "/log", { messages: [{ role: "visitor", text: "hello?" }] });
+    await state.storage.put("handoffDueAt", Date.now() - 1);
     await do_.alarm();
     expect(await handedOff(do_)).toBe(false);
     expect(resumes(frames)).toHaveLength(1);
@@ -1620,6 +1929,126 @@ describe("operator app routes", () => {
       body: JSON.stringify(body),
     });
 
+  test("configured form and Instagram actions are site-bound, typed, and durable", async () => {
+    const env = opEnv({
+      AI: { run: async () => ({ response: "Hello." }) } as unknown as Ai,
+    });
+    await mergeTenantConfig(
+      env,
+      "self",
+      {
+        forms: [
+          {
+            id: "consult",
+            title: "Book a consultation",
+            fields: [{ name: "email", label: "Email", type: "email" }],
+          },
+        ],
+        connectors: [
+          {
+            id: "ig",
+            type: "instagram",
+            profileUrl: "https://instagram.com/example",
+            label: "Message us",
+          },
+          {
+            id: "hidden",
+            type: "instagram",
+            profileUrl: "https://instagram.com/private",
+            cta: false,
+          },
+          { id: "email", type: "email", toAddress: "team@example.com" },
+        ],
+      },
+      "shop",
+    );
+    const chat = await worker.fetch(
+      new Request("https://edge.test/api/chat", {
+        method: "POST",
+        body: JSON.stringify({
+          tenantId: "self",
+          siteId: "shop",
+          sessionId: "action-1",
+          message: "Hi",
+        }),
+      }),
+      env,
+    );
+    expect(chat.status).toBe(200);
+    const catalog = await worker.fetch(
+      post("/api/operator/actions", { tenantId: "self", sessionId: "action-1" }),
+      env,
+    );
+    expect(await catalog.json()).toEqual({
+      forms: [{ id: "consult", title: "Book a consultation" }],
+      connectors: [
+        { id: "ig", type: "instagram", label: "Message us", url: "https://instagram.com/example" },
+      ],
+    });
+    expect(
+      (
+        await worker.fetch(
+          post("/api/operator/send-action", {
+            tenantId: "self",
+            sessionId: "action-1",
+            siteId: "other",
+            kind: "form",
+            id: "consult",
+          }),
+          env,
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await worker.fetch(
+          post("/api/operator/send-action", {
+            tenantId: "self",
+            sessionId: "action-1",
+            kind: "instagram",
+            id: "hidden",
+          }),
+          env,
+        )
+      ).status,
+    ).toBe(404);
+    const sent = await worker.fetch(
+      post("/api/operator/send-action", {
+        tenantId: "self",
+        sessionId: "action-1",
+        kind: "form",
+        id: "consult",
+      }),
+      env,
+    );
+    expect(sent.status).toBe(200);
+    expect((await sent.json()).action).toMatchObject({ kind: "form", form: { id: "consult" } });
+    const sentIg = await worker.fetch(
+      post("/api/operator/send-action", {
+        tenantId: "self",
+        sessionId: "action-1",
+        kind: "instagram",
+        id: "ig",
+      }),
+      env,
+    );
+    expect(sentIg.status).toBe(200);
+    const thread = await worker.fetch(
+      post("/api/operator/thread", { tenantId: "self", sessionId: "action-1" }),
+      env,
+    );
+    const { messages } = (await thread.json()) as { messages: RingMsg[] };
+    expect(messages.filter((m) => m.action).map((m) => m.action?.kind)).toEqual([
+      "form",
+      "instagram",
+    ]);
+    expect(messages.at(-1)).toMatchObject({
+      role: "operator",
+      text: "Message us",
+      action: { connector: { url: "https://instagram.com/example" } },
+    });
+  });
+
   test("POST /api/operator/reply → DO operator broadcast + ring + app operator learned + metered", async () => {
     const env = opEnv();
     const res = await worker.fetch(
@@ -1662,10 +2091,12 @@ describe("operator app routes", () => {
 
   test("POST /api/operator/handoffs lists ONLY handed-off sessions of the tenant, with preview", async () => {
     const env = opEnv();
-    // three known sessions (the session→thread KV map is the index)
+    // Three legacy topic-mapped sessions; also index s-live in the new handoff
+    // prefix to prove the union de-duplicates it before querying the DO.
     await linkThreadSession(env, "acme", 1, "s-live");
     await linkThreadSession(env, "acme", 2, "s-quiet");
     await linkThreadSession(env, "other", 3, "s-foreign");
+    await indexHandoffSession(env, "acme", "s-live");
     // hand one off via the reply route
     await worker.fetch(
       post("/api/operator/reply", { tenantId: "acme", sessionId: "s-live", text: "hello there" }),
@@ -1685,8 +2116,67 @@ describe("operator app routes", () => {
     expect(typeof conversations[0]!.ts).toBe("number");
   });
 
+  test("includeActive lists an AI conversation and preserves tenant isolation", async () => {
+    const env = opEnv({
+      AI: { run: async () => ({ response: "Installments are available." }) } as unknown as Ai,
+    });
+    const chat = (tenantId: string, sessionId: string, message: string) =>
+      worker.fetch(
+        new Request("https://edge.test/api/chat", {
+          method: "POST",
+          body: JSON.stringify({ tenantId, sessionId, message }),
+        }),
+        env,
+      );
+    expect((await chat("self", "s-ai", "what are the installments?")).status).toBe(200);
+    expect((await chat("self", "s-ai", "and can I check out today?")).status).toBe(200);
+    expect((await chat("other", "s-foreign-ai", "private conversation")).status).toBe(402);
+
+    const res = await worker.fetch(
+      post("/api/operator/handoffs", { tenantId: "self", includeActive: true }),
+      env,
+    );
+    const { conversations } = (await res.json()) as {
+      conversations: { sessionId: string; lastMessage: string | null; handoffState: string }[];
+    };
+    expect(conversations).toContainEqual(
+      expect.objectContaining({
+        sessionId: "s-ai",
+        lastMessage: "Installments are available.",
+        handoffState: "ai",
+      }),
+    );
+    expect(conversations.map((c) => c.sessionId)).not.toContain("s-foreign-ai");
+    expect((await env.KRISPY_KV.list({ prefix: "conversation:other:" })).keys).toHaveLength(0);
+
+    await indexConversationSession(env, "self:child", "s-collision");
+    const isolated = await worker.fetch(
+      post("/api/operator/handoffs", { tenantId: "self", includeActive: true }),
+      env,
+    );
+    expect(
+      ((await isolated.json()) as { conversations: { sessionId: string }[] }).conversations.map(
+        (conversation) => conversation.sessionId,
+      ),
+    ).not.toContain("s-collision");
+
+    const thread = await worker.fetch(
+      post("/api/operator/thread", { tenantId: "self", sessionId: "s-ai" }),
+      env,
+    );
+    const { messages } = (await thread.json()) as { messages: { text: string }[] };
+    expect(messages.map((message) => message.text)).toEqual([
+      "what are the installments?",
+      "Installments are available.",
+      "and can I check out today?",
+      "Installments are available.",
+    ]);
+  });
+
   test("resolve drops a session from the default inbox; includeResolved returns it; a new visitor message revives it", async () => {
-    const env = opEnv();
+    const env = opEnv({
+      AI: { run: async () => ({ response: "Welcome back." }) } as unknown as Ai,
+    });
     await linkThreadSession(env, "self", 1, "s-live");
     await worker.fetch(
       post("/api/operator/reply", { tenantId: "self", sessionId: "s-live", text: "done!" }),
@@ -1749,15 +2239,17 @@ describe("operator app routes", () => {
 describe("operator route auth", () => {
   const API = "https://api.test";
 
-  /** fetch fake standing in for the cloud API: GET /me → the given user id (or 401). */
-  function meFetch(userId: string | null) {
+  /** fetch fake standing in for the cloud API: GET /me → identity (or 401). */
+  function meFetch(identity: string | Record<string, unknown> | null) {
     const calls: { url: string; auth: string | null }[] = [];
     const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
       calls.push({
         url: String(input),
         auth: (init?.headers as Record<string, string>)?.authorization ?? null,
       });
-      return userId ? Response.json({ id: userId }) : new Response("unauthorized", { status: 401 });
+      return identity
+        ? Response.json(typeof identity === "string" ? { id: identity } : identity)
+        : new Response("unauthorized", { status: 401 });
     }) as typeof fetch;
     return { calls, fetchImpl };
   }
@@ -1796,6 +2288,44 @@ describe("operator route auth", () => {
     const env = fakeEnv({ API_ORIGIN: API });
     expect(await authorizeOperator(req(), env, "acme", "tok-1", fetchImpl)).toBeNull();
     expect(calls).toEqual([{ url: `${API}/me`, auth: "Bearer tok-1" }]);
+  });
+
+  test("verified teammate bearer uses the server-resolved owner tenant", async () => {
+    _authCache.clear();
+    const { fetchImpl } = meFetch({ id: "teammate", tenantId: "acme" });
+    const env = fakeEnv({ API_ORIGIN: API });
+    expect(await authorizeOperator(req(), env, "acme", "teammate-token", fetchImpl)).toBeNull();
+    expect(_authCache.get("teammate-token")?.tenantId).toBe("acme");
+  });
+
+  test("owner tenant remains allowed and another tenant remains denied", async () => {
+    _authCache.clear();
+    const { fetchImpl } = meFetch({ id: "owner", tenantId: "acme" });
+    const env = fakeEnv({ API_ORIGIN: API });
+    expect(await authorizeOperator(req(), env, "acme", "owner-token", fetchImpl)).toBeNull();
+    _authCache.clear();
+    expect(await authorizeOperator(req(), env, "other", "owner-token", fetchImpl)).toEqual({
+      status: 403,
+      error: "token does not match tenantId",
+    });
+  });
+
+  test("malformed identity fields fail closed", async () => {
+    _authCache.clear();
+    const { fetchImpl } = meFetch({ id: "teammate", tenantId: "" });
+    const env = fakeEnv({ API_ORIGIN: API });
+    expect(await authorizeOperator(req(), env, "acme", "malformed-token", fetchImpl)).toEqual({
+      status: 401,
+      error: "invalid or expired token",
+    });
+    _authCache.clear();
+    const malformedId = meFetch({ id: "", tenantId: "acme" });
+    expect(
+      await authorizeOperator(req(), env, "acme", "malformed-id", malformedId.fetchImpl),
+    ).toEqual({
+      status: 401,
+      error: "invalid or expired token",
+    });
   });
 
   test("cache: second verification within the TTL costs zero /me subrequests", async () => {
@@ -2012,6 +2542,64 @@ describe("pushToApp", () => {
 
 // ── handoff integration: ring seed + app push + Telegram mention skip ────────
 describe("handoff → push + mention skip (integration)", () => {
+  test("first-message handoff seeds prior history without duplicating the current visitor turn", async () => {
+    const env = wireSessionNS(
+      fakeEnv({
+        TENANT_SYNC_SECRET: OP_SECRET,
+        AI: { run: async () => ({ response: "One sec. [!HANDOFF]" }) } as unknown as Ai,
+      }),
+    );
+    const res = await worker.fetch(
+      new Request("https://edge.test/api/chat", {
+        method: "POST",
+        body: JSON.stringify({
+          sessionId: "s-first-handoff",
+          tenantId: "self",
+          message: "same question",
+          history: [
+            { role: "user", content: "same question" },
+            { role: "assistant", content: "earlier answer" },
+            { role: "user", content: "same question" },
+          ],
+        }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(200);
+
+    const thread = await worker.fetch(
+      new Request("https://edge.test/api/operator/thread", {
+        method: "POST",
+        headers: { "x-tenant-sync-secret": OP_SECRET },
+        body: JSON.stringify({ tenantId: "self", sessionId: "s-first-handoff" }),
+      }),
+      env,
+    );
+    const { messages } = (await thread.json()) as { messages: RingMsg[] };
+    expect(messages.map((m) => [m.role, m.text])).toEqual([
+      ["visitor", "same question"],
+      ["ai", "earlier answer"],
+      ["visitor", "same question"],
+      ["ai", "One sec."],
+    ]);
+  });
+
+  test("historySeed removes only a trailing current-message entry", () => {
+    expect(
+      historySeed(
+        [
+          { role: "user", content: "same question" },
+          { role: "assistant", content: "earlier answer" },
+          { role: "user", content: "same question" },
+        ],
+        "same question",
+      ),
+    ).toEqual([
+      { role: "visitor", text: "same question" },
+      { role: "ai", text: "earlier answer" },
+    ]);
+  });
+
   test("[!HANDOFF]: history seeds the ring, app op pushed (not @mentioned), tg op mentioned", async () => {
     const env = wireSessionNS(
       fakeEnv({
@@ -2095,6 +2683,177 @@ describe("handoff → push + mention skip (integration)", () => {
       ["visitor", "I need a human"],
       ["ai", "One sec."],
     ]);
+  });
+});
+
+describe("pending handoff suppresses AI until handback", () => {
+  const handoffRequest = (sessionId: string) =>
+    new Request("https://edge.test/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ sessionId, tenantId: "self", message: "I need a person" }),
+    });
+
+  function transitionEnv(response: () => Response): { env: Env; handoffCalls: () => number } {
+    let calls = 0;
+    const env = fakeEnv({
+      AI: { run: async () => ({ response: `One sec. ${HANDOFF_MARKER}` }) } as unknown as Ai,
+      SESSION: {
+        idFromName: (name: string) => name,
+        get: () => ({
+          fetch: async (input: RequestInfo | URL) => {
+            const url = input instanceof Request ? input.url : String(input);
+            if (url.endsWith("/context")) {
+              return Response.json({ handoffState: "ai", handedOff: false, messages: [] });
+            }
+            if (url.endsWith("/handoff")) {
+              calls += 1;
+              return response();
+            }
+            return Response.json({ ok: true }); // ring seed/log
+          },
+        }),
+      } as unknown as DurableObjectNamespace,
+    });
+    return { env, handoffCalls: () => calls };
+  }
+
+  test("discovery write failure aborts before the DO transition or push", async () => {
+    const { env, handoffCalls } = transitionEnv(() =>
+      Response.json({ ok: true, announced: true, handoffState: "pending" }),
+    );
+    const originalPut = env.KRISPY_KV.put.bind(env.KRISPY_KV);
+    env.KRISPY_KV.put = async (key, value, options) => {
+      if (key === kHandoffSession("self", "s-kv-fail")) throw new Error("KV unavailable");
+      await originalPut(key, value, options);
+    };
+    let externalCalls = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      externalCalls += 1;
+      return Response.json({ tokens: [] });
+    }) as unknown as typeof fetch;
+    (env as { PUSH_TOKENS_URL?: string }).PUSH_TOKENS_URL = "https://push.test/tokens";
+    try {
+      expect((await rejection(worker.fetch(handoffRequest("s-kv-fail"), env))).message).toContain(
+        "KV unavailable",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(handoffCalls()).toBe(0);
+    expect(externalCalls).toBe(0);
+  });
+
+  test("DO transition failure leaves discovery for retry but never pushes", async () => {
+    const { env, handoffCalls } = transitionEnv(() =>
+      Response.json({ error: "transition unavailable" }, { status: 503 }),
+    );
+    let externalCalls = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      externalCalls += 1;
+      return Response.json({ tokens: [] });
+    }) as unknown as typeof fetch;
+    (env as { PUSH_TOKENS_URL?: string }).PUSH_TOKENS_URL = "https://push.test/tokens";
+    try {
+      expect((await rejection(worker.fetch(handoffRequest("s-do-fail"), env))).message).toBe(
+        "handoff state transition failed (503)",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(await env.KRISPY_KV.get(kHandoffSession("self", "s-do-fail"))).toBe("1");
+    expect(handoffCalls()).toBe(1);
+    expect(externalCalls).toBe(0);
+  });
+
+  test("repeated visitor messages stay in the ring; resolve reopens AI", async () => {
+    let aiCalls = 0;
+    const env = wireSessionNS(
+      fakeEnv({
+        TENANT_SYNC_SECRET: OP_SECRET,
+        AI: {
+          run: async () => ({
+            response: ++aiCalls === 1 ? `One sec. ${HANDOFF_MARKER}` : "The AI is available again.",
+          }),
+        } as unknown as Ai,
+      }),
+    );
+    const chat = (message: string) =>
+      worker.fetch(
+        new Request("https://edge.test/api/chat", {
+          method: "POST",
+          body: JSON.stringify({ sessionId: "s-pending", tenantId: "self", message }),
+        }),
+        env,
+      );
+    const operator = (path: string, body: unknown) =>
+      worker.fetch(
+        new Request(`https://edge.test${path}`, {
+          method: "POST",
+          headers: { "x-tenant-sync-secret": OP_SECRET },
+          body: JSON.stringify(body),
+        }),
+        env,
+      );
+
+    const first = (await (await chat("I need a person")).json()) as Record<string, unknown>;
+    expect(first).toMatchObject({ handoff: true, handedOff: false, handoffState: "pending" });
+    expect(await env.KRISPY_KV.get(kHandoffSession("self", "s-pending"))).toBe("1");
+    expect(await getThreadForSession(env, "self", "s-pending")).toBeNull();
+
+    const inbox = await operator("/api/operator/handoffs", { tenantId: "self" });
+    expect(await inbox.json()).toMatchObject({
+      conversations: [
+        {
+          sessionId: "s-pending",
+          handoffState: "pending",
+          handedOff: false,
+          resolved: false,
+        },
+      ],
+    });
+
+    const waiting = (await (await chat("Are they coming?")).json()) as Record<string, unknown>;
+    expect(waiting).toMatchObject({
+      reply: null,
+      handoff: false,
+      handedOff: false,
+      handoffState: "pending",
+    });
+    expect(aiCalls).toBe(1);
+
+    const thread = await operator("/api/operator/thread", {
+      tenantId: "self",
+      sessionId: "s-pending",
+    });
+    const waitingMessages = ((await thread.json()) as { messages: RingMsg[] }).messages;
+    expect(waitingMessages.map((message) => [message.role, message.text])).toEqual([
+      ["visitor", "I need a person"],
+      ["ai", "One sec."],
+      ["visitor", "Are they coming?"],
+    ]);
+
+    expect(
+      await (
+        await operator("/api/operator/resolve", {
+          tenantId: "self",
+          sessionId: "s-pending",
+        })
+      ).json(),
+    ).toEqual({ ok: true, resolved: true });
+
+    const reopened = (await (await chat("Can the assistant help now?")).json()) as Record<
+      string,
+      unknown
+    >;
+    expect(reopened).toMatchObject({
+      reply: "The AI is available again.",
+      handoff: false,
+      handedOff: false,
+      handoffState: "ai",
+    });
+    expect(aiCalls).toBe(2);
   });
 });
 

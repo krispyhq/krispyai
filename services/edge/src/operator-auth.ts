@@ -4,8 +4,9 @@
 //
 // Two accepted credentials:
 //   1. Bearer token (the Buttr app) — verified by forwarding it to the cloud API's
-//      GET /me (env.API_ORIGIN); the resolved user.id must equal the claimed
-//      tenantId (tenantId == user.id, 1:1 — krispyai-cloud's Better Auth).
+//      GET /me (env.API_ORIGIN); the resolved tenantId must equal the claimed
+//      tenantId. Cloud owners may resolve to their own user id, while verified
+//      teammates resolve to the owner's tenantId.
 //      Browsers/RN can't set headers on a WS upgrade, so the WS path passes the
 //      same token as ?auth=<token> and routes through here too.
 //   2. The existing tenant-sync shared secret (x-tenant-sync-secret ==
@@ -39,8 +40,8 @@ export function bearerToken(request: Request): string | null {
   return m?.[1] ?? null;
 }
 
-/** Verify a bearer against the cloud API's GET /me. Returns the user's id
- * (== tenantId) or null on any failure — invalid token, no API_ORIGIN, network. */
+/** Verify a bearer against the cloud API's GET /me. Returns the server-resolved
+ * tenant id, or the legacy user id when `/me` predates the tenantId field. */
 export async function verifyBearer(
   env: Env,
   token: string,
@@ -55,11 +56,17 @@ export async function verifyBearer(
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return null;
-    const me = (await res.json()) as { id?: string } | null;
-    if (!me?.id) return null;
+    const me = (await res.json()) as { id?: unknown; tenantId?: unknown } | null;
+    if (!me || typeof me.id !== "string" || me.id.trim().length === 0) return null;
+    const hasTenantId = Object.prototype.hasOwnProperty.call(me, "tenantId");
+    let tenantId = me.id;
+    if (hasTenantId) {
+      if (typeof me.tenantId !== "string" || me.tenantId.trim().length === 0) return null;
+      tenantId = me.tenantId;
+    }
     if (_authCache.size >= CACHE_MAX) _authCache.clear();
-    _authCache.set(token, { tenantId: me.id, exp: Date.now() + AUTH_CACHE_TTL_MS });
-    return me.id;
+    _authCache.set(token, { tenantId, exp: Date.now() + AUTH_CACHE_TTL_MS });
+    return tenantId;
   } catch (e) {
     console.error("bearer verification against /me failed:", e);
     return null;

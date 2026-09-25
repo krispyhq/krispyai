@@ -52,15 +52,44 @@ visitor ──▶ AI answers (Cloudflare Workers AI) ──▶ visitor
               │
    you reply in the topic ──▶ shows up LIVE in the widget
               │
-              └──▶ bot goes silent — the human owns the conversation
+              └──▶ pending becomes joined — the bot was already silent
 ```
 
 - Visitor types → instant AI reply.
 - Every message mirrors to **one Telegram forum topic per visitor** on your phone.
+- The Buttr operator inbox can list every unresolved conversation, including AI-only
+  chats; phone notifications remain reserved for human handoffs.
 - You reply from Telegram → it's pushed into the browser over a WebSocket, **live**.
-- The bot detects it's a human job and steps back — no double-answering.
+- The bot detects it's a human job and steps back immediately. Messages sent while you are
+  on the way still reach the same topic; the bot stays quiet until you resolve the handoff.
+- A handoff marker by itself still returns a short acknowledgement to the visitor while the
+  human takes over.
+- A complete answer should not summon an operator merely because it describes a limitation,
+  an extra cost or included human support. Explicit human requests and missing information
+  still escalate; business-specific approval requirements remain authoritative.
+- Browser clients may include the current visitor line at the end of `history`; the first
+  handoff seeds only the prior turns, then records that live line once. Earlier repeated
+  questions remain real conversation turns.
 
-Under the hood it's **one Cloudflare Worker** plus a **hibernatable Durable Object** (`SessionDO`) that holds the strongly-consistent "handed off" flag and keeps idle sockets free. That's the whole backend.
+An optional private knowledge gateway can add cited business evidence and, when configured,
+one bounded professional-method reference before the model call. Method references are
+separate from business facts and cannot override security or human handoff. The feature is
+server-only and leaves the default self-hosted path unchanged.
+
+Under the hood it's **one Cloudflare Worker** plus a **hibernatable Durable Object** (`SessionDO`)
+that holds the strongly-consistent `ai` / `pending` / `operator` state and keeps idle sockets
+free. That's the whole backend.
+
+### Live handoff regression check
+
+Offline tests do not prove a model's decision quality. To evaluate the current prompt with
+Workers AI, run `bun scripts/eval-handoff.ts <course-knowledge-file> <private-results-file>`
+with `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` supplied through your secret manager.
+This opt-in command makes six billable inference requests, uses `AI_MODEL` or the edge's
+default model, and never creates conversations or notifies operators. Supply reviewed course
+facts covering external tool costs, first-cohort support and outcome guarantees, with the
+review deadline deliberately unknown. It checks routing and prompt-leak suppression; review
+the saved answers for factual correctness. Keep knowledge and result files private.
 
 ## Quickstart — self-host in ~10 minutes
 
@@ -94,6 +123,21 @@ before `</body>`), and **④ Next steps** (`krispy dev` / `wrangler deploy`, and
 the loop). Each step persists as you go via `POST /api/tenant/config`. Re-run it any time;
 it never clobbers what you've already set.
 
+When a business adds a lead form and email connector, Krispy sends the captured
+details and recent conversation to the configured inbox. The widget confirms
+submission only after the email provider accepts it; on failure the visitor keeps
+their entries and can retry.
+Instagram connectors render as clear, tappable chat buttons with the familiar
+Instagram glyph; the business chooses their label, link, and reveal timing.
+Operators can also send a configured form or Instagram button into an existing
+visitor conversation. The edge resolves the selected ID from that session's site,
+stores the card in the conversation history, and restores it when the widget reconnects.
+While a visitor waits for a team member, a compact "Talk to the team" card offers
+only the site's configured forms and contact links, plus a call request when that
+tenant's call settings and live call status permit it. Selecting a form opens it
+inside the chat; the lead includes recent conversation context. The choice card
+closes on operator takeover or AI resume, while any expanded form keeps its input.
+
 <details>
 <summary>Or set it up by hand (wrangler secrets)</summary>
 
@@ -126,6 +170,14 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook" \
 </details>
 
 Honest about the Telegram step: BotFather, the supergroup-with-Topics, and admin rights are a real five minutes of clicking — there's no way around a token if you want replies on your phone. Full walkthrough and architecture notes: [`services/edge/README.md`](./services/edge/README.md).
+
+Hosted Cloud can use the Buttr owner app without Telegram. In that mode the tenant's prompt,
+theme, forms, and human handoff still work; Telegram topic mirroring and screenshot forwarding
+stay off, and the widget suppresses the unavailable attachment path.
+
+The owner app's operator bearer is checked against the cloud API's server-resolved tenant,
+so verified teammates can share the owner's handoff inbox. Legacy `/me` responses without
+`tenantId` use a nonempty user-id fallback; malformed identity fields fail closed.
 
 ## Local dev
 
@@ -176,14 +228,24 @@ Host the dependency-free `widget.js` anywhere static, then drop one tag on any p
 ></script>
 ```
 
-| attribute     | required | default        | meaning                                         |
-| ------------- | -------- | -------------- | ----------------------------------------------- |
-| `data-api`    | yes      | —              | your `@krispy/edge` Worker base URL             |
-| `data-tenant` | no       | `self`         | tenant id (multi-tenant uses this)              |
-| `data-title`  | no       | `Chat with us` | header text (theme `headerTitle` supersedes it) |
-| `data-accent` | no       | `#e39a2b`      | brand color (used before the theme fetch lands) |
+| attribute       | required | default        | meaning                                         |
+| --------------- | -------- | -------------- | ----------------------------------------------- |
+| `data-api`      | yes      | —              | your `@krispy/edge` Worker base URL             |
+| `data-tenant`   | no       | `self`         | tenant id (multi-tenant uses this)              |
+| `data-title`    | no       | `Chat with us` | header text (theme `headerTitle` supersedes it) |
+| `data-accent`   | no       | `#e39a2b`      | brand color (used before the theme fetch lands) |
+| `data-launcher` | no       | (built-in)     | `none` suppresses the built-in launcher button  |
 
-Richer appearance — avatar, greeting, position, corner radius, font, notification sound — is set from KV via the `theme` config, not attributes. See [**docs → embed + theme the widget**](./apps/docs/content/docs/guides/embed-and-theme.mdx).
+Richer appearance — circle/pill launcher and label, avatar, greeting, position, corner radius, font, notification sound — is set from KV via the `theme` config, not attributes. See [**docs → embed + theme the widget**](./apps/docs/content/docs/guides/embed-and-theme.mdx).
+Each page load revalidates that public config, so a warm browser picks up tenant changes without a cache-buster URL.
+
+The widget keeps primary actions readable automatically: it prefers Krispy's brand ink at 4.5:1
+contrast, then chooses black or white for darker custom accents.
+
+**Bring your own launcher.** The theme restyles Krispy's launcher; it can't replace it. Set `data-launcher="none"` and drive the panel from your own mark with `window.krispy` (`open` · `close` · `toggle` · `isOpen` · `unread` · `el`), listening for `krispy:open` / `krispy:close` / `krispy:unread` on `document`. The host element carries `class="krispy-widget"`. All opt-in — leave it off and nothing changes. See [**docs → bring your own launcher**](./apps/docs/content/docs/guides/embed-and-theme.mdx#bring-your-own-launcher).
+Set `theme.avatar` to `"none"` for a text-only customer header; the built-in launcher uses a neutral chat mark while the default remains Buttr.
+On coarse-pointer devices, the mute and close controls expand to 44px touch targets while their icons and desktop sizing stay unchanged.
+Audio calls are opt-in through tenant `callSettings`. A team member can invite a visitor, or the visitor can request a call after human handoff when visitor requests are enabled. A visitor request alerts the operator app and waits for a team member to accept; it does not activate the microphone. The visitor explicitly joins after acceptance. The call card shows whether the team member has joined, provides Mute/Unmute and End call controls, and ends the call when the page goes into the background or closes. Closing the chat panel alone leaves the call active.
 
 Details: [`packages/widget/README.md`](./packages/widget/README.md).
 
@@ -239,7 +301,7 @@ Want _just_ the chat? `cd services/edge`, deploy, embed `packages/widget`. That'
 
 - **Cloudflare Workers** + **Durable Objects** (hibernatable `SessionDO`) — the whole backend, one deploy.
 - **Workers AI** — the built-in bot (BYO-key seam is there if you want another model).
-- **Cloudflare KV** — tenant config, topic↔session map, usage counters.
+- **Cloudflare KV** — tenant config, handoff discovery, topic↔session map, usage counters.
 - **Telegram Bot API** — the handoff channel (one forum topic per visitor).
 - **Bun** + **wrangler** — package manager, runtime, deploy.
 - Widget is vanilla JS in a Shadow DOM — zero framework, zero dependencies.
@@ -259,3 +321,13 @@ PRs welcome — this repo is a template people clone, so clarity and convention 
 **à bientôt 🥐**
 
 </div>
+
+### Hosted owner notifications
+
+The hosted edge needs `PUSH_TOKENS_URL` set to its matching cloud API
+`/internal/push/tokens` endpoint and `PUSH_TOKENS_SECRET` set to the shared
+server credential. The preview deployment config supplies the preview endpoint.
+Without the URL, chat and inbox persistence work but mobile push is skipped.
+A signed device build, notification permission, registered device token, and
+valid platform push credentials are also required; simulator chat tests do not
+prove notification delivery. Self-hosted installations may leave these unset.

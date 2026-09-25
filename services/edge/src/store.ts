@@ -60,10 +60,18 @@ function popupTextSugar(th: WidgetTheme): PopupSpec[] {
 // construction: botToken/chatId/systemPrompt/model, operators (Telegram user ids) AND
 // persona (instruction text) are structurally excluded (we project explicit keys, never
 // spread cfg). The leak-guard test enforces this.
-export function publicWidgetConfig(cfg: Partial<TenantConfig> | null) {
+export function publicWidgetConfig(
+  cfg: Partial<TenantConfig> | null,
+  capabilities = { attachments: !!cfg?.botToken && !!cfg.chatId },
+) {
   const th = cfg?.theme ?? {};
   return {
+    // Public booleans only: the browser learns which controls work, never why or
+    // which private connector credentials back them.
+    capabilities,
     theme: {
+      launcherStyle: th.launcherStyle,
+      launcherLabel: th.launcherLabel,
       primaryColor: th.primaryColor,
       launcherColor: th.launcherColor,
       position: th.position,
@@ -94,6 +102,41 @@ export function publicWidgetConfig(cfg: Partial<TenantConfig> | null) {
         showAfterMs: c.showAfterMs,
       }))
       .filter((c) => c.url !== undefined),
+    // The visitor may choose a configured form while waiting for a person. Keep
+    // connector routing server-side; the browser needs only renderable fields.
+    forms: (cfg?.forms ?? [])
+      .filter(
+        (form) =>
+          form &&
+          typeof form.id === "string" &&
+          form.id.length > 0 &&
+          typeof form.title === "string" &&
+          Array.isArray(form.fields),
+      )
+      .map((form) => ({
+        id: form.id,
+        title: form.title,
+        fields: form.fields
+          .filter(
+            (field) =>
+              field &&
+              typeof field.name === "string" &&
+              field.name.length > 0 &&
+              typeof field.label === "string" &&
+              ["text", "email", "tel", "textarea", "select"].includes(field.type),
+          )
+          .map((field) => ({
+            name: field.name,
+            label: field.label,
+            type: field.type,
+            required: field.required === true,
+            options: Array.isArray(field.options)
+              ? field.options.filter((option) => typeof option === "string")
+              : undefined,
+          })),
+        successText: typeof form.successText === "string" ? form.successText : undefined,
+      }))
+      .filter((form) => form.fields.length > 0),
     // Scripted opening sequence + starter chips (widget-side). Persona (tone/style) is the
     // server-only half and is NOT projected. Caps mirror the widget render limits (§3.7).
     script: {
@@ -140,6 +183,9 @@ export function resolveSiteId(raw: string | null | undefined): string | undefine
 // ── key builders (pure) ──────────────────────────────────────────────────────
 export const kThreadToSession = (t: string, threadId: number) => `thread:${t}:${threadId}`;
 export const kSessionToThread = (t: string, sessionId: string) => `session:${t}:${sessionId}`;
+export const kHandoffSession = (t: string, sessionId: string) => `handoff:${t}:${sessionId}`;
+export const kConversationSession = (t: string, sessionId: string) =>
+  `conversation:${encodeURIComponent(t)}:${encodeURIComponent(sessionId)}`;
 // Config blob is per-site: an unsuffixed tenant keeps `tenant:<t>` exactly.
 export const kTenant = (t: string, siteId?: string) => `tenant:${ns(t, siteId)}`;
 // Relearning suggestions live under their OWN per-site key — NOT the config blob — so a
@@ -160,8 +206,8 @@ export function monthKey(now = new Date()): string {
 
 // ── tenant config ────────────────────────────────────────────────────────────
 // "self" (single-tenant self-host) is assembled from env secrets; any other
-// tenant is a JSON blob in KV. Missing/incomplete config → null (Telegram off,
-// chat still works — see chat flow's graceful degradation).
+// tenant is a JSON blob in KV. Telegram credentials are optional for Cloud:
+// Buttr is the operator channel, while prompt/theme/forms still govern chat.
 export async function getTenant(
   env: Env,
   tenantId: string,
@@ -184,8 +230,15 @@ export async function getTenant(
   }
   const raw = await env.KRISPY_KV.get(kTenant(tenantId, siteId));
   if (!raw) return null;
-  const cfg = JSON.parse(raw) as Partial<TenantConfig>;
-  return cfg.botToken && cfg.chatId ? (cfg as TenantConfig) : null;
+  return JSON.parse(raw) as TenantConfig;
+}
+
+export type TelegramTenantConfig = TenantConfig & { botToken: string; chatId: string };
+
+/** Narrow a tenant to the optional Telegram delivery channel. App-only Cloud
+ * tenants remain valid configs for prompts, Buttr handoff, forms, and email. */
+export function hasTelegramConfig(tenant: TenantConfig | null): tenant is TelegramTenantConfig {
+  return !!tenant?.botToken && !!tenant.chatId;
 }
 
 // ── tenant config sync (krispy CLI / your own tooling → gate) ────────────────
@@ -193,7 +246,7 @@ export async function getTenant(
 // tenant's Telegram creds + prompt/model here so getTenant() picks them up, via the
 // POST /api/tenant/config route. Same KV key + shape getTenant() reads (kTenant → a
 // Partial<TenantConfig> JSON blob). Read raw so a partial config (e.g. prompt saved
-// before creds) still round-trips — getTenant() itself gates on both botToken+chatId.
+// before optional Telegram creds) still round-trips and governs app-only chat.
 export async function readTenantConfig(
   env: Env,
   tenantId: string,
@@ -212,7 +265,9 @@ export async function mergeTenantConfig(
 ): Promise<Partial<TenantConfig>> {
   const next: Partial<TenantConfig> = { ...(await readTenantConfig(env, tenantId, siteId)) };
   for (const [k, v] of Object.entries(patch)) {
-    if (v !== undefined) (next as Record<string, unknown>)[k] = v;
+    if (v !== undefined)
+      (next as Record<string, unknown>)[k] =
+        k === "callSettings" ? { ...next.callSettings, ...(v as TenantConfig["callSettings"]) } : v;
   }
   await env.KRISPY_KV.put(kTenant(tenantId, siteId), JSON.stringify(next));
   return next;
@@ -370,6 +425,25 @@ export async function getThreadForSession(
 ): Promise<number | null> {
   const v = await env.KRISPY_KV.get(kSessionToThread(t, sessionId));
   return v ? Number(v) : null;
+}
+
+/**
+ * Index a handoff independently of the optional Telegram topic map. This write is
+ * idempotent and can safely happen before the DO transition: a failed transition
+ * leaves an `ai` summary that the inbox filters out, while a failed index write can
+ * never leave a pending session undiscoverable.
+ */
+export async function indexHandoffSession(env: Env, t: string, sessionId: string): Promise<void> {
+  await env.KRISPY_KV.put(kHandoffSession(t, sessionId), "1");
+}
+
+/** Index an entitled chat for the operator inbox without touching Telegram mappings. */
+export async function indexConversationSession(
+  env: Env,
+  t: string,
+  sessionId: string,
+): Promise<void> {
+  await env.KRISPY_KV.put(kConversationSession(t, sessionId), "1");
 }
 
 export async function getSessionForThread(

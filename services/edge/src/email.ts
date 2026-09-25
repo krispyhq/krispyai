@@ -89,9 +89,9 @@ export async function sendLeadEmail(
   to: string | undefined,
   mail: LeadEmail,
   fetchImpl: FetchLike = fetch,
-): Promise<void> {
-  if (!apiKey || !to) return; // degrade quietly — like Telegram-off
-  await fetchImpl("https://api.resend.com/emails", {
+): Promise<boolean> {
+  if (!apiKey || !to) return false;
+  const response = await fetchImpl("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       authorization: `Bearer ${apiKey}`,
@@ -105,5 +105,6 @@ export async function sendLeadEmail(
       reply_to: mail.replyTo, // JSON.stringify drops the key when undefined — omitted, not null
     }),
     signal: AbortSignal.timeout(10_000), // stalled Resend can't hang the Worker
-  }).catch(() => {}); // email is best-effort; never block the lead response
+  }).catch(() => null);
+  return response?.ok === true;
 }

@@ -20,18 +20,28 @@ if (!["preview", "production"].includes(ENV)) {
 }
 
 // The edge Env's secret-shaped bindings (src/types.ts). Plain config vars
-// (ALLOWED_ORIGIN, API_ORIGIN, AI_MODEL, …) stay in wrangler.toml [vars] — not here.
+// (ALLOWED_ORIGIN, API_ORIGIN, AI_MODEL, …) stay in wrangler.toml [vars]. The optional
+// private knowledge gateway settings below use the same per-key secret API so this
+// deploy step can source them from Infisical without touching unrelated bindings.
 const EDGE_SECRET_KEYS = [
   "ADMIN_USAGE_SECRET",
   "AI_API_KEY",
   "BILLING_SYNC_SECRET",
   "DO_INTERNAL_SECRET",
+  "KNOWLEDGE_GATEWAY_SECRET",
+  "LEAD_EMAIL_FROM",
   "PUSH_TOKENS_SECRET",
   "RESEND_API_KEY",
   "TELEGRAM_BOT_TOKEN",
   "TELEGRAM_CHAT_ID",
   "TELEGRAM_WEBHOOK_SECRET",
   "TENANT_SYNC_SECRET",
+];
+const EDGE_KNOWLEDGE_CONFIG_KEYS = [
+  "KNOWLEDGE_GATEWAY_URL",
+  "KNOWLEDGE_TENANT_ID",
+  "KNOWLEDGE_SITE_ID",
+  "KNOWLEDGE_TIMEOUT_MS",
 ];
 
 let raw;
@@ -59,6 +69,8 @@ if (!TOKEN || !ACCT) {
 const worker = ENV === "production" ? "krispy-edge" : "krispy-edge-preview";
 const present = EDGE_SECRET_KEYS.filter((k) => L[k]);
 const absent = EDGE_SECRET_KEYS.filter((k) => !L[k]);
+const presentKnowledgeConfig = EDGE_KNOWLEDGE_CONFIG_KEYS.filter((k) => L[k]);
+const absentKnowledgeConfig = EDGE_KNOWLEDGE_CONFIG_KEYS.filter((k) => !L[k]);
 
 console.log(`→ ${worker}: syncing ${present.length} secret(s)${DRY ? " (dry-run)" : ""}`);
 for (const key of present) {
@@ -82,4 +94,31 @@ for (const key of present) {
   console.log(`  ✔ ${key}`);
 }
 if (absent.length) console.log(`  ⚠ skipped (absent in .env.local): ${absent.join(", ")}`);
+console.log(
+  `→ ${worker}: syncing ${presentKnowledgeConfig.length} knowledge config binding(s)${DRY ? " (dry-run)" : ""}`,
+);
+for (const key of presentKnowledgeConfig) {
+  if (DRY) {
+    console.log(`  · ${key} (would PUT)`);
+    continue;
+  }
+  const res = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${ACCT}/workers/scripts/${worker}/secrets`,
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: key, text: L[key], type: "secret_text" }),
+    },
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body.success) {
+    console.error(`  ✘ ${key} — CF API ${res.status}`);
+    process.exit(1);
+  }
+  console.log(`  ✔ ${key}`);
+}
+if (absentKnowledgeConfig.length)
+  console.log(
+    `  ⚠ skipped (absent in .env.local; existing binding unchanged): ${absentKnowledgeConfig.join(", ")}`,
+  );
 console.log(`✔ edge secret sync complete (${ENV}).`);

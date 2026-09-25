@@ -49,12 +49,14 @@ export interface Connector extends CtaFields {
 
 // ── Widget theme (Feature B) ──────────────────────────────────────────────
 export interface WidgetTheme {
+  launcherStyle?: "circle" | "pill"; // default circle; pill shows a short label while closed
+  launcherLabel?: string; // pill text; widget trims to 24 characters, defaults to header title
   primaryColor?: string; // header + visitor bubble + send button. Default gold #e39a2b
-  launcherColor?: string; // FAB only (defaults to primaryColor)
+  launcherColor?: string; // optional mascot badge fill; unset/"transparent" keeps Buttr floating
   glowColor?: string; // hex → drives glow/sparkle/pulse rgba stops. UNSET = no glow
   // layer at all (default) — the launcher keeps today's neutral look
   position?: "br" | "bl"; // bottom-right | bottom-left. Default "br"
-  avatar?: string; // "buttr" (default, inline data-URI) | https URL | data:image/… URI
+  avatar?: string; // "buttr" (default) | "none" | https URL | data:image/… URI
   greeting?: string; // first bot bubble on open
   headerTitle?: string; // header text (supersedes legacy data-title)
   tagline?: string; // header sub-line ("usually replies in minutes")
@@ -130,10 +132,17 @@ export interface KbSuggestion {
 }
 
 export interface TenantConfig {
-  /** Telegram bot token (BotFather). */
-  botToken: string;
-  /** Target supergroup id WITH topics enabled, e.g. -1001234567890. */
-  chatId: string;
+  /** Audio calls are opt-in; visitor requests can be limited to human handoff. */
+  callSettings?: {
+    enabled?: boolean;
+    visitorRequestsEnabled?: boolean;
+    visitorRequestTrigger?: "after_handoff" | "always";
+    notifyOnVisitorRequest?: boolean;
+  };
+  /** Telegram bot token (BotFather). Optional for app-only Cloud tenants. */
+  botToken?: string;
+  /** Target supergroup id WITH topics enabled. Optional for app-only Cloud tenants. */
+  chatId?: string;
   /** Optional system-prompt override. */
   systemPrompt?: string;
   /** Optional model override. */
@@ -193,6 +202,8 @@ export interface Env {
   TELEGRAM_WEBHOOK_SECRET?: string;
   SYSTEM_PROMPT?: string;
   AI_MODEL?: string;
+  /** Server-only Gemini API key for the exact KNOWLEDGE_TENANT_ID/SITE_ID pilot. */
+  GEMINI_API_KEY?: string;
   // --- turn-tax cost knobs (all optional; sensible defaults in code) ---
   /** Sliding-window size the AI sees, default MAX_HISTORY_MSGS (8). */
   MAX_HISTORY_MSGS?: string;
@@ -200,15 +211,28 @@ export interface Env {
   MAX_AI_TURNS?: string;
   /** Output token cap per reply, default MAX_OUTPUT_TOKENS (256). */
   MAX_OUTPUT_TOKENS?: string;
+  /** Preview-only stage timing logs for diagnosing slow chat replies. */
+  CHAT_TIMING_DEBUG?: string;
   /** Operator-silence minutes before a handed-off session hands back to the AI,
    * default HANDBACK_SILENCE_MINUTES (5). */
   HANDBACK_SILENCE_MINUTES?: string;
 
   // --- misc ---
-  /** CORS allow-origin for the widget. Default "*". */
+  /** CORS allow-origin for the widget. Default "*". Accepts a comma-separated
+   * list ("https://app.example.com,https://example.com"): the request's own
+   * Origin is echoed back when it matches an entry (the CORS header can only
+   * carry one origin), the first entry otherwise. */
   ALLOWED_ORIGIN?: string;
-  /** BYO AI provider key (future adapter). */
-  AI_API_KEY?: string;
+  /** Optional private retrieval gateway. Never projected to widget config. */
+  KNOWLEDGE_GATEWAY_URL?: string;
+  /** Server-only bearer credential for the retrieval gateway. */
+  KNOWLEDGE_GATEWAY_SECRET?: string;
+  /** Exact pilot tenant binding; mismatches disable retrieval. */
+  KNOWLEDGE_TENANT_ID?: string;
+  /** Exact pilot site binding; empty means the default site. */
+  KNOWLEDGE_SITE_ID?: string;
+  /** Retrieval deadline in milliseconds, default 250. */
+  KNOWLEDGE_TIMEOUT_MS?: string;
   /** Shared secret guarding POST /api/billing/entitlement (billing → gate push). */
   BILLING_SYNC_SECRET?: string;
   /** Shared secret guarding GET /internal/usage (Krispy Cloud admin → per-tenant KV
@@ -226,6 +250,12 @@ export interface Env {
   /** Shared secret the Worker attaches to internal Worker→SessionDO calls (rotatable;
    * a build-time default is used when unset — DOs aren't publicly addressable). */
   DO_INTERNAL_SECRET?: string;
+  /** Optional self-hosted or Cloud LiveKit signaling URL; calls fail closed when absent. */
+  LIVEKIT_URL?: string;
+  LIVEKIT_API_KEY?: string;
+  LIVEKIT_API_SECRET?: string;
+  /** Pinned, trusted browser UMD bundle URL for livekit-client; no runtime widget deps. */
+  LIVEKIT_CLIENT_URL?: string;
 
   // --- operator-app push (Buttr; optional — unset → pushToApp no-ops) ---
   /** Cloud endpoint returning a tenant's Expo push tokens (see push.ts contract). */
@@ -240,13 +270,39 @@ export interface Env {
   LEAD_EMAIL_FROM?: string;
 }
 
+/** Strongly-consistent owner of the next reply for one chat session. */
+export type HandoffState = "ai" | "pending" | "operator";
+
+/** A safe, resolved snapshot of a configured item sent by a human operator. */
+export type OperatorAction =
+  | { kind: "form"; form: Pick<FormSpec, "id" | "title" | "fields" | "successText"> }
+  | {
+      kind: "instagram";
+      connector: { id: string; type: "instagram"; label: string; caption?: string; url: string };
+    };
+
+export interface SessionMessage {
+  role: "visitor" | "ai" | "operator";
+  text: string;
+  ts: number;
+  action?: OperatorAction;
+}
+
 /** Message pushed over the DO WebSocket to the visitor's browser. */
 export type ServerEvent =
-  | { type: "ready"; handedOff: boolean }
-  | { type: "operator"; text: string }
-  | { type: "handoff" }
+  | { type: "call"; call: ReturnType<typeof import("./call").publicCall>; nonce?: string }
+  | {
+      type: "ready";
+      handoffState: HandoffState;
+      handedOff: boolean;
+      /** Authoritative ring snapshot for clients reconnecting after backgrounding. */
+      messages?: SessionMessage[];
+    }
+  | { type: "operator"; handoffState: "operator"; text: string; ts: number }
+  | { type: "action"; handoffState: "operator"; text: string; ts: number; action: OperatorAction }
+  | { type: "handoff"; handoffState: "pending" | "operator" }
   /** The AI took the session back (operator resolved it, or went silent past the
    * HANDBACK_SILENCE_MINUTES alarm). Widget drops its "human joined" framing. */
-  | { type: "resume" }
+  | { type: "resume"; handoffState: "ai" }
   /** Live visitor/AI ring-append mirrored to `role=operator` sockets only (Buttr thread, §3d/§6). */
   | { type: "message"; role: "visitor" | "ai"; text: string; ts: number };

@@ -37,6 +37,92 @@ tags:
     description: Carry a bot token or mutate config — require a shared-secret header.
 
 paths:
+  /api/call:
+    post:
+      tags: [public]
+      summary: Visitor audio call control
+      operationId: visitorCall
+      description: >
+        Requires the session's registered visitorSecret capability. `invite` requires
+        enabled visitor requests and, by default, an active human handoff. A new
+        visitor request sends one operator push; repeating it while ringing is
+        idempotent. `status` includes availableToRequest, which never claims an
+        operator is online. The invitation recipient accepts or declines, the
+        requester cancels, and either participant may end an accepted call.
+        `grant` issues a room token only after acceptance.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionId, visitorSecret, action]
+              properties:
+                tenantId: { type: string }
+                sessionId: { type: string }
+                visitorSecret: { type: string }
+                action:
+                  { type: string, enum: [status, invite, accept, decline, cancel, end, grant] }
+                id: { type: string, description: "Required except for status and invite." }
+                nonce:
+                  { type: string, description: "Required for visitor transitions after invite." }
+      responses:
+        "200":
+          description: Call status, transition result, or short lived LiveKit grant.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  call: { $ref: "#/components/schemas/AudioCall" }
+                  nonce: { type: string }
+                  available: { type: boolean }
+                  availableToRequest: { type: boolean }
+                  url: { type: string }
+                  token: { type: string }
+                  clientUrl: { type: string }
+        "400": { description: "Invalid request body." }
+        "401": { description: "Visitor capability missing." }
+        "403": { description: "Wrong actor, nonce, or disabled call setting." }
+        "409": { description: "Stale call, missing handoff, or unavailable visitor." }
+        "429": { description: "Visitor request limited to one new request per minute." }
+        "502": { description: "Room disconnect failed after an end transition." }
+        "503": { description: "RTC unavailable or previous room cleanup pending." }
+  /api/operator/call:
+    post:
+      tags: [secret-guarded]
+      summary: Operator audio call control
+      operationId: operatorCall
+      description: >
+        Same session call as /api/call. Operators may invite a connected visitor,
+        accept or decline a visitor request, cancel their own invitation, end an
+        accepted call, or obtain a grant after acceptance. Requires an operator
+        bearer or tenant sync secret.
+      security:
+        - operatorBearer: []
+        - tenantSyncSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenantId, sessionId, action]
+              properties:
+                tenantId: { type: string }
+                sessionId: { type: string }
+                action:
+                  { type: string, enum: [status, invite, accept, decline, cancel, end, grant] }
+                id: { type: string }
+      responses:
+        "200": { description: "Call status, transition result, or room grant." }
+        "400": { description: "Invalid request body." }
+        "401": { description: "Operator authentication required." }
+        "403": { description: "Wrong actor or calls disabled." }
+        "409": { description: "Stale call or visitor unavailable for operator invite." }
+        "502": { description: "Room disconnect failed." }
+        "503": { description: "RTC unavailable or cleanup pending." }
   /health:
     get:
       tags: [public]
@@ -63,7 +149,9 @@ paths:
       description: >
         Before answering, the Worker checks entitlement + plan limits. The self-host tenant
         (`"self"`) is always entitled and unmetered; a non-self tenant with no valid snapshot
-        gets 402, and one over its cap gets 429.
+        gets 402, and one over its cap gets 429. After escalation, `handoffState: pending`
+        keeps later visitor messages flowing to the operator and ring while suppressing AI;
+        `operator` begins only with a human reply, and resolve/handback returns it to `ai`.
       security: [] # public — no auth
       requestBody:
         required: true
@@ -135,7 +223,9 @@ paths:
         The generalized lead endpoint: a data-driven form's `values` fan out to the tenant's
         DELIVERY connectors (Telegram topic + email via Resend). `whatsapp`/`instagram`
         connectors are CTA-only — nothing is delivered server-side for them. Rate-limited per
-        (tenant, session).
+        (tenant, session). For a configured form with an email delivery connector,
+        success requires an accepted email delivery; a failed delivery returns 502
+        so the widget keeps the form available for retry.
       security: [] # public — no auth
       requestBody:
         required: true
@@ -158,6 +248,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: delivery_failed — the configured form's email was not accepted for delivery.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/widget/config:
     get:
@@ -166,9 +261,9 @@ paths:
       operationId: widgetConfig
       description: >
         The widget's boot-time read of its appearance/forms. Returns ONLY the whitelist
-        projection (`theme`, `ctas`, `script`, `popups`) — NEVER botToken/chatId/systemPrompt/
-        persona. Do not confuse with the secret-guarded `GET /api/tenant/config`, which
-        returns the full config.
+        projection (`capabilities`, `theme`, `ctas`, `forms`, `script`, `popups`) — NEVER
+        botToken/chatId/systemPrompt/persona. Do not confuse with the secret-guarded
+        `GET /api/tenant/config`, which returns the full config.
       security: [] # public — no auth
       parameters:
         - $ref: "#/components/parameters/Tenant"
@@ -180,6 +275,13 @@ paths:
               schema:
                 type: object
                 properties:
+                  capabilities:
+                    type: object
+                    required: [attachments]
+                    properties:
+                      attachments:
+                        type: boolean
+                        description: "Whether screenshot paste/drop has a configured Telegram delivery channel."
                   theme: { $ref: "#/components/schemas/WidgetTheme" }
                   ctas:
                     type: array
@@ -193,6 +295,19 @@ paths:
                         caption: { type: string }
                         url: { type: string, description: "wa.me/tel/https, built server-side." }
                         showAfterMs: { type: integer }
+                  forms:
+                    type: array
+                    description: "Visitor-renderable configured forms. Delivery connector IDs and destinations remain server-side."
+                    items:
+                      type: object
+                      required: [id, title, fields]
+                      properties:
+                        id: { type: string }
+                        title: { type: string }
+                        fields:
+                          type: array
+                          items: { $ref: "#/components/schemas/FormField" }
+                        successText: { type: string }
                   script: { $ref: "#/components/schemas/ConversationScript" }
                   popups:
                     type: array
@@ -260,8 +375,11 @@ paths:
       operationId: sessionWs
       description: >
         A WebSocket upgrade request; the Worker forwards it to the `(tenant, session)` DO. The
-        visitor receives `{ type: "ready", handedOff }` on connect, then `operator` / `handoff`
-        / `resume` events. `{ type: "resume" }` = the AI took the session back — sent when an
+        visitor receives `{ type: "ready", handoffState, handedOff }` on connect, then
+        `operator` / `handoff` / `resume` events carrying the resulting `handoffState`.
+        `pending` means a human was notified but has not replied, so reconnecting widgets show
+        a waiting message rather than claiming somebody joined. `{ type: "resume" }` = the AI
+        took the session back — sent when an
         operator resolves it (app swipe, `/api/operator/resolve`, Telegram `/done`) or when the
         operator-silence alarm fires (`HANDBACK_SILENCE_MINUTES` after a visitor message on a
         handed-off session with no operator reply, default 5). The widget drops its "human
@@ -322,8 +440,9 @@ paths:
       operationId: operatorReply
       description: >
         The Buttr operator app's reply — the second trigger of the same SessionDO handoff spine
-        Telegram uses. Sets `handedOff`, appends the reply to the session's 20-message ring
-        buffer, and broadcasts `{ type: "operator", text }` to the visitor's WebSocket. The
+        Telegram uses. Moves the session from `pending` to `operator`, sets `handedOff`,
+        appends the reply to the session's 20-message ring buffer, and broadcasts
+        `{ type: "operator", handoffState: "operator", text }` to the visitor's WebSocket. The
         replying operator is learned with `channel: 'app'`, so the Telegram handoff @mention
         skips them (they get the push instead). Metered as a handoff. Auth: the app's bearer
         is verified in-Worker against the cloud API's `GET /me` and must resolve to the
@@ -363,19 +482,157 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /api/operator/reply-drafts:
+    post:
+      tags: [public]
+      summary: Generate up to three editable, contextual operator reply drafts
+      operationId: operatorReplyDrafts
+      description: >
+        Operator-only read of the server-side 20-message session ring and tenant knowledge.
+        The session's recorded site selects knowledge and provider; an optional siteId is
+        only an assertion and a mismatch is rejected.
+        Uses the tenant's configured AI provider; direct Gemini remains restricted to the
+        approved tenant/site pilot. Never sends to the visitor. A request is limited to
+        20 generations per tenant/session/hour (coarse KV counter; concurrent bursts may
+        exceed the limit). Source material, transcript, output tokens
+        and generation time are bounded. Empty drafts mean no supported suggestion was
+        available. The source revision and last message timestamp let a client discard
+        drafts after any transcript change; if the ring changes during generation, the
+        server returns empty drafts with `stale: true` and the newer revision.
+      security:
+        - operatorBearer: []
+        - tenantSyncSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OperatorActionContext" }
+      responses:
+        "200":
+          description: Editable drafts, or an empty array when unavailable.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [drafts, sourceRevision, sourceLastMessageTs]
+                properties:
+                  drafts:
+                    type: array
+                    maxItems: 3
+                    items: { type: string, maxLength: 500 }
+                  sourceRevision:
+                    { type: [string, "null"], description: SHA-256 of the server-side ring. }
+                  sourceLastMessageTs: { type: [integer, "null"] }
+                  stale: { type: boolean }
+        "400": { description: Missing tenant/session or invalid siteId. }
+        "401": { description: Missing or invalid operator credentials. }
+        "403": { description: Operator belongs to another tenant or site assertion mismatches. }
+        "404": { description: Session has no recorded tenant identity. }
+        "429": { description: Session generation limit reached; drafts is empty. }
+
+  /api/operator/actions:
+    post:
+      tags: [public]
+      summary: List configured form and Instagram actions for a visitor session
+      operationId: operatorActions
+      description: >
+        Requires an operator bearer or tenant-sync secret. The session's durable identity
+        determines its site; optional siteId must match. Only configured visitor-facing
+        Instagram connectors with HTTPS URLs are returned. No connector credentials are exposed.
+      security:
+        - operatorBearer: []
+        - tenantSyncSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OperatorActionContext" }
+      responses:
+        "200":
+          description: Safe action choices for the session's site.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [forms, connectors]
+                properties:
+                  forms:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, title]
+                      properties:
+                        id: { type: string }
+                        title: { type: string }
+                  connectors:
+                    type: array
+                    items: { $ref: "#/components/schemas/OperatorInstagramConnector" }
+        "400": { description: Missing tenant/session or invalid siteId. }
+        "401": { description: Missing or invalid operator credentials. }
+        "403": { description: Tenant or site mismatch. }
+        "404": { description: Session has no recorded identity. }
+
+  /api/operator/send-action:
+    post:
+      tags: [public]
+      summary: Send a configured form or Instagram CTA card to a visitor
+      operationId: operatorSendAction
+      description: >
+        Authenticates and resolves the configured item from the session's tenant and site.
+        The resolved safe card is durably appended to the session ring and pushed by WebSocket.
+        Moves handoff state to operator and meters one handoff.
+      security:
+        - operatorBearer: []
+        - tenantSyncSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/OperatorActionContext" }
+                - type: object
+                  required: [kind, id]
+                  properties:
+                    kind: { type: string, enum: [form, instagram] }
+                    id: { type: string }
+      responses:
+        "200":
+          description: Card stored and broadcast.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, delivered, action]
+                properties:
+                  ok: { type: boolean, const: true }
+                  delivered:
+                    {
+                      type: integer,
+                      description: Number of live visitor WebSocket recipients; operator echoes are excluded.,
+                    }
+                  action: { $ref: "#/components/schemas/OperatorAction" }
+        "400": { description: Missing or malformed request fields. }
+        "401": { description: Missing or invalid operator credentials. }
+        "403": { description: Tenant or site mismatch. }
+        "404": { description: Session or configured action not found. }
+
   /api/operator/handoffs:
     post:
       tags: [public]
-      summary: Operator app inbox — the tenant's handed-off sessions
+      summary: Operator app inbox — the tenant's unresolved conversations
       operationId: operatorHandoffs
       description: >
-        Every handed-off session for the tenant, newest activity first, each with a
-        `lastMessage` preview from the session's ring buffer. Resolved sessions are
+        With `includeActive: true`, every unresolved session for the tenant is listed, including
+        AI-only conversations; legacy callers omit it to receive pending/operator-owned sessions.
+        Results are newest activity first, each with a `lastMessage` preview from the session's ring buffer. Resolved sessions are
         EXCLUDED by default; pass `includeResolved: true` to list them too (rows carry
-        `resolved: true` and `handedOff: false` — resolving hands the session back to
-        the AI). No dedicated handoff index
-        exists — the Worker scans the session→thread KV map (first page, 1000 sessions) and
-        asks each SessionDO for a one-shot summary.
+        `resolved: true`, `handoffState: ai` and `handedOff: false` — resolving hands the session back to
+        the AI). New conversations use a Telegram-independent `handoff:<tenant>:<session>` KV
+        index; active chats use a separate `conversation:<tenant>:<session>` index. The Worker
+        unions those with the legacy session→thread index, de-duplicates session ids, and asks
+        each SessionDO for a one-shot summary. Telegram is not required for Buttr inbox discovery,
+        and topic linking cannot overwrite the discovery indexes.
       security:
         - operatorBearer: []
         - tenantSyncSecret: []
@@ -392,6 +649,10 @@ paths:
                   type: boolean
                   default: false
                   description: Also list resolved sessions.
+                includeActive:
+                  type: boolean
+                  default: false
+                  description: Also list unresolved AI-only conversations.
       responses:
         "200":
           description: The inbox list.
@@ -465,7 +726,8 @@ paths:
       operationId: operatorResolve
       description: >
         Toggle the session's `resolved` flag in its SessionDO. Resolving ALSO hands the
-        session back to the AI — `handedOff` flips false and `{ type: "resume" }` is
+        session back to the AI — pending/operator state becomes `handoffState: ai`,
+        `handedOff` flips false, and `{ type: "resume", handoffState: "ai" }` is
         broadcast to the session's WebSockets (the widget drops its "human joined"
         framing), so the bot answers the visitor's next message. Resolved sessions drop
         out of the default `/api/operator/handoffs` inbox; toggling again un-resolves
@@ -632,7 +894,7 @@ paths:
         "400":
           description: >
             Missing `tenantId` or `config`, or a malformed value — `avatar_scheme_invalid`
-            (`theme.avatar` must be `buttr`, `https://…`, or
+            (`theme.avatar` must be `buttr`, `none`, `https://…`, or
             `data:image/(png|webp|jpeg);base64,…`) or `cta_url_not_https` (connector
             `profileUrl`/`url` must be https).
           content:
@@ -669,8 +931,11 @@ components:
       description: >
         The operator app's session token (krispyai-cloud Better Auth bearer). The Worker
         verifies it against the cloud API's `GET /me` (`API_ORIGIN`) and requires the
-        resolved `user.id` to equal the request's `tenantId` — a valid token for a
-        DIFFERENT tenant is 403. Verified tokens are cached in-isolate for 60s.
+        server-resolved `tenantId` to equal the request's `tenantId` — this allows a
+        verified teammate's token to operate the owner's tenant, while a valid token for
+        a DIFFERENT tenant is 403. Older `/me` responses without `tenantId` use `user.id`
+        as a backwards-compatible fallback; malformed identity fields fail closed.
+        Verified tokens are cached in-isolate for 60s.
         On the WebSocket upgrade the same token is passed as the `auth` query parameter
         (RN/browsers cannot set headers on a WS upgrade).
     tenantSyncSecret:
@@ -747,6 +1012,48 @@ components:
         ts:
           type: integer
           description: Unix epoch millis, stamped at append time.
+        action: { $ref: "#/components/schemas/OperatorAction" }
+
+    OperatorActionContext:
+      type: object
+      required: [tenantId, sessionId]
+      properties:
+        tenantId: { type: string }
+        sessionId: { type: string }
+        siteId:
+          { type: string, description: Optional assertion against the session's recorded site. }
+
+    OperatorInstagramConnector:
+      type: object
+      required: [id, type, label, url]
+      properties:
+        id: { type: string }
+        type: { type: string, const: instagram }
+        label: { type: string }
+        caption: { type: string }
+        url: { type: string, format: uri, description: Configured HTTPS profile URL. }
+
+    OperatorAction:
+      oneOf:
+        - type: object
+          required: [kind, form]
+          properties:
+            kind: { type: string, const: form }
+            form:
+              type: object
+              required: [id, title, fields]
+              properties:
+                id: { type: string }
+                title: { type: string }
+                fields:
+                  type: array
+                  items: { $ref: "#/components/schemas/FormField" }
+                successText: { type: string }
+        - type: object
+          required: [kind, connector]
+          properties:
+            kind: { type: string, const: instagram }
+            connector: { $ref: "#/components/schemas/OperatorInstagramConnector" }
 
     OperatorReplyRequest:
       type: object
@@ -768,17 +1075,19 @@ components:
           description: Newest activity first.
           items:
             type: object
-            required: [sessionId, lastMessage, handedOff, ts, resolved]
+            required: [sessionId, siteId, lastMessage, handoffState, handedOff, ts, resolved]
             properties:
               sessionId: { type: string }
+              siteId: { type: string, description: Session's recorded site (default when absent). }
               lastMessage:
                 type: [string, "null"]
                 description: The ring-buffer tail (null when the ring is empty).
               handedOff:
                 type: boolean
                 description: >
-                  True on default-inbox rows. Resolved rows (via `includeResolved: true`)
-                  carry false — resolving hands the session back to the AI.
+                  Backwards-compatible operator-took-over flag. False while pending and after
+                  resolve; use `handoffState` to distinguish those cases.
+              handoffState: { $ref: "#/components/schemas/HandoffState" }
               ts:
                 type: [integer, "null"]
                 description: Epoch millis of the last message (null when the ring is empty).
@@ -819,19 +1128,27 @@ components:
             message of a legacy session) or when the ring read fails/times out
             (~1.5s guard). A non-empty ring always wins — spoofed history is ignored.
 
+    HandoffState:
+      type: string
+      enum: [ai, pending, operator]
+      description: >
+        Who owns the next reply. `pending` starts when escalation notifies a human;
+        `operator` starts with their first reply; resolve or silence handback restores `ai`.
+
     ChatResult:
       type: object
-      required: [reply, handoff, handedOff]
+      required: [reply, handoff, handedOff, handoffState]
       properties:
         reply:
           type: [string, "null"]
-          description: Visitor-facing reply, or null when a human operator is driving.
+          description: Visitor-facing reply, or null while a handoff is pending/operator-owned.
         handoff:
           type: boolean
-          description: The AI asked to escalate → the widget should offer contact/lead capture.
+          description: True only on the turn that initiated escalation and contact capture.
         handedOff:
           type: boolean
-          description: An operator already owns this session (bot is silent).
+          description: Backwards-compatible true only after an operator replies.
+        handoffState: { $ref: "#/components/schemas/HandoffState" }
         degraded:
           type: boolean
           description: The AI was unavailable and the Worker fell back to a human.
@@ -914,12 +1231,23 @@ components:
       type: object
       description: Public widget appearance projection (all fields optional).
       properties:
+        launcherStyle:
+          { type: string, enum: [circle, pill], description: "Launcher shape. Default circle." }
+        launcherLabel:
+          {
+            type: string,
+            description: "Pill label; displayed trimmed to 24 characters. Defaults to the widget title.",
+          }
         primaryColor:
           {
             type: string,
             description: "Header + visitor bubble + send button. Default gold #e39a2b.",
           }
-        launcherColor: { type: string, description: "FAB only; defaults to primaryColor." }
+        launcherColor:
+          {
+            type: string,
+            description: "Optional mascot badge fill. Unset or transparent keeps Buttr floating without a disc.",
+          }
         position:
           { type: string, enum: [br, bl], description: "bottom-right | bottom-left. Default br." }
         glowColor:
@@ -930,7 +1258,7 @@ components:
         avatar:
           {
             type: string,
-            description: '"buttr" (default), an https URL, or a data:image/… URI (≤48KB).',
+            description: '"buttr" (default), "none" for a text-only header, an https URL, or a data:image/… URI (≤48KB).',
           }
         greeting: { type: string, description: "First bot bubble on open." }
         headerTitle: { type: string }
@@ -1094,20 +1422,44 @@ components:
         name: { type: string, description: "display name; mention label when no username." }
         username: { type: string, description: "public @username (preferred — plain @mention)." }
 
+    AudioCall:
+      type: object
+      required: [id, status, requestedBy, createdAt, expiresAt]
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [ringing, accepted, declined, canceled, expired, ended] }
+        requestedBy: { type: string, enum: [operator, visitor] }
+        createdAt: { type: integer }
+        expiresAt: { type: integer }
+        acceptedAt: { type: integer }
+        endedAt: { type: integer }
+
     TenantConfig:
       type: object
-      required: [botToken, chatId]
       description: >
         The full tenant record `getTenant()` consumes. Returned in full only by the
-        secret-guarded GET /api/tenant/config.
+        secret-guarded GET /api/tenant/config. Telegram credentials are optional for
+        Cloud tenants using the Buttr operator app.
       properties:
-        botToken: { type: string, description: "Telegram bot token (BotFather)." }
+        botToken: { type: string, description: "Optional Telegram bot token (BotFather)." }
         chatId:
-          { type: string, description: "Supergroup id with Topics enabled, e.g. -1001234567890." }
+          {
+            type: string,
+            description: "Optional supergroup id with Topics enabled, e.g. -1001234567890.",
+          }
         systemPrompt: { type: string }
         model: { type: string }
         onboardingStep: { type: integer }
         onboardingComplete: { type: boolean }
+        callSettings:
+          type: object
+          description: "Audio calls are opt-in; omitted booleans default to disabled."
+          properties:
+            enabled: { type: boolean }
+            visitorRequestsEnabled: { type: boolean }
+            visitorRequestTrigger:
+              { type: string, enum: [after_handoff, always], default: after_handoff }
+            notifyOnVisitorRequest: { type: boolean, default: true }
         forms:
           type: array
           items: { $ref: "#/components/schemas/FormSpec" }

@@ -29,16 +29,23 @@ id = "120c1cccc84c455eab7b9e30ca346379" # `bunx wrangler kv namespace create KRI
 #   TELEGRAM_BOT_TOKEN        BotFather token
 #   TELEGRAM_CHAT_ID          supergroup id with Topics enabled (e.g. -1001234567890)
 #   TELEGRAM_WEBHOOK_SECRET   random string; also passed to setWebhook (secret_token)
+#   LIVEKIT_API_KEY           optional calls: LiveKit project key
+#   LIVEKIT_API_SECRET        optional calls: LiveKit project secret
 # ── optional vars ─────────────────────────────────────────────────────────────
 [vars]
 ALLOWED_ORIGIN = "*" # lock to your site origin in production
 # AI_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+# AI_MODEL = "gemini-3.1-flash-lite" # only exact KNOWLEDGE_TENANT_ID/SITE_ID pilot; requires GEMINI_API_KEY
 # SYSTEM_PROMPT = "You are ..."
 # Cloud API origin that verifies operator bearer tokens (GET /me) for the
 # /api/operator/* routes + the ?role=operator WS upgrade. Unset → operator
 # bearer auth FAILS CLOSED (self-host without the Buttr app doesn't need it).
 # Local dev: point at your local cloud API (e.g. via portless). NEVER a secret.
 # API_ORIGIN = "http://api.krispy.localhost:1355"
+# Audio calls remain unavailable until all four values are configured in each
+# target environment. Set the two keys as secrets, and the URLs as vars.
+# LIVEKIT_URL = "wss://your-livekit-host"
+# LIVEKIT_CLIENT_URL = "https://your-trusted-host/livekit-client-v2.22.3.umd.min.js"
 
 # ── deploy environments ──────────────────────────────────────────────────────
 # Two isolated Workers, one per env — a deploy targets one with `wrangler deploy
@@ -47,6 +54,7 @@ ALLOWED_ORIGIN = "*" # lock to your site origin in production
 # its OWN KV namespace id so preview and prod don't share tenant config/usage.
 [env.preview]
 name = "krispy-edge-preview"
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 [env.preview.ai]
 binding = "AI"
 [[env.preview.durable_objects.bindings]]
@@ -60,9 +68,12 @@ binding = "KRISPY_KV"
 id = "a018c2ee187c4617ac218f06b83efe97" # `bunx wrangler kv namespace create KRISPY_KV_preview`
 [env.preview.vars]
 ALLOWED_ORIGIN = "*"
-# Set to the preview cloud API's URL (workers.dev URL differs per account —
-# same posture as EDGE_PREVIEW_URL in deploy.sh). Unset = bearer auth fails closed.
-# API_ORIGIN = "https://<your-preview-api>.workers.dev"
+CHAT_TIMING_DEBUG = "1"
+# Preview cloud API custom domain; this is the verifier for Buttr operator bearer
+# tokens. Keep it paired with the dev/preview cloud Worker, never production.
+API_ORIGIN = "https://api-preview.krispyai.com"
+# Hosted operator device tokens; paired with PUSH_TOKENS_SECRET.
+PUSH_TOKENS_URL = "https://api-preview.krispyai.com/internal/push/tokens"
 
 [env.production]
 name = "krispy-edge"

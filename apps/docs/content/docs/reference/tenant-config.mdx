@@ -11,8 +11,8 @@ other tenant reads the whole thing from KV.
 
 ```ts
 interface TenantConfig {
-  botToken: string; // Telegram bot token (BotFather)
-  chatId: string; // target supergroup id WITH topics, e.g. -1001234567890
+  botToken?: string; // optional Telegram bot token (BotFather)
+  chatId?: string; // optional target supergroup id WITH topics, e.g. -1001234567890
   systemPrompt?: string; // optional system-prompt override
   model?: string; // optional model override
   onboardingStep?: number; // onboarding progress (optional; mirrors cloud)
@@ -26,11 +26,22 @@ interface TenantConfig {
   kbSources?: KbSource[]; // per-doc knowledge registry, assembled into the prompt at chat time
   kbVersion?: number; // bumped on any kbSources write (retrieval cache key)
   operators?: Operator[]; // humans to @mention on handoff (auto-learned; NEVER public)
+  callSettings?: {
+    enabled?: boolean; // default false; enables operator-initiated audio calls
+    visitorRequestsEnabled?: boolean; // default false; visitor may request a call
+    visitorRequestTrigger?: "after_handoff" | "always"; // default after_handoff
+    notifyOnVisitorRequest?: boolean; // default true; push to registered operator devices
+  };
 }
 ```
 
-`getTenant()` only treats a config as usable once **both** `botToken` and `chatId` are
-present; a partial config (e.g. a prompt saved before creds) still round-trips through KV.
+For Cloud tenants, `getTenant()` treats the stored config as usable without Telegram:
+the prompt, theme, forms, and Buttr handoff remain active. `botToken` and `chatId` only
+enable Telegram topic mirroring and screenshot forwarding. The public widget projection
+exposes `capabilities.attachments` as a boolean so app-only tenants never offer a dead upload path.
+
+For the self-hosted `"self"` tenant, the existing environment-secret setup still requires
+both Telegram values before `getTenant()` assembles the self-host config.
 
 ## `FormSpec`
 
@@ -109,15 +120,17 @@ alert still fires, just without a mention.
 
 ```ts
 interface WidgetTheme {
-  primaryColor?: string; // header + visitor bubble + send button. Default gold #e39a2b
-  launcherColor?: string; // launcher only (defaults to primaryColor)
+  launcherStyle?: "circle" | "pill"; // default circle; pill shows a label while closed
+  launcherLabel?: string; // pill text, displayed up to 24 chars; defaults to the widget title
+  primaryColor?: string; // visitor bubble + actions + header halo. Default gold #e39a2b
+  launcherColor?: string; // optional badge fill; unset/"transparent" keeps Buttr floating
   glowColor?: string; // hex → launcher glow/sparkle/pulse tint. Unset = no glow layer at all
   position?: "br" | "bl"; // bottom-right | bottom-left. Default "br"
-  avatar?: string; // "buttr" (inline default) | https URL | data:image/… URI (≤48KB)
+  avatar?: string; // "buttr" (inline default) | "none" | https URL | data:image/… URI (≤48KB)
   greeting?: string; // first bot bubble on open
   headerTitle?: string; // header text (supersedes data-title)
   tagline?: string; // header sub-line ("usually replies in minutes")
-  radius?: number; // corner radius px, clamped 0–20. Default 14
+  radius?: number; // panel corner radius px, clamped 0–20. Default 20
   font?: string; // CSS font-family stack
   sound?: boolean; // notification ding. Default true
   sparkle?: boolean; // idle sparkle loop on the launcher. Default false
@@ -139,10 +152,10 @@ interface WidgetTiming {
 every new knob defaults to unset/off — a tenant that configures nothing gets today's
 neutral widget, unchanged.
 
-only the `WidgetTheme` fields above (plus the `ctas`, `script`, and `popups` projections
+only the `WidgetTheme` fields above (plus `capabilities`, `ctas`, `script`, and `popups`
 below) are exposed to the public `GET /api/widget/config`; the projection is a literal
 whitelist (never a spread of the config), so `botToken`/`chatId`/`systemPrompt`/`persona`
-are structurally excluded. see [security](/docs/security).
+are structurally excluded. `capabilities` contains booleans only. see [security](/docs/security).
 
 ## `PersonaSpec`
 
@@ -236,18 +249,18 @@ its KB.
 `POST /api/tenant/config` hard-rejects out-of-bounds configs at the trust boundary
 (nothing invalid ever reaches KV):
 
-| rule                                                                                 | response                                    |
-| ------------------------------------------------------------------------------------ | ------------------------------------------- |
-| `theme.avatar` over 48KB                                                             | `413 { error: "avatar_too_large" }`         |
-| `theme.avatar` not `"buttr"` / `https://…` / `data:image/(png\|webp\|jpeg);base64,…` | `400 { error: "avatar_scheme_invalid" }`    |
-| a connector CTA url (`profileUrl`/`url`) not `https://`                              | `400 { error: "cta_url_not_https" }`        |
-| `kbSources` total text over 100K chars                                               | `413 { error: "kb_sources_too_large" }`     |
-| more than 8 `popups`                                                                 | `413 { error: "too_many_popups" }`          |
-| a popup `text` over 500 chars                                                        | `413 { error: "popup_text_too_large" }`     |
-| a popup selector (`near` `selector` / `cancelOnClick`) over 200 chars                | `413 { error: "popup_selector_too_large" }` |
-| more than 5 `script.opening` entries                                                 | `413 { error: "too_many_opening" }`         |
-| more than 4 `script.starters` entries                                                | `413 { error: "too_many_starters" }`        |
-| `persona` + `script` combined free text over 8K chars                                | `413 { error: "persona_script_too_large" }` |
+| rule                                                                                            | response                                    |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `theme.avatar` over 48KB                                                                        | `413 { error: "avatar_too_large" }`         |
+| `theme.avatar` not `"buttr"` / `"none"` / `https://…` / `data:image/(png\|webp\|jpeg);base64,…` | `400 { error: "avatar_scheme_invalid" }`    |
+| a connector CTA url (`profileUrl`/`url`) not `https://`                                         | `400 { error: "cta_url_not_https" }`        |
+| `kbSources` total text over 100K chars                                                          | `413 { error: "kb_sources_too_large" }`     |
+| more than 8 `popups`                                                                            | `413 { error: "too_many_popups" }`          |
+| a popup `text` over 500 chars                                                                   | `413 { error: "popup_text_too_large" }`     |
+| a popup selector (`near` `selector` / `cancelOnClick`) over 200 chars                           | `413 { error: "popup_selector_too_large" }` |
+| more than 5 `script.opening` entries                                                            | `413 { error: "too_many_opening" }`         |
+| more than 4 `script.starters` entries                                                           | `413 { error: "too_many_starters" }`        |
+| `persona` + `script` combined free text over 8K chars                                           | `413 { error: "persona_script_too_large" }` |
 
 ## KV keys
 
@@ -256,6 +269,7 @@ its KB.
 | `tenant:<id>`                    | the `TenantConfig` JSON blob                                                                |
 | `session:<tenant>:<sessionId>`   | the Telegram thread id for that session                                                     |
 | `thread:<tenant>:<threadId>`     | the session id for that thread                                                              |
+| `handoff:<tenant>:<sessionId>`   | Telegram-independent operator-inbox discovery; the SessionDO owns live handoff state        |
 | `usage:<tenant>:<yyyymm>:<kind>` | monthly usage counter — `kind` ∈ `ai` \| `handoff` \| `tokens`                              |
 | `entitlement:<tenant>`           | optional billing snapshot (unused in self-host)                                             |
 | `suggestions:<ns(t,s)>`          | pending relearning `KbSuggestion[]` (per-site, cap 20 FIFO; own key, never the config blob) |
