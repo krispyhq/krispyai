@@ -33,6 +33,11 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Fixed
 
+- Preview edge deploys now sync the configured Gemini and LiveKit
+  bindings alongside the existing Worker secrets.
+- Preview widget deploys stage the pinned LiveKit browser UMD and license from
+  the public npm release, with a checked local package as an optional source.
+
 - Widget: restore the saved unread indicator at boot for every launcher, including the default circle and visits where theme config fails to load.
 
 - Visitor audio calls now show when the team member has actually joined, provide

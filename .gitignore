@@ -8,4 +8,5 @@ build/
 logs/
 .wrangler/
 .dev.vars
+packages/widget/vendor/
 .DS_Store

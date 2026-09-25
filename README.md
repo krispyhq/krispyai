@@ -138,6 +138,13 @@ tenant's call settings and live call status permit it. Selecting a form opens it
 inside the chat; the lead includes recent conversation context. The choice card
 closes on operator takeover or AI resume, while any expanded form keeps its input.
 
+Hosted preview deploys use `./deploy.sh edge preview` and
+`./deploy.sh widget preview`. The edge deploy syncs present Infisical-fed
+Gemini, knowledge gateway, and LiveKit settings to the preview Worker
+before its health check. See [secrets](docs/secrets.md) for the key list.
+The preview widget deploy also stages a checksum-verified LiveKit browser UMD
+and its license at a versioned `vendor/` path for lazy loading on call acceptance.
+
 <details>
 <summary>Or set it up by hand (wrangler secrets)</summary>
 

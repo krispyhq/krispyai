@@ -88,6 +88,16 @@ case "$TARGET" in
   widget)
     echo "→ deploy widget ($ENV)"
     # The widget is a static bundle (no build step) — deploy the dir as-is.
+    # Preview always carries the pinned LiveKit browser UMD; an installed package
+    # path is optional. Without one, the staging script fetches the exact public
+    # npm release and verifies its bundle checksum before upload.
+    if [ "$ENV" = preview ] || [ -n "${LIVEKIT_CLIENT_PACKAGE_DIR:-}${LIVEKIT_CLIENT_URL:-}" ]; then
+      if [ -n "${LIVEKIT_CLIENT_PACKAGE_DIR:-}" ]; then
+        node scripts/stage-livekit-client.mjs "$LIVEKIT_CLIENT_PACKAGE_DIR"
+      else
+        node scripts/stage-livekit-client.mjs
+      fi
+    fi
     "$BUN" x wrangler pages deploy packages/widget \
       --project-name "krispy-widget-${ENV}" --branch "$([ "$ENV" = production ] && echo master || echo preview)"
     SMOKE_KIND=pages
