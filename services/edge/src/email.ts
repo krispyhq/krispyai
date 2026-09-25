@@ -42,6 +42,17 @@ function safeActionUrl(value: string | undefined): string | undefined {
   }
 }
 
+function publicEmailAssetUrl(origin: string | undefined): string | undefined {
+  if (!origin) return undefined;
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== "https:") return undefined;
+    return `${url.origin}/brand/buttr-chill.png`;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Build a session link without allowing a configured non-web scheme. */
 export function leadInboxUrl(baseUrl: string | undefined, sessionId: string): string | undefined {
   const safe = safeActionUrl(baseUrl);
@@ -77,6 +88,7 @@ export function renderLeadEmail(
   transcript: { role: string; content: string }[],
   waPhone?: string,
   openInButtrUrl?: string,
+  assetOrigin?: string,
 ): LeadEmail {
   const title = form?.title || "New lead";
   const labelFor = (name: string) =>
@@ -93,6 +105,13 @@ export function renderLeadEmail(
     from: roleName(message.role),
     body: message.content,
   }));
+  const mascotUrl = publicEmailAssetUrl(assetOrigin);
+  const brandHeader = mascotUrl
+    ? `<table role="presentation" style="border-collapse:collapse;width:100%"><tr>` +
+      `<td style="font-size:27px;font-weight:900;letter-spacing:-1.5px;vertical-align:middle">krispy<span style="color:${color.gold}">.</span></td>` +
+      `<td style="text-align:right;vertical-align:middle;width:64px"><img src="${esc(mascotUrl)}" alt="Buttr, the Krispy croissant mascot" width="58" height="58" style="display:block;margin-left:auto;width:58px;height:58px" /></td>` +
+      `</tr></table>`
+    : `<p style="font-size:27px;font-weight:900;letter-spacing:-1.5px;margin:0">krispy<span style="color:${color.gold}">.</span></p>`;
 
   const fieldRows = fields
     .map(
@@ -122,7 +141,7 @@ export function renderLeadEmail(
     `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>` +
     `<body style="background:${color.cream};color:${color.ink};font-family:Arial,Helvetica,sans-serif;margin:0;padding:24px 12px">` +
     `<table role="presentation" style="background:${color.paper};border:1px solid ${color.border};border-collapse:collapse;margin:0 auto;max-width:560px;width:100%"><tr><td style="background:${color.gold};height:7px;font-size:1px;line-height:1px">&nbsp;</td></tr>` +
-    `<tr><td style="padding:24px 28px 32px"><p style="font-size:27px;font-weight:900;letter-spacing:-1.5px;margin:0">krispy<span style="color:${color.gold}">.</span></p>` +
+    `<tr><td style="padding:24px 28px 32px">${brandHeader}` +
     `<h1 style="color:${color.ink};font-family:Georgia,serif;font-size:30px;line-height:1.18;margin:22px 0 14px">${esc(title)}</h1>` +
     `<p style="font-size:15px;line-height:1.55;margin:0 0 18px">A visitor shared the following details.</p>` +
     `<h2 style="color:${color.ink};font-size:18px;margin:0 0 8px">Contact details</h2>` +
