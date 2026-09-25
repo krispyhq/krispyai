@@ -187,10 +187,16 @@ in its inline style, which is what integrators had to do before the class existe
   call socket connected while the page is visible even when chat is closed;
   backgrounding or leaving the page closes it. The server still validates the
   capability before an operator can invite them.
-  The call card distinguishes waiting for the team member, connected, and reconnecting;
+  The call card distinguishes waiting for the team member, connected, and reconnecting.
   Mute/Unmute and End call remain available during the call. Tap the call card to expand
   audio settings: permitted microphones can be switched without a new permission prompt;
   speaker selection appears only when the browser supports it and has multiple outputs.
+  When the runtime 0.5 coordinator emits a durable receipt, the chat transcript
+  shows its outcome, occurred time, and verified connected duration without
+  recording or summarizing the conversation. Observed endpoint times are
+  labeled approximate; replay preserves time order and scroll position.
+  Older cached chat bubbles without timestamps keep their relative order
+  after historical receipts instead of receiving invented times.
   Calls require the page in the
   foreground: switching tabs, minimizing the browser, navigating away, or closing the page
   stops local media and ends the call. Closing only the chat panel leaves the call active.

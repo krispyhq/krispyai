@@ -104,6 +104,17 @@ button. Dismissal is remembered for the current tenant, site, and chat session,
 including page reloads; a later new handoff or new chat session may show it again.
 Dismissal does not decline an incoming invite or end a ringing or connected call.
 
+When the server delivers a durable call receipt, the chat transcript shows its
+outcome, local occurred time, and verified connected duration (or **Not
+connected**). Reconnect replay updates one receipt per call in time order
+without moving the reader's scroll position. If either endpoint time was only
+observed, the time and duration are labeled approximate. Calls are not
+recorded or summarized. Receipts require the runtime 0.5 coordinator outbox;
+the stored schema alone does not make them appear.
+Older locally saved chat bubbles without timestamps retain their own order;
+historical receipts appear before that uncertain block, rather than assigning
+those bubbles invented page-load times.
+
 During a call, choose **Audio settings** on the call card to expand device
 controls. The microphone menu lists already permitted inputs and changes the
 active LiveKit track; opening settings does not request microphone permission.

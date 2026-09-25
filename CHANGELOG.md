@@ -25,6 +25,11 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Added
 
+- The visitor widget renders durable runtime 0.5 call receipts by call ID and
+  revision with outcome, occurred time, and verified connected duration. Times
+  observed from room presence or deletion are labeled approximate; reconnect
+  replay preserves chronological placement and the visitor's scroll position.
+
 - Real incoming operator invitations now ring in the visitor widget when browser
   audio and notification settings permit, while the visible call controls remain
   available if autoplay blocks playback. The ring stops on call state changes.

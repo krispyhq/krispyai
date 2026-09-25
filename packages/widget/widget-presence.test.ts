@@ -166,3 +166,42 @@ test("an incoming invite still opens the closed chat panel on a restored page", 
     void app.window.happyDOM.abort();
   }
 });
+
+test("buffered receipt replay joins the opened chat in time order without duplicates", async () => {
+  const app = mount(true);
+  const receipt = {
+    callId: "103218a5-c487-499f-b306-b7812f333f03",
+    sessionId: app.sessionId,
+    startedAt: 1_000,
+    connectedAt: 1_100,
+    connectedTimeProvenance: "signed_event",
+    endedAt: 2_000,
+    connectedDurationMs: 900,
+    outcome: "ended",
+    endTimeProvenance: "signed_event",
+    revision: 1,
+  };
+  try {
+    app.sockets[0]!.receive({
+      type: "ready",
+      handoffState: "operator",
+      messages: [{ role: "operator", text: "Later reply", ts: 3_000 }],
+    });
+    app.sockets[0]!.receive({ type: "call_receipt", receipt });
+    expect(app.root.querySelectorAll(".callreceipt, .msg.op")).toHaveLength(0);
+    app.window.krispy?.open();
+    expect(
+      Array.from(app.root.querySelectorAll(".callreceipt, .msg.op")).map((node) => node.className),
+    ).toEqual(["callreceipt", "msg op"]);
+    app.sockets[0]!.receive({ type: "call_receipt", receipt });
+    expect(app.root.querySelectorAll(".callreceipt")).toHaveLength(1);
+    const log = app.root.querySelector(".log")!;
+    log.scrollTop = 11;
+    app.sockets[0]!.receive({ type: "call_receipt", receipt: { ...receipt, revision: 2 } });
+    expect(app.root.querySelectorAll(".callreceipt")).toHaveLength(1);
+    expect(log.scrollTop).toBe(11);
+  } finally {
+    app.window.dispatchEvent(new app.window.Event("pagehide"));
+    void app.window.happyDOM.abort();
+  }
+});
