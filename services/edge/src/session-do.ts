@@ -47,6 +47,7 @@ import {
   CALL_MAX_DURATION_MS,
 } from "./call";
 import { closeCallRoom, issueCallToken } from "./call-token";
+import { isCallTimelineReceipt, type CallTimelineReceipt } from "./call-coordinator-model";
 
 interface Sendable {
   send(data: string): void;
@@ -128,6 +129,11 @@ export class SessionDO {
 
   private async ring(): Promise<RingMsg[]> {
     return (await this.state.storage.get<RingMsg[]>("log")) ?? [];
+  }
+
+  private async callReceipts(): Promise<CallTimelineReceipt[]> {
+    const stored = await this.state.storage.list<CallTimelineReceipt>({ prefix: "call:receipt:" });
+    return [...stored.values()].sort((a, b) => a.endedAt - b.endedAt);
   }
 
   private async threadMessages(): Promise<SessionMessage[]> {
@@ -364,6 +370,8 @@ export class SessionDO {
       const event = readyEvent(handoffState, await this.ring());
       try {
         server.send(JSON.stringify(event));
+        for (const receipt of await this.callReceipts())
+          server.send(JSON.stringify({ type: "call_receipt", receipt }));
         if (operator || callVisitor) {
           const call = publicCall(await this.callState(), Date.now());
           const nonce = callVisitor ? await this.state.storage.get<string>("callNonce") : undefined;
@@ -377,6 +385,34 @@ export class SessionDO {
 
     // Everything past the WS upgrade is the internal Worker→DO surface — gated.
     if (!this.internalAuthed(request)) return new Response("forbidden", { status: 403 });
+
+    if (request.method === "POST" && url.pathname.endsWith("/call/receipt")) {
+      const body = (await request.json().catch(() => null)) as {
+        tenantId?: unknown;
+        receipt?: unknown;
+      } | null;
+      const receipt = body?.receipt;
+      if (!isCallTimelineReceipt(receipt))
+        return Response.json({ error: "invalid_call_receipt" }, { status: 400 });
+      const key = `call:receipt:${receipt.callId}`;
+      const result = await this.state.storage.transaction(async (tx) => {
+        const [storedTenant, storedSession, existing] = await Promise.all([
+          tx.get<string>("tenantId"),
+          tx.get<string>("sessionId"),
+          tx.get<CallTimelineReceipt>(key),
+        ]);
+        if (!storedTenant || body?.tenantId !== storedTenant || storedSession !== receipt.sessionId)
+          return { mismatch: true as const };
+        if (existing) return { stored: false as const, receipt: existing };
+        await tx.put(key, receipt);
+        return { stored: true as const, receipt };
+      });
+      if ("mismatch" in result)
+        return Response.json({ error: "session_mismatch" }, { status: 403 });
+      if (!result.stored) return Response.json({ ok: true, ...result });
+      broadcast(this.state.getWebSockets(), { type: "call_receipt", receipt });
+      return Response.json({ ok: true, stored: true, receipt });
+    }
 
     if (request.method === "POST" && url.pathname.endsWith("/call/visitor/register")) {
       const body = (await request.json().catch(() => ({}))) as { secret?: string };
@@ -654,11 +690,14 @@ export class SessionDO {
         const body = (await request.json().catch(() => ({}))) as {
           tenantId?: string;
           siteId?: string;
+          sessionId?: string;
         };
         if (body.tenantId && !(await this.state.storage.get<string>("tenantId"))) {
           await this.state.storage.put("tenantId", body.tenantId);
           if (body.siteId) await this.state.storage.put("siteId", body.siteId);
         }
+        if (body.sessionId && !(await this.state.storage.get<string>("sessionId")))
+          await this.state.storage.put("sessionId", body.sessionId);
       }
       const [handoffState, messages] = await Promise.all([this.handoffState(), this.ring()]);
       return Response.json({
@@ -701,7 +740,11 @@ export class SessionDO {
     }
 
     if (request.method === "GET" && url.pathname.endsWith("/log")) {
-      return Response.json({ messages: await this.threadMessages() });
+      const [messages, callReceipts] = await Promise.all([
+        this.threadMessages(),
+        this.callReceipts(),
+      ]);
+      return Response.json({ messages, callReceipts });
     }
 
     if (request.method === "POST" && url.pathname.endsWith("/log")) {

@@ -61,6 +61,16 @@ not migrated or claimed by this model. A future timeout/busy fallback may show
 only the site's configured contact form or other approved route, with no invented
 queue time or callback promise.
 
+`src/call-coordinator-adapter.ts` stages validated native action IDs, injected
+verified operator/device identity, transactional tenant state, independently
+verified room closure, and configured public fallback choices. It has no live
+route or binding. See [the integration design](../../docs/operator-call-coordinator.md)
+for the runtime gate, outbox, and locked-phone credential requirements.
+Terminal runtime 0.5 calls produce a typed, content-free receipt with verified
+connection duration. SessionDO stores each call ID outside the 20-message ring
+and returns it in `/api/operator/thread`'s `callReceipts`; guest/operator sockets
+receive `call_receipt` live and on reconnect. Runtime 0.4 does not create one.
+
 Configured lead forms can forward the visitor's recent chat to an email connector.
 Set `RESEND_API_KEY` and a verified `LEAD_EMAIL_FROM` through Infisical; a failed
 email delivery on an older cached widget returns `502 delivery_failed` so it

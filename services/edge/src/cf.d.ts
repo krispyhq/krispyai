@@ -28,6 +28,7 @@ declare global {
   interface DurableObjectStorage {
     get<T = unknown>(key: string): Promise<T | undefined>;
     put(key: string, value: unknown): Promise<void>;
+    transaction<T>(run: (tx: DurableObjectStorage) => Promise<T>): Promise<T>;
     list<T = unknown>(options?: {
       prefix?: string;
       startAfter?: string;

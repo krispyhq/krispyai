@@ -25,6 +25,12 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Added
 
+- A disabled coordinator adapter validates native call actions, derives the
+  operator/device from trusted auth, and requires verified room closure before
+  the future tenant Durable Object may release occupancy.
+- Staged runtime 0.5 call receipts record a server-verified connected duration
+  and terminal outcome once, outside the session's bounded chat ring.
+
 - A tenant-scoped operator-call coordinator state model and race tests are staged
   for a future native runtime; live call routing remains on the existing SessionDO.
 - Visitor call cards expand to available microphone and speaker choices while

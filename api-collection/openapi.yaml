@@ -1099,11 +1099,49 @@ components:
 
     OperatorThreadResponse:
       type: object
-      required: [messages]
+      required: [messages, callReceipts]
       properties:
         messages:
           type: array
           items: { $ref: "#/components/schemas/RingMessage" }
+        callReceipts:
+          type: array
+          description: Durable typed call records, retained outside the 20-message chat ring.
+          items: { $ref: "#/components/schemas/CallTimelineReceipt" }
+
+    CallTimelineReceipt:
+      type: object
+      required:
+        [
+          callId,
+          sessionId,
+          startedAt,
+          connectedAt,
+          endedAt,
+          connectedDurationMs,
+          outcome,
+          endTimeProvenance,
+          revision,
+        ]
+      properties:
+        callId: { type: string, format: uuid }
+        sessionId: { type: string }
+        startedAt: { type: integer, description: Server epoch milliseconds when invited. }
+        connectedAt:
+          {
+            type: [integer, "null"],
+            description: Server-verified time both participants were present.,
+          }
+        endedAt:
+          { type: integer, description: Verified media end or server-observed terminal time. }
+        connectedDurationMs: { type: integer, minimum: 0 }
+        outcome: { type: string, enum: [ended, missed, declined, canceled] }
+        endTimeProvenance:
+          {
+            type: string,
+            enum: [signed_event, observed_room_absent, confirmed_room_delete, server_transition],
+          }
+        revision: { type: integer, minimum: 1 }
 
     ChatRequest:
       type: object

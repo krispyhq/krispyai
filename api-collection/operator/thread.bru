@@ -28,6 +28,9 @@ tests {
   test("returns the messages array", function() {
     expect(res.getBody().messages).to.be.an("array");
   });
+  test("returns durable call receipts separately from the short message ring", function() {
+    expect(res.getBody().callReceipts).to.be.an("array");
+  });
 }
 
 docs {
@@ -42,5 +45,7 @@ docs {
   replies, operator replies) — zero Telegram round-trips. The ring holds the last 20
   turns; on handoff it is seeded from the history the widget re-sends on /api/chat.
   Missing `tenantId`/`sessionId` → 400. Response:
-  `{ messages: [{ role: "visitor" | "ai" | "operator", text, ts }] }`.
+  `{ messages: [{ role: "visitor" | "ai" | "operator", text, ts }],
+     callReceipts: [{ callId, sessionId, startedAt, connectedAt, endedAt,
+       connectedDurationMs, outcome, endTimeProvenance, revision }] }`.
 }

@@ -548,7 +548,7 @@ async function handleChat(
     // from its own name. Returns state + messages in the same single subrequest.
     const r = await doFetch(env, tenantId, body.sessionId, "https://do/context", {
       method: "POST",
-      body: JSON.stringify({ tenantId, siteId }),
+      body: JSON.stringify({ tenantId, siteId, sessionId: body.sessionId }),
       signal: AbortSignal.timeout(RING_READ_TIMEOUT_MS),
     });
     const raw = (await r.json()) as {
@@ -1467,8 +1467,11 @@ async function handleOperatorThread(request: Request, env: Env): Promise<Respons
   const denied = await authorizeOperator(request, env, b.tenantId);
   if (denied) return json(env, { error: denied.error }, denied.status);
   const r = await doFetch(env, b.tenantId, b.sessionId, "https://do/log");
-  const { messages } = (await r.json()) as { messages: unknown[] };
-  return json(env, { messages });
+  const { messages, callReceipts = [] } = (await r.json()) as {
+    messages: unknown[];
+    callReceipts?: import("./call-coordinator-model").CallTimelineReceipt[];
+  };
+  return json(env, { messages, callReceipts });
 }
 
 // POST /api/operator/resolve { tenantId, sessionId } → toggle the session's

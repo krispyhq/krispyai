@@ -261,6 +261,15 @@ test("only the initiating operator installation can cancel an outgoing ring", ()
   state = canceled.state;
   expect(canceled.result).toMatchObject({ status: "canceled", disposition: "completed_self" });
   expect(state.calls.outgoing?.endedAt).toBe(3);
+  expect(
+    run(state, {
+      type: "cancel_operator",
+      callId: "outgoing",
+      eventId: "late-start:native-start",
+      now: 4,
+      operator: a1,
+    }).result,
+  ).toMatchObject({ status: "canceled", disposition: "completed_self" });
   state = visitorCall(state, "incoming", 4);
   expect(offer(state, "incoming", a1, 5).result.disposition).toBe("offered");
 });
@@ -422,4 +431,115 @@ test("retention removes only old terminal calls after their outbox is acknowledg
   expect(pruned.receipts["old-cancel"]).toBeUndefined();
   expect(pruned.calls.active).toBeDefined();
   expect(pruned.receipts["invite-active"]).toBeDefined();
+});
+
+test("one durable timeline receipt uses verified connected duration and end-time provenance", () => {
+  let state = visitorCall(createCoordinatorState("tenant", { maxPending: 2 }), "one", 0);
+  state = offer(state, "one", a1, 1).state;
+  state = accept(state, "one", a1, "answer", 2).state;
+  state = run(state, {
+    type: "media_joined",
+    callId: "one",
+    eventId: "both-present",
+    now: 10,
+    operator: a1,
+    source: "verified_room_query",
+  }).state;
+  state = run(state, {
+    type: "end",
+    callId: "one",
+    eventId: "end",
+    now: 20,
+    actor: "operator",
+    operator: a1,
+  }).state;
+  state = run(state, {
+    type: "media_ended",
+    callId: "one",
+    eventId: "room-finished",
+    now: 30,
+    occurredAt: 25,
+    source: "signed_room_finished",
+  }).state;
+  expect(state.timelineReceipts.one).toMatchObject({
+    callId: "one",
+    sessionId: "session-one",
+    startedAt: 0,
+    connectedAt: 10,
+    endedAt: 25,
+    connectedDurationMs: 15,
+    outcome: "ended",
+    endTimeProvenance: "signed_event",
+  });
+  const receiptEvents = Object.values(state.outbox).filter((event) => event.kind === "receipt");
+  expect(receiptEvents).toHaveLength(1);
+  const duplicate = run(state, {
+    type: "media_ended",
+    callId: "one",
+    eventId: "room-finished",
+    now: 31,
+    occurredAt: 25,
+    source: "signed_room_finished",
+  }).state;
+  expect(duplicate.timelineReceipts.one).toEqual(state.timelineReceipts.one);
+  expect(Object.values(duplicate.outbox).filter((event) => event.kind === "receipt")).toHaveLength(
+    1,
+  );
+});
+
+test("missed, declined, canceled, and recovered room end have distinct receipts", () => {
+  let state = visitorCall(createCoordinatorState("tenant", { maxPending: 3 }), "missed", 0);
+  state = expireCoordinatedCalls(state, state.calls.missed!.expiresAt);
+  expect(state.timelineReceipts.missed).toMatchObject({
+    outcome: "missed",
+    connectedAt: null,
+    connectedDurationMs: 0,
+    endTimeProvenance: "server_transition",
+  });
+  state = run(state, {
+    type: "invite_operator",
+    callId: "declined",
+    sessionId: "session-declined",
+    eventId: "invite-declined",
+    now: 1,
+    operator: a1,
+  }).state;
+  state = run(state, {
+    type: "decline_visitor",
+    callId: "declined",
+    eventId: "visitor-no",
+    now: 2,
+  }).state;
+  expect(state.timelineReceipts.declined?.outcome).toBe("declined");
+  state = visitorCall(state, "canceled", 3);
+  state = run(state, {
+    type: "cancel_visitor",
+    callId: "canceled",
+    eventId: "visitor-cancel",
+    now: 4,
+  }).state;
+  expect(state.timelineReceipts.canceled?.outcome).toBe("canceled");
+  state = visitorCall(state, "recovered", 5);
+  state = offer(state, "recovered", a1, 6).state;
+  state = accept(state, "recovered", a1, "recover-accept", 7).state;
+  state = run(state, {
+    type: "media_joined",
+    callId: "recovered",
+    eventId: "recover-connected",
+    now: 8,
+    operator: a1,
+    source: "verified_room_query",
+  }).state;
+  state = run(state, {
+    type: "media_ended",
+    callId: "recovered",
+    eventId: "room-absent",
+    now: 12,
+    source: "verified_room_absent",
+  }).state;
+  expect(state.timelineReceipts.recovered).toMatchObject({
+    outcome: "ended",
+    connectedDurationMs: 4,
+    endTimeProvenance: "observed_room_absent",
+  });
 });

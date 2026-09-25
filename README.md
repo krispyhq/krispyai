@@ -263,9 +263,9 @@ On coarse-pointer devices, the mute and close controls expand to 44px touch targ
 Audio calls are opt-in through tenant `callSettings`. A team member can invite a visitor, or the visitor can request a call after human handoff when visitor requests are enabled. A visitor request alerts the operator app and waits for a team member to accept; it does not activate the microphone. The visitor explicitly joins after acceptance. The call card shows whether the team member has joined, provides Mute/Unmute and End call controls, and expands to available microphone and speaker choices. Unsupported speaker selection stays hidden. Calls end when the page goes into the background or closes. Closing the chat panel alone leaves the call active.
 
 A tenant-scoped coordinator model for future native calls is staged in the edge
-source with race tests. It does not change the current call routes. Its state,
-identity, timeout, and retry contract is described in the
-[`services/edge` README](./services/edge/README.md#coordinator-model-staged-behind-the-current-call-routes).
+source with race tests and a disabled identity/storage adapter. It does not
+change the current call routes. Its state, identity, timeout, and retry contract
+is described in the [integration design](./docs/operator-call-coordinator.md).
 
 Details: [`packages/widget/README.md`](./packages/widget/README.md).
 
