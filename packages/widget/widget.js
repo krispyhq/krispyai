@@ -492,7 +492,7 @@
     // Drop target — the whole panel, so a dragged file has a big landing zone.
     ".panel.kdrop{outline:2px dashed var(--k-primary);outline-offset:-6px}" +
     ".kcall{display:none;margin:8px 12px;padding:13px;border-radius:16px;background:var(--k-card);border:1px solid var(--k-border);box-shadow:0 8px 20px rgba(36,33,46,.08);color:var(--k-espresso)}" +
-    ".kcall.on{display:block}.kcall-title{font-size:14px;font-weight:700}.kcall-note{font-size:12px;opacity:.75;margin-top:3px}.kcall-controls{display:flex;gap:8px;margin-top:10px}.kcall-controls button{flex:1;min-height:38px;border:1px solid var(--k-border);border-radius:11px;background:white;color:var(--k-espresso);font:inherit;font-size:13px;cursor:pointer}.kcall-controls .primary{background:var(--k-primary);border-color:var(--k-primary);color:var(--k-primary-ink)}" +
+    ".kcall.on{display:block}.kcall-expand{display:block;width:100%;text-align:left;border:0;background:none;color:inherit;padding:0;font:inherit;cursor:pointer}.kcall-expand:not(:disabled):after{content:'Audio settings';display:block;font-size:12px;font-weight:600;margin-top:7px}.kcall-expand[aria-expanded=true]:after{content:'Hide audio settings'}.kcall-expand:disabled{cursor:default}.kcall-expand:focus-visible,.kcall-devices select:focus-visible{outline:2px solid var(--k-primary);outline-offset:3px}.kcall-title{display:block;font-size:14px;font-weight:700}.kcall-note{display:block;font-size:12px;opacity:.75;margin-top:3px}.kcall-devices{border-top:1px solid var(--k-border);margin-top:12px;padding-top:12px}.kcall-devices[hidden]{display:none}.kcall-devices label{display:block;font-size:12px;font-weight:600;margin-top:8px}.kcall-devices select{display:block;width:100%;min-height:40px;margin-top:5px;border:1px solid var(--k-border);border-radius:10px;background:white;color:var(--k-espresso);font:inherit;font-size:13px}.kcall-devices p{font-size:12px;opacity:.75;margin:0}.kcall-controls{display:flex;gap:8px;margin-top:10px}.kcall-controls button{flex:1;min-height:38px;border:1px solid var(--k-border);border-radius:11px;background:white;color:var(--k-espresso);font:inherit;font-size:13px;cursor:pointer}.kcall-controls .primary{background:var(--k-primary);border-color:var(--k-primary);color:var(--k-primary-ink)}" +
     // ── Composer (.ft) ──
     ".ft{" +
     "display:flex;border-top:1px solid var(--k-border);" +
@@ -770,7 +770,7 @@
     "</button>" +
     "</div>" +
     '<div class="log"></div>' +
-    '<div class="kcall" role="status" aria-live="polite"><div class="kcall-title"></div><div class="kcall-note"></div><div class="kcall-controls"></div><div class="kcall-audio"></div></div>' +
+    '<div class="kcall" role="status" aria-live="polite"><button type="button" class="kcall-expand" aria-label="Call audio settings" aria-expanded="false"><span class="kcall-title"></span><span class="kcall-note"></span></button><div class="kcall-devices" hidden></div><div class="kcall-controls"></div><div class="kcall-audio"></div></div>' +
     // Composer: text input + paper-plane send button
     // Pending-attachment tray — empty and display:none until something is pasted.
     '<div class="att"><img class="attthumb" alt="">' +
@@ -812,8 +812,10 @@
     sendBtn = sendForm.querySelector("button");
   var avatarEl = $(".av");
   var callEl = $(".kcall"),
+    callExpand = $(".kcall-expand"),
     callTitle = $(".kcall-title"),
     callNote = $(".kcall-note"),
+    callDevices = $(".kcall-devices"),
     callControls = $(".kcall-controls"),
     callAudio = $(".kcall-audio");
   var popEl = $(".pop"),
@@ -1603,6 +1605,7 @@
     callMicPending = false,
     callMicEnabled = false,
     callReconnecting = false,
+    callSettingsOpen = false,
     callExpiryTimer = null;
   var livekitLoading = null;
   var callVisitorConnected = false;
@@ -1636,6 +1639,11 @@
     callMicPending = false;
     callMicEnabled = false;
     callReconnecting = false;
+    callSettingsOpen = false;
+    callExpand.setAttribute("aria-expanded", "false");
+    callExpand.setAttribute("aria-label", "Call audio settings");
+    callDevices.hidden = true;
+    callDevices.replaceChildren();
     if (pendingCallRoom) {
       var pending = pendingCallRoom;
       pendingCallRoom = null;
@@ -1657,6 +1665,84 @@
     callControls.appendChild(button);
     return button;
   }
+  function refreshCallDevices() {
+    var room = callRoom;
+    var LK = window.LivekitClient;
+    if (!callSettingsOpen || !room || !LK || !LK.Room.getLocalDevices) return;
+    callDevices.textContent = "Checking audio devices…";
+    // The second argument prevents an extra permission prompt when settings open.
+    var outputSupported =
+      typeof LK.supportsAudioOutputSelection === "function" && LK.supportsAudioOutputSelection();
+    Promise.all([
+      LK.Room.getLocalDevices("audioinput", false),
+      outputSupported ? LK.Room.getLocalDevices("audiooutput", false) : Promise.resolve([]),
+    ]).then(
+      function (groups) {
+        if (room !== callRoom || !callSettingsOpen) return;
+        callDevices.replaceChildren();
+        var status = document.createElement("p");
+        function addChoices(label, kind, devices) {
+          if (devices.length < 2) return;
+          var field = document.createElement("label");
+          field.textContent = label;
+          var select = document.createElement("select");
+          select.setAttribute("aria-label", label);
+          devices.forEach(function (device, index) {
+            var option = document.createElement("option");
+            option.value = device.deviceId;
+            option.textContent = device.label || label + " " + (index + 1);
+            select.appendChild(option);
+          });
+          select.value = room.getActiveDevice(kind) || devices[0].deviceId;
+          select.addEventListener("change", function () {
+            if (room !== callRoom) return;
+            select.disabled = true;
+            status.textContent = "Changing audio device…";
+            room
+              .switchActiveDevice(kind, select.value)
+              .then(function (changed) {
+                if (changed === false) throw new Error("device unavailable");
+                if (room === callRoom) status.textContent = "Audio device changed.";
+              })
+              .catch(function () {
+                if (room === callRoom) {
+                  select.value = room.getActiveDevice(kind) || devices[0].deviceId;
+                  status.textContent = "Couldn’t change the audio device. Try another.";
+                }
+              })
+              .finally(function () {
+                if (room === callRoom) select.disabled = false;
+              });
+          });
+          field.appendChild(select);
+          callDevices.appendChild(field);
+        }
+        addChoices("Microphone", "audioinput", groups[0]);
+        addChoices("Speaker", "audiooutput", groups[1]);
+        if (groups[0].length < 2 && groups[1].length < 2) {
+          var note = document.createElement("p");
+          note.textContent = "Audio devices follow your system settings.";
+          callDevices.appendChild(note);
+        }
+        callDevices.appendChild(status);
+      },
+      function () {
+        if (room === callRoom && callSettingsOpen)
+          callDevices.textContent = "Audio devices aren’t available. Use your system settings.";
+      },
+    );
+  }
+  callExpand.addEventListener("click", function () {
+    if (!callRoom) return;
+    callSettingsOpen = !callSettingsOpen;
+    callExpand.setAttribute("aria-expanded", String(callSettingsOpen));
+    callExpand.setAttribute(
+      "aria-label",
+      callSettingsOpen ? "Hide call audio settings" : "Call audio settings",
+    );
+    callDevices.hidden = !callSettingsOpen;
+    if (callSettingsOpen) refreshCallDevices();
+  });
   function renderCall(next, nonce) {
     if (
       next &&
@@ -1676,6 +1762,13 @@
     }
     clearTimeout(callExpiryTimer);
     callControls.replaceChildren();
+    callExpand.disabled = !callRoom;
+    if (!callRoom) {
+      callSettingsOpen = false;
+      callExpand.setAttribute("aria-expanded", "false");
+      callDevices.hidden = true;
+      callDevices.replaceChildren();
+    }
     if (!next || ["declined", "canceled", "expired", "ended"].indexOf(next.status) >= 0) {
       stopCallMedia();
       if (

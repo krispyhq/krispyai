@@ -6,17 +6,35 @@ const start = source.indexOf("  var callState = null,");
 const end = source.indexOf("  // ── live channel", start);
 if (start < 0 || end < 0) throw new Error("widget call controller not found");
 
-type Button = { textContent: string; disabled: boolean; click: () => void };
 type Element = {
   textContent: string;
-  children: Button[];
+  children: Element[];
+  disabled: boolean;
+  hidden: boolean;
+  value: string;
+  attributes: Record<string, string>;
+  click: () => void;
+  change: () => void;
+  setAttribute: (name: string, value: string) => void;
+  addEventListener: (name: string, fn: () => void) => void;
   classList: { add: (name: string) => void; remove: (name: string) => void };
   replaceChildren: () => void;
-  appendChild: (child: Button) => void;
+  appendChild: (child: Element) => void;
 };
 function element(): Element {
+  const listeners = new Map<string, () => void>();
   return {
     textContent: "",
+    disabled: false,
+    hidden: false,
+    value: "",
+    attributes: {},
+    click: () => listeners.get("click")?.(),
+    change: () => listeners.get("change")?.(),
+    setAttribute(name, value) {
+      this.attributes[name] = value;
+    },
+    addEventListener: (name, fn) => listeners.set(name, fn),
     children: [],
     classList: { add() {}, remove() {} },
     replaceChildren() {
@@ -36,31 +54,41 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
-function harness() {
+function harness(outputSupported = true) {
   const callTitle = element(),
     callNote = element(),
     callControls = element();
   const callEl = element(),
+    callExpand = element(),
+    callDevices = element(),
     callAudio = element();
   const requests: { action: string; keepalive?: boolean }[] = [];
   const grant = deferred<{ clientUrl: string; url: string; token: string }>();
   const connect = deferred<void>();
   const micCalls: boolean[] = [];
+  const deviceLookups: { kind: string; requestPermissions: boolean }[] = [];
+  const deviceChanges: { kind: string; id: string }[] = [];
   const rooms: FakeRoom[] = [];
   const listeners = new Map<string, () => void>();
   const document = {
     visibilityState: "visible",
-    createElement: (_tag: string) => {
-      const button: Button = { textContent: "", disabled: false, click() {} };
-      return {
-        ...button,
-        addEventListener(_type: string, fn: () => void) {
-          this.click = fn;
-        },
-      };
-    },
+    createElement: (_tag: string) => element(),
   };
   class FakeRoom {
+    static getLocalDevices(kind: string, requestPermissions: boolean) {
+      deviceLookups.push({ kind, requestPermissions });
+      return Promise.resolve(
+        kind === "audioinput"
+          ? [
+              { deviceId: "mic-1", label: "Built-in microphone" },
+              { deviceId: "mic-2", label: "USB microphone" },
+            ]
+          : [
+              { deviceId: "speaker-1", label: "Built-in speaker" },
+              { deviceId: "speaker-2", label: "Headphones" },
+            ],
+      );
+    }
     remoteParticipants = new Map<string, object>();
     localParticipant = {
       setMicrophoneEnabled: (enabled: boolean) => {
@@ -86,9 +114,16 @@ function harness() {
     emit(name: string) {
       this.handlers.get(name)?.();
     }
+    getActiveDevice(kind: string) {
+      return kind === "audioinput" ? "mic-1" : "speaker-1";
+    }
+    switchActiveDevice(kind: string, id: string) {
+      deviceChanges.push({ kind, id });
+      return Promise.resolve(true);
+    }
   }
   const window = {
-    LivekitClient: { Room: FakeRoom },
+    LivekitClient: { Room: FakeRoom, supportsAudioOutputSelection: () => outputSupported },
     addEventListener(name: string, fn: () => void) {
       listeners.set(name, fn);
     },
@@ -110,9 +145,11 @@ function harness() {
     "sessionId",
     "visitorSecret",
     "callEl",
+    "callExpand",
     "callTitle",
     "callNote",
     "callControls",
+    "callDevices",
     "callAudio",
     "document",
     "window",
@@ -128,9 +165,11 @@ function harness() {
     "session",
     "secret",
     callEl,
+    callExpand,
     callTitle,
     callNote,
     callControls,
+    callDevices,
     callAudio,
     document,
     window,
@@ -146,11 +185,15 @@ function harness() {
     callTitle,
     callNote,
     callControls,
+    callExpand,
+    callDevices,
     click,
     grant,
     connect,
     rooms,
     micCalls,
+    deviceLookups,
+    deviceChanges,
     requests,
     document,
     listeners,
@@ -201,6 +244,49 @@ describe("visitor audio call controller", () => {
     expect(app.micCalls).toEqual([true, false, true]);
     app.rooms[0]!.emit("reconnecting");
     expect(app.callTitle.textContent).toBe("Audio call reconnecting");
+  });
+
+  test("audio settings open only after Join and switch permitted devices without another prompt", async () => {
+    const app = harness();
+    app.renderCall(accepted);
+    expect(app.callExpand.disabled).toBe(true);
+    expect(app.deviceLookups).toEqual([]);
+    const joining = app.joinCall("call-1");
+    app.grant.resolve({ clientUrl: "library", url: "room", token: "token" });
+    for (let i = 0; i < 10 && !app.rooms.length; i++) await tick();
+    app.connect.resolve();
+    await joining;
+    expect(app.callExpand.disabled).toBe(false);
+    app.callExpand.click();
+    await tick();
+    expect(app.callExpand.attributes["aria-expanded"]).toBe("true");
+    expect(app.deviceLookups).toEqual([
+      { kind: "audioinput", requestPermissions: false },
+      { kind: "audiooutput", requestPermissions: false },
+    ]);
+    const microphone = app.callDevices.children[0]!.children[0]!;
+    microphone.value = "mic-2";
+    microphone.change();
+    await tick();
+    expect(app.deviceChanges).toEqual([{ kind: "audioinput", id: "mic-2" }]);
+    expect(app.micCalls).toEqual([true]);
+    app.click("End call");
+    expect(app.callDevices.hidden).toBe(true);
+  });
+
+  test("unsupported speaker selection stays hidden while microphone choices remain", async () => {
+    const app = harness(false);
+    app.renderCall(accepted);
+    const joining = app.joinCall("call-1");
+    app.grant.resolve({ clientUrl: "library", url: "room", token: "token" });
+    for (let i = 0; i < 10 && !app.rooms.length; i++) await tick();
+    app.connect.resolve();
+    await joining;
+    app.callExpand.click();
+    await tick();
+    expect(app.deviceLookups).toEqual([{ kind: "audioinput", requestPermissions: false }]);
+    expect(app.callDevices.children.map((item) => item.textContent)).toContain("Microphone");
+    expect(app.callDevices.children.map((item) => item.textContent)).not.toContain("Speaker");
   });
 
   test("a failed microphone update restores the control for retry", async () => {

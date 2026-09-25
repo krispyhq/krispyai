@@ -82,6 +82,13 @@ allow `microphone=(self)` in its `Permissions-Policy` for the browser to show
 its consent prompt; `microphone=()` prevents a prompt and blocks capture.
 Permission is still requested only after the visitor chooses Join.
 
+During a call, choose **Audio settings** on the call card to expand device
+controls. The microphone menu lists already permitted inputs and changes the
+active LiveKit track; opening settings does not request microphone permission.
+The speaker menu appears only in browsers that support selecting an audio
+output and report multiple outputs. Otherwise output follows the device's
+system route. Mute and End call remain available in the compact card.
+
 ## Local demo
 
 Run the edge Worker (`cd services/edge && bunx wrangler dev`, serves on `:8787`),
