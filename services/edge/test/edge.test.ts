@@ -1645,22 +1645,149 @@ describe("SessionDO ring buffer", () => {
     );
   });
 
+  test("archives a bot-only conversation after 24 hours without a visitor, then reopens it", async () => {
+    const state = fakeDOState();
+    const do_ = new SessionDO(state, env);
+    const before = Date.now();
+    await post(do_, "/log", { messages: [{ role: "visitor", text: "course question" }] });
+    const alarm = await state.storage.getAlarm();
+    expect(alarm).toBeGreaterThanOrEqual(before + 24 * 60 * 60_000);
+    expect(alarm).toBeLessThan(before + 24 * 60 * 60_000 + 5_000);
+    await state.storage.put("archiveDueAt", Date.now() - 1);
+    await do_.alarm();
+    expect((await (await get(do_, "/summary")).json()) as { resolved: boolean }).toMatchObject({
+      resolved: true,
+    });
+    await post(do_, "/log", { messages: [{ role: "visitor", text: "one more question" }] });
+    expect((await (await get(do_, "/summary")).json()) as { resolved: boolean }).toMatchObject({
+      resolved: false,
+    });
+  });
+
+  test("archives an old bot-only conversation on inbox read without a bulk migration", async () => {
+    const state = fakeDOState();
+    const do_ = new SessionDO(state, env);
+    await state.storage.put("log", [
+      { role: "visitor", text: "old question", ts: Date.now() - 25 * 60 * 60_000 },
+      { role: "ai", text: "old answer", ts: Date.now() - 25 * 60 * 60_000 },
+    ]);
+    expect((await (await get(do_, "/summary")).json()) as { resolved: boolean }).toMatchObject({
+      resolved: true,
+    });
+    expect(await state.storage.get<boolean>("resolved")).toBe(true);
+  });
+
+  test("a historical handoff index or operator note blocks lazy archive", async () => {
+    const old = Date.now() - 25 * 60 * 60_000;
+    const indexed = fakeDOState();
+    await indexed.storage.put("log", [
+      { role: "visitor", text: "I need a person", ts: old },
+      { role: "ai", text: "Back to AI", ts: old },
+    ]);
+    const known = new SessionDO(indexed, env);
+    expect(
+      (await (await get(known, "/summary?knownHandoff=1")).json()) as { resolved: boolean },
+    ).toMatchObject({ resolved: false });
+    expect(await indexed.storage.get<boolean>("humanInquiry")).toBe(true);
+
+    const operatorState = fakeDOState();
+    await operatorState.storage.put("log", [
+      { role: "visitor", text: "I need a person", ts: old },
+      { role: "operator", text: "I can help", ts: old },
+    ]);
+    const operator = new SessionDO(operatorState, env);
+    expect((await (await get(operator, "/summary")).json()) as { resolved: boolean }).toMatchObject(
+      {
+        resolved: false,
+      },
+    );
+
+    const unansweredState = fakeDOState();
+    await unansweredState.storage.put("log", [
+      { role: "visitor", text: "I still need the team", ts: old },
+      { role: "ai", text: HANDBACK_NOTE, ts: old },
+    ]);
+    const unanswered = new SessionDO(unansweredState, env);
+    expect(
+      (await (await get(unanswered, "/summary")).json()) as { resolved: boolean },
+    ).toMatchObject({
+      resolved: false,
+    });
+  });
+
+  test("keeps an unanswered human request visible after silence hands ownership to AI", async () => {
+    const state = fakeDOState();
+    const do_ = new SessionDO(state, env);
+    await post(do_, "/log", { messages: [{ role: "visitor", text: "I need a person" }] });
+    await post(do_, "/handoff", {});
+    await state.storage.put("handoffDueAt", Date.now() - 1);
+    await do_.alarm();
+    expect((await (await get(do_, "/summary")).json()) as { handoffState: string }).toMatchObject({
+      handoffState: "ai",
+      resolved: false,
+    });
+    await state.storage.put("archiveDueAt", Date.now() - 1);
+    await do_.alarm();
+    expect((await (await get(do_, "/summary")).json()) as { resolved: boolean }).toMatchObject({
+      resolved: false,
+    });
+    expect(await state.storage.getAlarm()).toBeNull();
+  });
+
+  test("AUTO_ARCHIVE_HOURS changes the bot-only deadline", async () => {
+    const configured = fakeEnv({ AUTO_ARCHIVE_HOURS: "1" });
+    const state = fakeDOState();
+    const do_ = new SessionDO(state, configured);
+    const before = Date.now();
+    await do_.fetch(
+      new Request("https://do/log", {
+        method: "POST",
+        headers: { [DO_INTERNAL_HEADER]: doInternalSecret(configured) },
+        body: JSON.stringify({ messages: [{ role: "visitor", text: "hello" }] }),
+      }),
+    );
+    const alarm = await state.storage.getAlarm();
+    expect(alarm).toBeGreaterThanOrEqual(before + 60 * 60_000);
+    expect(alarm).toBeLessThan(before + 60 * 60_000 + 5_000);
+  });
+
+  test("a visitor call request prevents a bot-only archive", async () => {
+    const state = fakeDOState();
+    const do_ = new SessionDO(state, env);
+    const secret = "s".repeat(43);
+    await post(do_, "/log", { messages: [{ role: "visitor", text: "Can we speak?" }] });
+    await post(do_, "/call/visitor/register", { secret });
+    const invitation = await do_.fetch(
+      new Request("https://do/call", {
+        method: "POST",
+        headers: {
+          ...authed,
+          "x-call-actor": "visitor",
+          "x-call-visitor-secret": secret,
+          "x-call-request-trigger": "always",
+        },
+        body: JSON.stringify({ action: "invite" }),
+      }),
+    );
+    expect(invitation.status).toBe(200);
+    await state.storage.put("archiveDueAt", Date.now() - 1);
+    await do_.alarm();
+    expect((await (await get(do_, "/summary")).json()) as { resolved: boolean }).toMatchObject({
+      resolved: false,
+    });
+  });
+
   test("live /log appends mirror {type:'message'} to OPERATOR sockets only; seed stays silent", async () => {
     // fake state with one tagged operator socket + one visitor socket
     const opFrames: string[] = [];
     const visitorFrames: string[] = [];
     const opSocket = { send: (d: string) => void opFrames.push(d) };
     const visitorSocket = { send: (d: string) => void visitorFrames.push(d) };
-    const store = new Map<string, unknown>();
-    const state = {
-      acceptWebSocket: () => {},
-      getWebSockets: (tag?: string) =>
-        tag === "operator" ? [opSocket] : [opSocket, visitorSocket],
-      storage: {
-        get: async (k: string) => store.get(k),
-        put: async (k: string, v: unknown) => void store.set(k, v),
+    const state = Object.create(fakeDOState(), {
+      getWebSockets: {
+        value: (tag?: string) => (tag === "operator" ? [opSocket] : [opSocket, visitorSocket]),
       },
-    } as unknown as DurableObjectState;
+    }) as DurableObjectState;
     const do_ = new SessionDO(state, env);
 
     // seed replay → ring fills, but nothing is broadcast (backfill, not live)
@@ -1782,9 +1909,9 @@ describe("SessionDO hand-back", () => {
 
   test("visitor msg while handed off arms the silence alarm; operator reply disarms it", async () => {
     const { do_, state } = socketDO();
-    // visitor msg while NOT handed off → no alarm (bot is answering anyway)
+    // Bot-only inactivity has its own later archive deadline.
     await post(do_, "/log", { messages: [{ role: "visitor", text: "hi" }] });
-    expect(await state.storage.getAlarm()).toBeNull();
+    expect(await state.storage.getAlarm()).toBeGreaterThan(Date.now() + 23 * 60 * 60_000);
 
     await post(do_, "/operator", { text: "human here" });
     const before = Date.now();

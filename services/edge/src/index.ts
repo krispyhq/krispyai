@@ -1212,6 +1212,19 @@ async function handleOperatorHandoffs(request: Request, env: Env): Promise<Respo
     env.KRISPY_KV.list({ prefix: handoffPrefix }),
     env.KRISPY_KV.list({ prefix: legacyPrefix }),
   ]);
+  const indexedConversations = new Set(
+    conversationList.keys.map(({ name }) =>
+      decodeURIComponent(name.slice(conversationPrefix.length)),
+    ),
+  );
+  const knownHandoffs = new Set([
+    ...handoffList.keys.map(({ name }) => name.slice(handoffPrefix.length)),
+    // Before the conversation index existed, a Telegram topic alone cannot
+    // prove whether a human request was pending. Keep those old rows active.
+    ...legacyList.keys
+      .map(({ name }) => name.slice(legacyPrefix.length))
+      .filter((sessionId) => !indexedConversations.has(sessionId)),
+  ]);
   const sessionIds = [
     ...new Set([
       ...(includeActive
@@ -1225,7 +1238,12 @@ async function handleOperatorHandoffs(request: Request, env: Env): Promise<Respo
   ];
   const rows = await Promise.all(
     sessionIds.map(async (sessionId) => {
-      const r = await doFetch(env, tenantId, sessionId, "https://do/summary");
+      const r = await doFetch(
+        env,
+        tenantId,
+        sessionId,
+        `https://do/summary${knownHandoffs.has(sessionId) ? "?knownHandoff=1" : ""}`,
+      );
       const s = (await r.json()) as {
         handoffState?: HandoffState;
         handedOff: boolean;

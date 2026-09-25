@@ -216,6 +216,8 @@ export interface Env {
   /** Operator-silence minutes before a handed-off session hands back to the AI,
    * default HANDBACK_SILENCE_MINUTES (5). */
   HANDBACK_SILENCE_MINUTES?: string;
+  /** Hours without a live visitor turn before a bot-only session is archived (default 24). */
+  AUTO_ARCHIVE_HOURS?: string;
 
   // --- misc ---
   /** CORS allow-origin for the widget. Default "*". Accepts a comma-separated

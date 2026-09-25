@@ -84,6 +84,7 @@ export function readyEvent(handoffState: HandoffState, messages: RingMsg[]): Ser
 // Operator silence after a visitor message on a handed-off session → hand back to
 // the AI. Minutes are env-tunable (HANDBACK_SILENCE_MINUTES); this is the default.
 export const HANDBACK_SILENCE_MINUTES = 5;
+export const AUTO_ARCHIVE_HOURS = 24;
 // Bot-styled ring line appended on a silence hand-back (operator thread record).
 export const HANDBACK_NOTE = "No reply from the team for a while — the AI has resumed this chat.";
 
@@ -158,13 +159,14 @@ export class SessionDO {
     const call = await this.state.storage.get<CallState>("call");
     const handoffDue = await this.state.storage.get<number>("handoffDueAt");
     const cleanupDue = await this.state.storage.get<number>("callCleanupDueAt");
+    const archiveDue = await this.state.storage.get<number>("archiveDueAt");
     const callDue =
       call?.status === "ringing"
         ? call.expiresAt
         : call?.status === "accepted"
           ? (call.acceptedAt ?? call.createdAt) + CALL_MAX_DURATION_MS
           : 0;
-    const due = [handoffDue, callDue, cleanupDue].filter(
+    const due = [handoffDue, callDue, cleanupDue, archiveDue].filter(
       (n): n is number => typeof n === "number" && n > 0,
     );
     if (due.length) await this.state.storage.setAlarm(Math.min(...due));
@@ -191,10 +193,48 @@ export class SessionDO {
     return (Number.isFinite(mins) && mins > 0 ? mins : HANDBACK_SILENCE_MINUTES) * 60_000;
   }
 
+  private archiveMs(): number {
+    const hours = Number(this.env.AUTO_ARCHIVE_HOURS);
+    return (Number.isFinite(hours) && hours > 0 ? hours : AUTO_ARCHIVE_HOURS) * 60 * 60_000;
+  }
+
+  private async hasHumanInquiry(): Promise<boolean> {
+    if ((await this.state.storage.get<boolean>("humanInquiry")) === true) return true;
+    if ((await this.state.storage.get<number>("visitorCallRequestAt")) ?? 0) return true;
+    const log = await this.ring();
+    return log.some((message) => message.role === "operator" || message.text === HANDBACK_NOTE);
+  }
+
+  private async markHumanInquiry(): Promise<void> {
+    await this.state.storage.put("humanInquiry", true);
+    await this.state.storage.put("archiveDueAt", 0);
+    await this.scheduleAlarm();
+  }
+
+  /** The inbox read upgrades old bot-only sessions that predate archive alarms.
+   * Never infer that an old human request was answered merely because handback
+   * returned ownership to AI. */
+  private async archiveIfIdle(now: number): Promise<void> {
+    if ((await this.resolved()) || (await this.handoffState()) !== "ai") return;
+    if (await this.hasHumanInquiry()) return;
+    const log = await this.ring();
+    const lastVisitor = [...log].reverse().find((message) => message.role === "visitor");
+    if (!lastVisitor || !Number.isFinite(lastVisitor.ts)) return;
+    const storedDue = await this.state.storage.get<number>("archiveDueAt");
+    const due = storedDue && storedDue > 0 ? storedDue : lastVisitor.ts + this.archiveMs();
+    if (due > now) return;
+    const call = await this.callState();
+    if (call?.status === "ringing" || call?.status === "accepted") return;
+    await this.state.storage.put("resolved", true);
+    await this.state.storage.put("archiveDueAt", 0);
+    await this.scheduleAlarm();
+  }
+
   /** Hand the session back to the AI: clear pending/operator state, disarm the silence alarm,
    * broadcast {type:"resume"} to every socket (widget un-mutes its framing; the
    * Buttr thread sees the state flip). No-op when the bot already has the session. */
   private async handBack(opts: { note?: string } = {}): Promise<void> {
+    if ((await this.handoffState()) !== "ai") await this.markHumanInquiry();
     await this.state.storage.put("handoffDueAt", 0);
     await this.scheduleAlarm();
     // Reset the handoff-announce guard so a genuinely new future escalation can alert
@@ -253,6 +293,20 @@ export class SessionDO {
     const cleanupDue = await this.state.storage.get<number>("callCleanupDueAt");
     const cleanupRoom = await this.state.storage.get<string>("callCleanupRoom");
     if (cleanupDue && cleanupDue <= now && cleanupRoom) await this.closeEndedRoom(cleanupRoom);
+    const archiveDue = await this.state.storage.get<number>("archiveDueAt");
+    if (archiveDue && archiveDue <= now) {
+      const call = await this.callState();
+      const callActive = call?.status === "ringing" || call?.status === "accepted";
+      if (
+        !(await this.resolved()) &&
+        (await this.handoffState()) === "ai" &&
+        !(await this.hasHumanInquiry()) &&
+        !callActive
+      ) {
+        await this.state.storage.put("resolved", true);
+      }
+      await this.state.storage.put("archiveDueAt", 0);
+    }
     await this.scheduleAlarm();
   }
 
@@ -394,6 +448,7 @@ export class SessionDO {
           await this.state.storage.put("call", result.call);
           await this.state.storage.put("callNonce", crypto.randomUUID());
           if (actor === "visitor") await this.state.storage.put("visitorCallRequestAt", Date.now());
+          await this.markHumanInquiry();
           await this.sendCall(result.call);
           await this.scheduleAlarm();
         }
@@ -470,6 +525,12 @@ export class SessionDO {
     // One inbox-row read: handoff flag + the ring tail — halves the per-session
     // subrequests of the /api/operator/handoffs KV scan vs /state + /log.
     if (request.method === "GET" && url.pathname.endsWith("/summary")) {
+      if (
+        url.searchParams.get("knownHandoff") === "1" &&
+        (await this.state.storage.get<boolean>("humanInquiry")) !== true
+      )
+        await this.markHumanInquiry();
+      await this.archiveIfIdle(Date.now());
       const [handoffState, resolved, log] = await Promise.all([
         this.handoffState(),
         this.resolved(),
@@ -521,6 +582,10 @@ export class SessionDO {
       // the bot answers, and the visitor can re-request a human normally.
       if (!seed && appended.some((m) => m.role === "visitor")) {
         if (await this.resolved()) await this.state.storage.put("resolved", false);
+        if ((await this.handoffState()) === "ai" && !(await this.hasHumanInquiry())) {
+          await this.state.storage.put("archiveDueAt", Date.now() + this.archiveMs());
+          await this.scheduleAlarm();
+        }
         // Pending/operator + visitor waiting → arm (or reset) silence hand-back.
         // Any operator reply disarms it (see /operator).
         if ((await this.handoffState()) !== "ai") {
@@ -546,6 +611,7 @@ export class SessionDO {
       const { text } = (await request.json()) as { text: string };
       const ts = Date.now();
       await this.setHandoffState("operator");
+      await this.markHumanInquiry();
       await this.state.storage.put("handoffDueAt", 0); // operator replied
       await this.scheduleAlarm();
       await this.appendRing([{ role: "operator", text, ts }]);
@@ -563,6 +629,7 @@ export class SessionDO {
       const text = action.kind === "form" ? action.form.title : action.connector.label;
       const ts = Date.now();
       await this.setHandoffState("operator");
+      await this.markHumanInquiry();
       await this.state.storage.put("handoffDueAt", 0);
       await this.scheduleAlarm();
       await this.appendRing([{ role: "operator", text, ts, action }]);
@@ -590,11 +657,18 @@ export class SessionDO {
       const body = (await request.json().catch(() => null)) as { resolved?: boolean } | null;
       const next = typeof body?.resolved === "boolean" ? body.resolved : !(await this.resolved());
       await this.state.storage.put("resolved", next);
-      if (next) await this.handBack();
+      if (next) {
+        await this.state.storage.put("archiveDueAt", 0);
+        await this.handBack();
+      } else if (!(await this.hasHumanInquiry())) {
+        await this.state.storage.put("archiveDueAt", Date.now() + this.archiveMs());
+      }
+      await this.scheduleAlarm();
       return Response.json({ ok: true, resolved: next });
     }
 
     if (request.method === "POST" && url.pathname.endsWith("/handoff")) {
+      await this.markHumanInquiry();
       // Idempotency guard: a jailbroken bot can emit [!HANDOFF] on every turn. The
       // widget-facing broadcast is harmless to repeat, but the Worker's LOUD side of a
       // handoff (operator @mention + push) must fire ONCE per escalation, not per turn.

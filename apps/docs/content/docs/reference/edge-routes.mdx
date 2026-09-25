@@ -91,6 +91,12 @@ unresolved AI-only conversations indexed under `conversation:<tenant>:<session>`
 keep their separate legacy `session:` keys, so
 enabling Telegram later cannot overwrite discovery state. The inbox unions and de-duplicates both
 prefixes so conversations created before this index remain visible.
+`includeResolved: true` includes archived rows. Bot-only conversations archive after
+24 hours without a visitor turn by default (`AUTO_ARCHIVE_HOURS`); an inbox read
+also archives eligible older bot-only conversations that predate the timer. The next
+live visitor turn reopens them. Known handoffs, operator messages, and call requests
+stay available for manual archive even after the AI resumes; a legacy conversation
+without enough evidence stays active rather than being archived speculatively.
 
 Known business questions stay with the AI. An explicit human request enters `pending` immediately
 without requiring a name, email, phone, or order reference. Only a business-configured form can

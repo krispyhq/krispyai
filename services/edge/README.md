@@ -40,6 +40,12 @@ for another attempt.
 The authenticated operator action routes list configured forms and Instagram CTAs
 for a session's recorded site, then send a selected ID as a durable typed card.
 The visitor receives it over the session WebSocket and sees it again after reconnecting.
+Bot-only sessions archive after 24 hours without a new visitor message by default;
+`AUTO_ARCHIVE_HOURS` configures that window. A new live visitor message reopens the
+session. Handoffs, human replies, and call requests remain available for manual
+resolution even if ownership has returned to AI. An inbox read archives eligible
+older bot-only sessions that predate the timer; it leaves uncertain legacy human
+requests active.
 
 | method | path                             | purpose                                                                                                  |
 | ------ | -------------------------------- | -------------------------------------------------------------------------------------------------------- |

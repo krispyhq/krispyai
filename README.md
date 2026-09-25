@@ -59,6 +59,9 @@ visitor ──▶ AI answers (Cloudflare Workers AI) ──▶ visitor
 - Every message mirrors to **one Telegram forum topic per visitor** on your phone.
 - The Buttr operator inbox can list every unresolved conversation, including AI-only
   chats; phone notifications remain reserved for human handoffs.
+- Bot-only conversations archive after 24 hours without a new visitor message
+  (`AUTO_ARCHIVE_HOURS` changes the window). A new visitor message reopens them.
+  Human requests and calls remain visible until a team member archives them.
 - You reply from Telegram → it's pushed into the browser over a WebSocket, **live**.
 - The bot detects it's a human job and steps back immediately. Messages sent while you are
   on the way still reach the same topic; the bot stays quiet until you resolve the handoff.

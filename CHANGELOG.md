@@ -33,6 +33,10 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Fixed
 
+- Bot-only conversations now archive after 24 hours of visitor inactivity (configurable
+  with `AUTO_ARCHIVE_HOURS`), including eligible older sessions on inbox read. A new
+  visitor turn reopens them; human requests and calls stay visible until manually archived.
+
 - Widget: restore the saved unread indicator at boot for every launcher, including the default circle and visits where theme config fails to load.
 
 - Visitor audio calls now show when the team member has actually joined, provide
