@@ -230,7 +230,9 @@ export async function mergeTenantConfig(
 ): Promise<Partial<TenantConfig>> {
   const next: Partial<TenantConfig> = { ...(await readTenantConfig(env, tenantId, siteId)) };
   for (const [k, v] of Object.entries(patch)) {
-    if (v !== undefined) (next as Record<string, unknown>)[k] = v;
+    if (v !== undefined)
+      (next as Record<string, unknown>)[k] =
+        k === "callSettings" ? { ...next.callSettings, ...(v as TenantConfig["callSettings"]) } : v;
   }
   await env.KRISPY_KV.put(kTenant(tenantId, siteId), JSON.stringify(next));
   return next;

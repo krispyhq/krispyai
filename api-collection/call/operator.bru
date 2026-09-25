@@ -1,0 +1,29 @@
+meta {
+  name: Operator audio call
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/operator/call
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{operatorToken}}
+}
+
+body:json {
+  {
+    "tenantId": "self",
+    "sessionId": "sess-demo-1",
+    "action": "status"
+  }
+}
+
+docs {
+  Actions: status, invite, accept, decline, cancel, end, grant. Include id
+  for transitions/grant. Operators accept or decline visitor requests, and
+  cancel their own invitations. The visitor nonce is never sent to operators.
+}

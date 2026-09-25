@@ -132,6 +132,13 @@ export interface KbSuggestion {
 }
 
 export interface TenantConfig {
+  /** Audio calls are opt-in; visitor requests can be limited to human handoff. */
+  callSettings?: {
+    enabled?: boolean;
+    visitorRequestsEnabled?: boolean;
+    visitorRequestTrigger?: "after_handoff" | "always";
+    notifyOnVisitorRequest?: boolean;
+  };
   /** Telegram bot token (BotFather). Optional for app-only Cloud tenants. */
   botToken?: string;
   /** Target supergroup id WITH topics enabled. Optional for app-only Cloud tenants. */

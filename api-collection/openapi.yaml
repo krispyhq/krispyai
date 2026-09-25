@@ -37,6 +37,92 @@ tags:
     description: Carry a bot token or mutate config — require a shared-secret header.
 
 paths:
+  /api/call:
+    post:
+      tags: [public]
+      summary: Visitor audio call control
+      operationId: visitorCall
+      description: >
+        Requires the session's registered visitorSecret capability. `invite` requires
+        enabled visitor requests and, by default, an active human handoff. A new
+        visitor request sends one operator push; repeating it while ringing is
+        idempotent. `status` includes availableToRequest, which never claims an
+        operator is online. The invitation recipient accepts or declines, the
+        requester cancels, and either participant may end an accepted call.
+        `grant` issues a room token only after acceptance.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionId, visitorSecret, action]
+              properties:
+                tenantId: { type: string }
+                sessionId: { type: string }
+                visitorSecret: { type: string }
+                action:
+                  { type: string, enum: [status, invite, accept, decline, cancel, end, grant] }
+                id: { type: string, description: "Required except for status and invite." }
+                nonce:
+                  { type: string, description: "Required for visitor transitions after invite." }
+      responses:
+        "200":
+          description: Call status, transition result, or short lived LiveKit grant.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  call: { $ref: "#/components/schemas/AudioCall" }
+                  nonce: { type: string }
+                  available: { type: boolean }
+                  availableToRequest: { type: boolean }
+                  url: { type: string }
+                  token: { type: string }
+                  clientUrl: { type: string }
+        "400": { description: "Invalid request body." }
+        "401": { description: "Visitor capability missing." }
+        "403": { description: "Wrong actor, nonce, or disabled call setting." }
+        "409": { description: "Stale call, missing handoff, or unavailable visitor." }
+        "429": { description: "Visitor request limited to one new request per minute." }
+        "502": { description: "Room disconnect failed after an end transition." }
+        "503": { description: "RTC unavailable or previous room cleanup pending." }
+  /api/operator/call:
+    post:
+      tags: [secret-guarded]
+      summary: Operator audio call control
+      operationId: operatorCall
+      description: >
+        Same session call as /api/call. Operators may invite a connected visitor,
+        accept or decline a visitor request, cancel their own invitation, end an
+        accepted call, or obtain a grant after acceptance. Requires an operator
+        bearer or tenant sync secret.
+      security:
+        - operatorBearer: []
+        - tenantSyncSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenantId, sessionId, action]
+              properties:
+                tenantId: { type: string }
+                sessionId: { type: string }
+                action:
+                  { type: string, enum: [status, invite, accept, decline, cancel, end, grant] }
+                id: { type: string }
+      responses:
+        "200": { description: "Call status, transition result, or room grant." }
+        "400": { description: "Invalid request body." }
+        "401": { description: "Operator authentication required." }
+        "403": { description: "Wrong actor or calls disabled." }
+        "409": { description: "Stale call or visitor unavailable for operator invite." }
+        "502": { description: "Room disconnect failed." }
+        "503": { description: "RTC unavailable or cleanup pending." }
   /health:
     get:
       tags: [public]
@@ -1323,6 +1409,18 @@ components:
         name: { type: string, description: "display name; mention label when no username." }
         username: { type: string, description: "public @username (preferred — plain @mention)." }
 
+    AudioCall:
+      type: object
+      required: [id, status, requestedBy, createdAt, expiresAt]
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [ringing, accepted, declined, canceled, expired, ended] }
+        requestedBy: { type: string, enum: [operator, visitor] }
+        createdAt: { type: integer }
+        expiresAt: { type: integer }
+        acceptedAt: { type: integer }
+        endedAt: { type: integer }
+
     TenantConfig:
       type: object
       description: >
@@ -1340,6 +1438,15 @@ components:
         model: { type: string }
         onboardingStep: { type: integer }
         onboardingComplete: { type: boolean }
+        callSettings:
+          type: object
+          description: "Audio calls are opt-in; omitted booleans default to disabled."
+          properties:
+            enabled: { type: boolean }
+            visitorRequestsEnabled: { type: boolean }
+            visitorRequestTrigger:
+              { type: string, enum: [after_handoff, always], default: after_handoff }
+            notifyOnVisitorRequest: { type: boolean, default: true }
         forms:
           type: array
           items: { $ref: "#/components/schemas/FormSpec" }

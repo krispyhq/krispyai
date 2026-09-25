@@ -10,15 +10,16 @@ one Cloudflare Worker hosts all of these plus the `SessionDO`. CORS allow-origin
 
 ## public routes
 
-| method | path                             | body / query → response                                                                                                                                                                    |
-| ------ | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `POST` | `/api/chat`                      | `{ sessionId, message, tenantId?, history? }` → `{ reply, handoff, handoffState, handedOff, degraded?, formId?, form? }`                                                                   |
-| `POST` | `/api/contact`                   | `{ sessionId, tenantId?, name?, contact?, message? }` → `{ ok: true }` — legacy contact-capture shim (maps onto the lead fan-out)                                                          |
-| `POST` | `/api/lead`                      | `{ tenantId?, sessionId, formId?, values, history }` → `{ ok: true }` after a configured form's email delivery is accepted; `502 delivery_failed` keeps the widget form available to retry |
-| `GET`  | `/api/session/:id/ws?t=<tenant>` | WebSocket upgrade → `SessionDO`. `426` if not an upgrade. the visitor's live channel                                                                                                       |
-| `GET`  | `/api/widget/config?t=<tenant>`  | → `{ capabilities: { attachments }, theme, ctas, script, popups }` — the **public, secret-free** widget projection (whitelist only; no `persona`)                                          |
-| `GET`  | `/api/usage?t=<tenant>`          | → `{ tenantId, usage: { ai, handoff, tokens }, plan, entitled, status, limits, withinLimits }`                                                                                             |
-| `GET`  | `/health`                        | → `{ status: "ok", service: "edge" }`                                                                                                                                                      |
+| method | path                             | body / query → response                                                                                                                                                                        |
+| ------ | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST` | `/api/chat`                      | `{ sessionId, message, tenantId?, history? }` → `{ reply, handoff, handoffState, handedOff, degraded?, formId?, form? }`                                                                       |
+| `POST` | `/api/call`                      | Visitor call control with registered `visitorSecret`: `status`, `invite`, `accept`, `decline`, `cancel`, `end`, `grant`. Status includes `availableToRequest`; invite returns a private nonce. |
+| `POST` | `/api/contact`                   | `{ sessionId, tenantId?, name?, contact?, message? }` → `{ ok: true }` — legacy contact-capture shim (maps onto the lead fan-out)                                                              |
+| `POST` | `/api/lead`                      | `{ tenantId?, sessionId, formId?, values, history }` → `{ ok: true }` after a configured form's email delivery is accepted; `502 delivery_failed` keeps the widget form available to retry     |
+| `GET`  | `/api/session/:id/ws?t=<tenant>` | WebSocket upgrade → `SessionDO`. `426` if not an upgrade. the visitor's live channel                                                                                                           |
+| `GET`  | `/api/widget/config?t=<tenant>`  | → `{ capabilities: { attachments }, theme, ctas, script, popups }` — the **public, secret-free** widget projection (whitelist only; no `persona`)                                              |
+| `GET`  | `/api/usage?t=<tenant>`          | → `{ tenantId, usage: { ai, handoff, tokens }, plan, entitled, status, limits, withinLimits }`                                                                                                 |
+| `GET`  | `/health`                        | → `{ status: "ok", service: "edge" }`                                                                                                                                                          |
 
 ### `POST /api/chat` gate
 
@@ -31,6 +32,24 @@ always entitled and unmetered. a non-self tenant with no valid snapshot gets
 replied; `operator` starts with the first human reply. Pending and operator-owned visitor
 messages still reach the topic and server ring, while the AI stays silent. `handedOff` remains
 as a compatibility boolean and is true only for `operator`.
+
+### Audio calls
+
+Audio calls require RTC configuration and tenant `callSettings.enabled`. Operator invites
+require a connected visitor; visitor requests require `visitorRequestsEnabled` and, by
+default, a session already in `pending` or `operator` handoff state. Set
+`visitorRequestTrigger: "always"` to allow a visitor request before handoff. A visitor
+request sends one push to registered operator devices unless `notifyOnVisitorRequest` is
+false; repeating the same ringing request does not send another. `availableToRequest` in
+visitor `status` says only that a request is allowed, not that an operator is online.
+
+Both `/api/call` and `/api/operator/call` use `POST` with `{ tenantId, sessionId, action,
+id?, nonce? }`; the visitor also sends its registered `visitorSecret`, while the operator
+uses its bearer or tenant sync secret. `call.requestedBy` identifies the requester. The
+recipient can `accept` or `decline`; the requester can `cancel`; either can `end` once
+accepted. The visitor nonce never appears in the operator response. `grant` returns
+room credentials only after acceptance. Accepting sets the session to operator handoff
+so the AI stays silent during the call. A new visitor request is limited to one per minute.
 
 ### Operator bearer authorization
 

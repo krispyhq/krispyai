@@ -363,10 +363,25 @@ async function handleCall(
   }
   const available = callRtcAvailable(rtc) && clientReady;
   if (!available) return json(env, { error: "call_unavailable", available: false }, 503);
-  if (actor === "visitor" && !["status", "accept", "decline", "end", "grant"].includes(body.action))
+  if (
+    actor === "visitor" &&
+    !["status", "invite", "accept", "decline", "cancel", "end", "grant"].includes(body.action)
+  )
     return json(env, { error: "wrong_actor" }, 403);
-  if (actor === "operator" && !["status", "invite", "cancel", "end", "grant"].includes(body.action))
+  if (
+    actor === "operator" &&
+    !["status", "invite", "accept", "decline", "cancel", "end", "grant"].includes(body.action)
+  )
     return json(env, { error: "wrong_actor" }, 403);
+  const identityResponse = await doFetch(env, tenantId, body.sessionId, "https://do/identity");
+  const identity = identityResponse.ok
+    ? ((await identityResponse.json()) as { siteId?: string })
+    : {};
+  const callSettings = (await readTenantConfig(env, tenantId, identity.siteId))?.callSettings;
+  if (body.action === "invite" && !callSettings?.enabled)
+    return json(env, { error: "call_disabled" }, 403);
+  if (body.action === "invite" && actor === "visitor" && !callSettings?.visitorRequestsEnabled)
+    return json(env, { error: "visitor_requests_disabled" }, 403);
   const headers: Record<string, string> = { "x-call-actor": actor };
   if (actor === "visitor") headers["x-call-visitor-secret"] = body.visitorSecret as string;
   const path = "https://do/call";
@@ -392,25 +407,63 @@ async function handleCall(
     const data = (await response.json()) as {
       call: ReturnType<typeof import("./call").publicCall>;
       nonce?: string;
+      handoffState?: HandoffState;
+      visitorRequestReady?: boolean;
     };
     return json(env, {
-      available,
+      available:
+        !!callSettings?.enabled ||
+        data.call?.status === "accepted" ||
+        data.call?.status === "ringing",
       call: data.call,
-      ...(actor === "visitor" ? { nonce: data.nonce } : {}),
+      ...(actor === "visitor"
+        ? {
+            nonce: data.nonce,
+            availableToRequest:
+              !!callSettings?.enabled &&
+              !!callSettings.visitorRequestsEnabled &&
+              data.visitorRequestReady === true &&
+              (callSettings.visitorRequestTrigger === "always" ||
+                data.handoffState === "pending" ||
+                data.handoffState === "operator"),
+          }
+        : {}),
     });
   }
   const response = await doFetch(env, tenantId, body.sessionId, path, {
     method: "POST",
-    headers: { ...headers, "content-type": "application/json" },
+    headers: {
+      ...headers,
+      "content-type": "application/json",
+      ...(actor === "visitor" && body.action === "invite"
+        ? { "x-call-request-trigger": callSettings?.visitorRequestTrigger ?? "after_handoff" }
+        : {}),
+    },
     body: JSON.stringify({ action: body.action, id: body.id, nonce: body.nonce }),
   });
   const result = (await response.json()) as {
     call?: ReturnType<typeof import("./call").publicCall>;
     room?: string;
     error?: string;
+    nonce?: string;
+    changed?: boolean;
   };
   if (!response.ok) return json(env, { error: result.error || "call_failed" }, response.status);
-  return json(env, { call: result.call });
+  if (
+    actor === "visitor" &&
+    body.action === "invite" &&
+    result.changed &&
+    callSettings?.notifyOnVisitorRequest !== false
+  )
+    await pushToApp(env, tenantId, body.sessionId, "Open the conversation to respond.", fetch, {
+      kind: "call_request",
+      callId: result.call!.id,
+      expiresAt: result.call!.expiresAt,
+    });
+  return json(env, {
+    call: result.call,
+    ...(actor === "visitor" && body.action === "invite" ? { nonce: result.nonce } : {}),
+  });
 }
 
 async function handleChat(
@@ -1300,6 +1353,23 @@ const AVATAR_SCHEME = /^(https:\/\/|data:image\/(png|webp|jpeg);base64,)/;
 function tenantConfigCapError(
   cfg: Partial<TenantConfig>,
 ): { error: string; status: number } | null {
+  if (cfg.callSettings !== undefined) {
+    const settings = cfg.callSettings;
+    if (
+      !settings ||
+      typeof settings !== "object" ||
+      Array.isArray(settings) ||
+      (settings.enabled !== undefined && typeof settings.enabled !== "boolean") ||
+      (settings.visitorRequestsEnabled !== undefined &&
+        typeof settings.visitorRequestsEnabled !== "boolean") ||
+      (settings.notifyOnVisitorRequest !== undefined &&
+        typeof settings.notifyOnVisitorRequest !== "boolean") ||
+      (settings.visitorRequestTrigger !== undefined &&
+        settings.visitorRequestTrigger !== "after_handoff" &&
+        settings.visitorRequestTrigger !== "always")
+    )
+      return { error: "invalid_call_settings", status: 400 };
+  }
   const avatar = cfg.theme?.avatar;
   if (avatar !== undefined) {
     if (avatar.length > AVATAR_MAX_CHARS) return { error: "avatar_too_large", status: 413 };

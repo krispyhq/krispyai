@@ -8,6 +8,8 @@ export interface CallState {
   /** Opaque, random room name; contains no tenant, session, or person identifier. */
   room: string;
   status: CallStatus;
+  /** Missing on older stored invitations, which were operator initiated. */
+  requestedBy?: "operator" | "visitor";
   createdAt: number;
   expiresAt: number;
   acceptedAt?: number;
@@ -39,9 +41,13 @@ export function inviteCall(
   previous: CallState | null | undefined,
   now: number,
   id: string = crypto.randomUUID(),
+  requestedBy: "operator" | "visitor" = "operator",
 ): CallResult {
   const call = currentCall(previous, now);
-  if (call?.status === "ringing") return { ok: true, call, changed: false };
+  if (call?.status === "ringing")
+    return (call.requestedBy ?? "operator") === requestedBy
+      ? { ok: true, call, changed: false }
+      : { ok: false, reason: "not_ringing" };
   if (call?.status === "accepted") return { ok: false, reason: "not_ringing" };
   return {
     ok: true,
@@ -49,6 +55,7 @@ export function inviteCall(
       id,
       room: `krispy-${id}`,
       status: "ringing",
+      requestedBy,
       createdAt: now,
       expiresAt: now + CALL_INVITE_TTL_MS,
     },
@@ -99,5 +106,13 @@ export function publicCall(call: CallState | null | undefined, now: number) {
   const current = currentCall(call, now);
   if (!current) return null;
   const { id, status, createdAt, expiresAt, acceptedAt, endedAt } = current;
-  return { id, status, createdAt, expiresAt, acceptedAt, endedAt };
+  return {
+    id,
+    status,
+    requestedBy: current.requestedBy ?? "operator",
+    createdAt,
+    expiresAt,
+    acceptedAt,
+    endedAt,
+  };
 }

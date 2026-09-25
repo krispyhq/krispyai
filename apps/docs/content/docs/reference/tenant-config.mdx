@@ -26,6 +26,12 @@ interface TenantConfig {
   kbSources?: KbSource[]; // per-doc knowledge registry, assembled into the prompt at chat time
   kbVersion?: number; // bumped on any kbSources write (retrieval cache key)
   operators?: Operator[]; // humans to @mention on handoff (auto-learned; NEVER public)
+  callSettings?: {
+    enabled?: boolean; // default false; enables operator-initiated audio calls
+    visitorRequestsEnabled?: boolean; // default false; visitor may request a call
+    visitorRequestTrigger?: "after_handoff" | "always"; // default after_handoff
+    notifyOnVisitorRequest?: boolean; // default true; push to registered operator devices
+  };
 }
 ```
 

@@ -357,8 +357,13 @@ export class SessionDO {
         return Response.json({ error: "actor_required" }, { status: 403 });
       if (request.method === "GET") {
         const call = await this.callState();
+        const lastRequest = (await this.state.storage.get<number>("visitorCallRequestAt")) ?? 0;
         return Response.json({
           call: publicCall(call, Date.now()),
+          handoffState: await this.handoffState(),
+          visitorRequestReady:
+            (!call || ["declined", "canceled", "expired", "ended"].includes(call.status)) &&
+            Date.now() - lastRequest >= 60_000,
           ...(actor === "visitor"
             ? { nonce: await this.state.storage.get<string>("callNonce") }
             : {}),
@@ -367,35 +372,57 @@ export class SessionDO {
       if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
       const action = body?.action;
       if (action === "invite") {
+        const previous = await this.callState();
         if (
-          actor !== "operator" ||
-          !visitorSecret ||
-          this.state.getWebSockets("call-visitor").length === 0
+          actor === "operator" &&
+          (!visitorSecret || this.state.getWebSockets("call-visitor").length === 0)
         )
           return Response.json({ error: "visitor_unavailable" }, { status: 409 });
+        if (actor === "visitor") {
+          const trigger = request.headers.get("x-call-request-trigger");
+          if (trigger !== "always" && (await this.handoffState()) === "ai")
+            return Response.json({ error: "handoff_required" }, { status: 409 });
+          const lastRequest = (await this.state.storage.get<number>("visitorCallRequestAt")) ?? 0;
+          if (previous?.status !== "ringing" && Date.now() - lastRequest < 60_000)
+            return Response.json({ error: "call_request_rate_limited" }, { status: 429 });
+        }
         if (await this.state.storage.get<string>("callCleanupRoom"))
           return Response.json({ error: "previous_call_cleanup_pending" }, { status: 503 });
-        const result = inviteCall(await this.callState(), Date.now());
+        const result = inviteCall(previous, Date.now(), crypto.randomUUID(), actor);
         if (!result.ok) return Response.json({ error: result.reason }, { status: 409 });
         if (result.changed) {
           await this.state.storage.put("call", result.call);
           await this.state.storage.put("callNonce", crypto.randomUUID());
+          if (actor === "visitor") await this.state.storage.put("visitorCallRequestAt", Date.now());
           await this.sendCall(result.call);
           await this.scheduleAlarm();
         }
-        return Response.json({ call: publicCall(result.call, Date.now()) });
+        return Response.json({
+          call: publicCall(result.call, Date.now()),
+          changed: result.changed,
+          ...(actor === "visitor"
+            ? { nonce: await this.state.storage.get<string>("callNonce") }
+            : {}),
+        });
       }
       if (!action || !body?.id) return Response.json({ error: "invalid_action" }, { status: 400 });
-      if ((action === "accept" || action === "decline") && actor !== "visitor")
+      const current = await this.callState();
+      const requester = current?.requestedBy ?? "operator";
+      if ((action === "accept" || action === "decline") && actor === requester)
         return Response.json({ error: "wrong_actor" }, { status: 403 });
-      if (action === "cancel" && actor !== "operator")
+      if (action === "cancel" && actor !== requester)
         return Response.json({ error: "wrong_actor" }, { status: 403 });
       if (actor === "visitor" && body.nonce !== (await this.state.storage.get<string>("callNonce")))
         return Response.json({ error: "invalid_nonce" }, { status: 403 });
-      const result = transitionCall(await this.callState(), action, Date.now(), body.id);
+      const result = transitionCall(current, action, Date.now(), body.id);
       if (!result.ok) return Response.json({ error: result.reason }, { status: 409 });
       if (result.changed) {
         await this.state.storage.put("call", result.call);
+        if (action === "accept") {
+          await this.setHandoffState("operator");
+          await this.state.storage.put("handoffDueAt", 0);
+          broadcast(this.state.getWebSockets(), { type: "handoff", handoffState: "operator" });
+        }
         await this.sendCall(result.call);
         await this.scheduleAlarm();
       }

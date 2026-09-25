@@ -22,6 +22,11 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Fixed
 
+- Visitor audio calls now show when the team member has actually joined, provide
+  Mute/Unmute controls, and stop media and end the call when the page leaves the foreground.
+  Pending joins cannot turn the microphone back on after a call ends. With tenant opt-in,
+  visitors can request calls after handoff and notify the operator app; the team member
+  accepts before either side joins.
 - Operator-sent action receipts now count connected visitor sockets only; the operator
   still receives the live card echo without being mistaken for a visitor.
 - Edge deployments now sync the configured lead-email sender from Infisical alongside

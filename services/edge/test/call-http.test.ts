@@ -15,7 +15,12 @@ const rtc = {
   LIVEKIT_CLIENT_URL: "https://assets.example.test/livekit-client-v2.22.3.umd.min.js",
 };
 
-function harness(withRtc = true, visitorOnline = true) {
+function harness(
+  withRtc = true,
+  visitorOnline = true,
+  trigger: "always" | "after_handoff" = "always",
+  enabled = true,
+) {
   const objects = new Map<
     string,
     { instance: SessionDO; storage: Map<string, unknown>; state: DurableObjectState }
@@ -23,6 +28,13 @@ function harness(withRtc = true, visitorOnline = true) {
   const env = {
     TENANT_SYNC_SECRET: "trusted-test-sync",
     DO_INTERNAL_SECRET: "test-do-secret",
+    KRISPY_KV: {
+      get: async () =>
+        JSON.stringify({
+          callSettings: { enabled, visitorRequestsEnabled: true, visitorRequestTrigger: trigger },
+        }),
+      put: async () => {},
+    },
     ...(withRtc ? rtc : {}),
     SESSION: {
       idFromName: (name: string) => name,
@@ -294,6 +306,112 @@ test("one DO alarm expires ringing calls and enforces active-call limit with roo
     expect(target.storage.get("callCleanupRoom")).toBe("");
     expect(target.storage.has("__alarm")).toBe(false);
     expect(attempts).toBe(2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("visitor requests need handoff by default; only the operator can accept", async () => {
+  const h = harness(true, false, "after_handoff");
+  await h.register("session-a", secretA);
+  const before = await h.post("/api/call", visitor("status"));
+  expect(((await before.json()) as { availableToRequest: boolean }).availableToRequest).toBe(false);
+  expect((await h.post("/api/call", visitor("invite"))).status).toBe(409);
+  expect(h.objects.get("acme:session-a")!.storage.has("call")).toBe(false);
+  h.objects.get("acme:session-a")!.storage.set("handoffState", "pending");
+  const status = await h.post("/api/call", visitor("status"));
+  expect(((await status.json()) as { availableToRequest: boolean }).availableToRequest).toBe(true);
+  const requested = await h.post("/api/call", visitor("invite"));
+  expect(requested.status).toBe(200);
+  const payload = (await requested.json()) as {
+    call: { id: string; requestedBy: string };
+    nonce: string;
+  };
+  expect(payload.call.requestedBy).toBe("visitor");
+  expect(payload.nonce).toBeTruthy();
+  expect(
+    (await h.post("/api/operator/call", operator("status"), true).then((r) => r.json())) as object,
+  ).not.toHaveProperty("nonce");
+  expect(
+    (
+      await h.post(
+        "/api/call",
+        visitor("accept", "session-a", secretA, payload.call.id, payload.nonce),
+      )
+    ).status,
+  ).toBe(403);
+  expect(
+    (await h.post("/api/operator/call", operator("cancel", "session-a", payload.call.id), true))
+      .status,
+  ).toBe(403);
+  expect(
+    (await h.post("/api/call", visitor("grant", "session-a", secretA, payload.call.id))).status,
+  ).toBe(409);
+  expect(
+    (await h.post("/api/operator/call", operator("accept", "session-a", payload.call.id), true))
+      .status,
+  ).toBe(200);
+  expect(h.objects.get("acme:session-a")!.storage.get("handoffState")).toBe("operator");
+  expect(
+    (await h.post("/api/call", visitor("grant", "session-a", secretA, payload.call.id))).status,
+  ).toBe(200);
+});
+
+test("visitor cancellation and request rate limit do not take over the AI", async () => {
+  const h = harness();
+  await h.register("session-a", secretA);
+  const first = await h.post("/api/call", visitor("invite"));
+  const { call, nonce } = (await first.json()) as { call: { id: string }; nonce: string };
+  expect((await h.post("/api/call", visitor("invite"))).status).toBe(200);
+  expect(
+    (await h.post("/api/call", visitor("cancel", "session-a", secretA, call.id, nonce))).status,
+  ).toBe(200);
+  expect(h.objects.get("acme:session-a")!.storage.get("handoffState")).toBeUndefined();
+  expect(
+    (
+      (await (await h.post("/api/call", visitor("status"))).json()) as {
+        availableToRequest: boolean;
+      }
+    ).availableToRequest,
+  ).toBe(false);
+  expect((await h.post("/api/call", visitor("invite"))).status).toBe(429);
+});
+
+test("disabled call setting hides invitations while preserving status", async () => {
+  const h = harness(true, true, "always", false);
+  await h.register("session-a", secretA);
+  const status = await h.post("/api/call", visitor("status"));
+  expect(await status.json()).toMatchObject({ available: false, availableToRequest: false });
+  expect((await h.post("/api/call", visitor("invite"))).status).toBe(403);
+  expect((await h.post("/api/operator/call", operator("invite"), true)).status).toBe(403);
+});
+
+test("a new visitor request pushes once with call metadata", async () => {
+  const h = harness();
+  await h.register("session-a", secretA);
+  h.env.PUSH_TOKENS_URL = "https://push.example.test/tokens";
+  const originalFetch = globalThis.fetch;
+  const pushes: Array<{ title: string; data: { kind: string; callId: string } }> = [];
+  try {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("push.example.test"))
+        return Response.json({ tokens: ["ExponentPushToken[test]"] });
+      if (url.includes("exp.host")) {
+        pushes.push(...JSON.parse(String(init?.body)));
+        return Response.json({ data: [] });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }) as typeof fetch;
+    const first = await h.post("/api/call", visitor("invite"));
+    expect(first.status).toBe(200);
+    const id = ((await first.json()) as { call: { id: string } }).call.id;
+    expect((await h.post("/api/call", visitor("invite"))).status).toBe(200);
+    expect(pushes).toHaveLength(1);
+    expect(pushes[0]).toMatchObject({
+      title: "Visitor requested a call",
+      data: { kind: "call_request", callId: id },
+    });
   } finally {
     globalThis.fetch = originalFetch;
   }
