@@ -1716,8 +1716,13 @@
     ctaContainer().appendChild(item);
     log.scrollTop = log.scrollHeight;
   }
-  function armCtas() {
+  function armCtas(firstMessage) {
     ctaArmed = true;
+    // A visitor asking for Instagram should see the branded DM door now. For
+    // ordinary questions, keep the tenant's staggered timing.
+    var askedForDm = /(?:instagram|insta\b|\big\b|\bdm\b|אינסטגרם|إنستغرام)/i.test(
+      firstMessage || "",
+    );
     ctas.forEach(function (c) {
       if (!c) return;
       ctaTimers.push(
@@ -1726,7 +1731,7 @@
             if (handedOff) return; // operator took over before this CTA fired
             renderCta(c);
           },
-          clampMs(c.showAfterMs, 0),
+          askedForDm && c.type === "instagram" ? 0 : clampMs(c.showAfterMs, 0),
         ),
       );
     });
@@ -1862,7 +1867,7 @@
     removeStarters(); // suggested chips are for the empty state only
     add("me", text);
     history.push({ role: "user", content: text });
-    if (!ctaArmed && ctas.length) armCtas(); // first visitor message arms CTAs
+    if (!ctaArmed && ctas.length) armCtas(text); // first visitor message arms CTAs
     sendBtn.disabled = true;
     var typing = handedOff ? null : add("bot", "…");
     // 30s guard: a hung request (e.g. mid-deploy) must never leave typing dots
