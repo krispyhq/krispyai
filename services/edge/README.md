@@ -37,6 +37,13 @@ Configured lead forms can forward the visitor's recent chat to an email connecto
 Set `RESEND_API_KEY` and a verified `LEAD_EMAIL_FROM` through Infisical; a failed
 email delivery returns `502 delivery_failed` so the widget keeps the form ready
 for another attempt.
+The lead email includes labeled contact details, the recent conversation, a
+plain-text part, and an optional **Open in Buttr** action. Configure the
+Worker-side `BUTTR_INBOX_URL` to an HTTPS operator inbox URL (localhost HTTP is
+allowed for development). The Worker adds the session ID as a query parameter;
+the inbox must authenticate the operator and confirm the session belongs to
+their tenant before selecting it. If the URL is unset, the email still includes
+the details and transcript without the action.
 The authenticated operator action routes list configured forms and Instagram CTAs
 for a session's recorded site, then send a selected ID as a durable typed card.
 The visitor receives it over the session WebSocket and sees it again after reconnecting.

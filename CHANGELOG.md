@@ -12,6 +12,9 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Changed
 
+- Lead emails now use Krispy's readable branded layout and include a plain-text
+  version. The optional configured Buttr inbox action opens the relevant session.
+- Resend lead delivery can carry an explicit idempotency key for safe retries.
 - Edge AI adapter accepts both the legacy Workers AI `response` shape and the
   OpenAI-shaped `choices[0].message.content` final text. Reasoning-only output fails
   closed. The default model request remains unchanged.
