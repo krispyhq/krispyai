@@ -14,8 +14,45 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 - Edge AI adapter accepts both the legacy Workers AI `response` shape and the
   OpenAI-shaped `choices[0].message.content` final text. Reasoning-only output fails
-  closed; explicitly selected `@cf/zai-org/glm-4.7-flash` disables thinking while the
-  default 70B model behavior remains unchanged.
+  closed. The default model request remains unchanged.
+
+### Added
+
+- Pending human handoffs now offer one compact choice card built from the site's
+  configured forms and contact CTAs, with an audio-call request only when available.
+  Form choices expand inline and retain visitor input if a team member takes over;
+  no unconfigured contact form or delivery route is created.
+
+- Operators can send a site's configured lead form or Instagram CTA directly into a
+  visitor conversation. The typed card is stored in session history and restored on reconnect.
+
+### Changed
+
+- Instagram chat CTAs use Adi's recognizable filled Instagram glyph on the existing
+  network gradient, with a 44px mobile tap target.
+
+### Fixed
+
+- Visitor audio calls now show when the team member has actually joined, provide
+  Mute/Unmute controls, and stop media and end the call when the page leaves the foreground.
+  Pending joins cannot turn the microphone back on after a call ends. With tenant opt-in,
+  visitors can request calls after handoff and notify the operator app; the team member
+  accepts before either side joins. Operator push delivery no longer delays the visitor's
+  request confirmation.
+- Operator-sent action receipts now count connected visitor sockets only; the operator
+  still receives the live card echo without being mistaken for a visitor.
+- Edge deployments now sync the configured lead-email sender from Infisical alongside
+  the Resend key, so lead delivery uses the verified address selected for the environment.
+- Lead forms now show success only after the server confirms email delivery. A failed
+  submission keeps the visitor's form filled and offers a retry.
+
+### Changed
+
+- Edge accepts a bare terminal `!HANDOFF` compatibility token only when it is a
+  standalone sentence-ending control marker. Ordinary prose and quoted mentions remain
+  text. The explicitly selected `@cf/meta/llama-3.1-8b-instruct-fast` candidate uses
+  temperature 0; the default 70B model remains unchanged. Control-only handoffs now
+  still send the visitor an acknowledgement.
 
 ### Added
 

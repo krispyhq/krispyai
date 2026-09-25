@@ -17,7 +17,7 @@
 //   GET  /api/usage?t=<tenant>         metering readout (plan/usage hooks)
 //   GET  /health
 import type { ChatMessage } from "./ai";
-import { workersAiRunner, DEFAULT_MODEL } from "./ai";
+import { configuredAiRunner, DEFAULT_MODEL } from "./ai";
 import { knowledgeGatewayRunner } from "./knowledge-gateway";
 import { chatFlow } from "./chat";
 import { SessionDO, type RingMsg } from "./session-do";
@@ -30,10 +30,12 @@ import {
   sendPhotoToTopic,
 } from "./telegram";
 import { authorizeOperator } from "./operator-auth";
+import { handleOperatorReplyDrafts } from "./reply-drafts";
+import { callRtcAvailable } from "./call-token";
 import { stampSeen, readSeen } from "./liveness";
 import { pushToApp } from "./push";
 import { renderLeadEmail, sendLeadEmail } from "./email";
-import type { Connector, Env, FormSpec, HandoffState, TenantConfig } from "./types";
+import type { Connector, Env, FormSpec, HandoffState, OperatorAction, TenantConfig } from "./types";
 import {
   getTenant,
   hasTelegramConfig,
@@ -240,6 +242,10 @@ async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promis
     if (path === "/health") return json(env, { status: "ok", service: "edge" });
 
     if (request.method === "POST" && path === "/api/chat") return handleChat(request, env, ctx);
+    if (request.method === "POST" && path === "/api/call")
+      return handleCall(request, env, "visitor", ctx);
+    if (request.method === "POST" && path === "/api/operator/call")
+      return handleCall(request, env, "operator", ctx);
     if (request.method === "POST" && path === "/api/contact") return handleContact(request, env);
     if (request.method === "POST" && path === "/api/lead") return handleLead(request, env);
     if (request.method === "POST" && path === "/api/attachment")
@@ -248,6 +254,12 @@ async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promis
       return handleWebhook(request, env);
     if (request.method === "POST" && path === "/api/operator/reply")
       return handleOperatorReply(request, env);
+    if (request.method === "POST" && path === "/api/operator/reply-drafts")
+      return handleOperatorReplyDrafts(request, env, { doFetch, json });
+    if (request.method === "POST" && path === "/api/operator/actions")
+      return handleOperatorActions(request, env);
+    if (request.method === "POST" && path === "/api/operator/send-action")
+      return handleOperatorSendAction(request, env);
     if (request.method === "POST" && path === "/api/operator/handoffs")
       return handleOperatorHandoffs(request, env);
     if (request.method === "POST" && path === "/api/operator/thread")
@@ -305,17 +317,179 @@ async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promis
 }
 
 // ── POST /api/chat ───────────────────────────────────────────────────────────
+/** Call control stays in the session DO. The caller cannot choose a room or role. */
+async function handleCall(
+  request: Request,
+  env: Env,
+  actor: "visitor" | "operator",
+  ctx?: WaitUntilContext,
+): Promise<Response> {
+  const parsed: unknown = await request.json().catch(() => null);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    return json(env, { error: "invalid_request" }, 400);
+  const body = parsed as Record<string, unknown>;
+  if (
+    typeof body.sessionId !== "string" ||
+    !body.sessionId ||
+    body.sessionId.length > 200 ||
+    typeof body.action !== "string" ||
+    !body.action ||
+    body.action.length > 20 ||
+    (body.tenantId !== undefined &&
+      (typeof body.tenantId !== "string" || !body.tenantId || body.tenantId.length > 200)) ||
+    (body.id !== undefined && (typeof body.id !== "string" || body.id.length > 100)) ||
+    (body.nonce !== undefined && (typeof body.nonce !== "string" || body.nonce.length > 100)) ||
+    (body.visitorSecret !== undefined && typeof body.visitorSecret !== "string")
+  )
+    return json(env, { error: "invalid_request" }, 400);
+  const tenantId = body.tenantId || DEFAULT_TENANT;
+  if (actor === "operator") {
+    const denied = await authorizeOperator(request, env, tenantId as string);
+    if (denied) return json(env, { error: denied.error }, denied.status);
+  } else if (!body.visitorSecret || !/^[A-Za-z0-9_-]{43}$/.test(body.visitorSecret as string)) {
+    return json(env, { error: "visitor_auth_required" }, 401);
+  }
+  const rtc = {
+    url: env.LIVEKIT_URL,
+    apiKey: env.LIVEKIT_API_KEY,
+    apiSecret: env.LIVEKIT_API_SECRET,
+  };
+  const clientUrl = env.LIVEKIT_CLIENT_URL;
+  let clientReady = false;
+  try {
+    const u = new URL(clientUrl || "");
+    clientReady = u.protocol === "https:" || (u.protocol === "http:" && u.hostname === "localhost");
+  } catch {
+    /* no client bundle configured */
+  }
+  const available = callRtcAvailable(rtc) && clientReady;
+  if (!available) return json(env, { error: "call_unavailable", available: false }, 503);
+  if (
+    actor === "visitor" &&
+    !["status", "invite", "accept", "decline", "cancel", "end", "grant"].includes(body.action)
+  )
+    return json(env, { error: "wrong_actor" }, 403);
+  if (
+    actor === "operator" &&
+    !["status", "invite", "accept", "decline", "cancel", "end", "grant"].includes(body.action)
+  )
+    return json(env, { error: "wrong_actor" }, 403);
+  const identityResponse = await doFetch(env, tenantId, body.sessionId, "https://do/identity");
+  const identity = identityResponse.ok
+    ? ((await identityResponse.json()) as { siteId?: string })
+    : {};
+  const callSettings = (await readTenantConfig(env, tenantId, identity.siteId))?.callSettings;
+  if (body.action === "invite" && !callSettings?.enabled)
+    return json(env, { error: "call_disabled" }, 403);
+  if (body.action === "invite" && actor === "visitor" && !callSettings?.visitorRequestsEnabled)
+    return json(env, { error: "visitor_requests_disabled" }, 403);
+  const headers: Record<string, string> = { "x-call-actor": actor };
+  if (actor === "visitor") headers["x-call-visitor-secret"] = body.visitorSecret as string;
+  const path = "https://do/call";
+  if (body.action === "grant") {
+    const response = await doFetch(env, tenantId, body.sessionId, "https://do/call/grant", {
+      method: "POST",
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({ id: body.id }),
+    });
+    const data = (await response.json()) as {
+      error?: string;
+      url?: string;
+      token?: string;
+      expiresAt?: number;
+    };
+    return response.ok
+      ? json(env, { ...data, clientUrl })
+      : json(env, { error: data.error || "call_not_accepted" }, response.status);
+  }
+  if (body.action === "status") {
+    const response = await doFetch(env, tenantId, body.sessionId, path, { headers });
+    if (!response.ok) return json(env, { error: "call_auth_failed" }, response.status);
+    const data = (await response.json()) as {
+      call: ReturnType<typeof import("./call").publicCall>;
+      nonce?: string;
+      handoffState?: HandoffState;
+      visitorRequestReady?: boolean;
+    };
+    return json(env, {
+      available:
+        !!callSettings?.enabled ||
+        data.call?.status === "accepted" ||
+        data.call?.status === "ringing",
+      call: data.call,
+      ...(actor === "visitor"
+        ? {
+            nonce: data.nonce,
+            availableToRequest:
+              !!callSettings?.enabled &&
+              !!callSettings.visitorRequestsEnabled &&
+              data.visitorRequestReady === true &&
+              (callSettings.visitorRequestTrigger === "always" ||
+                data.handoffState === "pending" ||
+                data.handoffState === "operator"),
+          }
+        : {}),
+    });
+  }
+  const response = await doFetch(env, tenantId, body.sessionId, path, {
+    method: "POST",
+    headers: {
+      ...headers,
+      "content-type": "application/json",
+      ...(actor === "visitor" && body.action === "invite"
+        ? { "x-call-request-trigger": callSettings?.visitorRequestTrigger ?? "after_handoff" }
+        : {}),
+    },
+    body: JSON.stringify({ action: body.action, id: body.id, nonce: body.nonce }),
+  });
+  const result = (await response.json()) as {
+    call?: ReturnType<typeof import("./call").publicCall>;
+    room?: string;
+    error?: string;
+    nonce?: string;
+    changed?: boolean;
+  };
+  if (!response.ok) return json(env, { error: result.error || "call_failed" }, response.status);
+  if (
+    actor === "visitor" &&
+    body.action === "invite" &&
+    result.changed &&
+    callSettings?.notifyOnVisitorRequest !== false
+  ) {
+    const push = pushToApp(
+      env,
+      tenantId,
+      body.sessionId,
+      "Open the conversation to respond.",
+      fetch,
+      {
+        kind: "call_request",
+        callId: result.call!.id,
+        expiresAt: result.call!.expiresAt,
+      },
+    );
+    if (ctx) ctx.waitUntil(push);
+    else await push;
+  }
+  return json(env, {
+    call: result.call,
+    ...(actor === "visitor" && body.action === "invite" ? { nonce: result.nonce } : {}),
+  });
+}
+
 async function handleChat(
   request: Request,
   env: Env,
   executionCtx?: WaitUntilContext,
 ): Promise<Response> {
+  const startedAt = performance.now();
   const body = (await request.json().catch(() => null)) as {
     sessionId?: string;
     message?: string;
     tenantId?: string;
     siteId?: string;
     history?: ChatMessage[];
+    visitorSecret?: string;
   } | null;
   if (!body?.sessionId || !body.message?.trim()) {
     return json(env, { error: "sessionId and message required" }, 400);
@@ -344,6 +518,15 @@ async function handleChat(
   }
   if (!withinPlan(await getUsage(env, tenantId), ent.plan_limits)) {
     return json(env, { error: "usage_limit_reached", plan: ent.plan }, 429);
+  }
+  // First chat binds a separate random visitor capability to this session. The
+  // operator can see the session ID, but never this secret or invitation nonce.
+  if (body.visitorSecret && /^[A-Za-z0-9_-]{43}$/.test(body.visitorSecret)) {
+    await doFetch(env, tenantId, body.sessionId, "https://do/call/visitor/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ secret: body.visitorSecret }),
+    });
   }
   // Index only after entitlement and usage gates succeed. This dedicated namespace
   // cannot overwrite the legacy Telegram session→thread map.
@@ -385,6 +568,18 @@ async function handleChat(
   // legacy session) or when the ring read failed (fallback path above).
   const history = ctx?.messages.length ? ringToHistory(ctx.messages) : clientHistory;
 
+  // Stage timings contain no visitor text or credentials. Preview can log them to
+  // distinguish retrieval/inference from KV and DO work when a reply stalls.
+  const flowStartedAt = performance.now();
+  let aiMs = 0;
+  let meterMs = 0;
+  const aiRunner = knowledgeGatewayRunner(
+    configuredAiRunner(env, tenantId, siteId, tenant?.model || env.AI_MODEL),
+    env,
+    tenantId,
+    siteId,
+  );
+
   // Telegram is optional: no config → topic ops no-op, chat still answers.
   const result = await chatFlow(
     {
@@ -402,27 +597,41 @@ async function handleChat(
       history,
       maxHistoryMsgs: numEnv(env.MAX_HISTORY_MSGS),
       maxAiTurns: numEnv(env.MAX_AI_TURNS),
-      ai: knowledgeGatewayRunner(
-        workersAiRunner(env, tenant?.model || env.AI_MODEL),
-        env,
-        tenantId,
-        siteId,
-      ),
-      meter: (kind) => meter(env, tenantId, kind),
+      ai: async (messages) => {
+        const start = performance.now();
+        try {
+          return await aiRunner(messages);
+        } finally {
+          aiMs += performance.now() - start;
+        }
+      },
+      meter: async (kind) => {
+        const start = performance.now();
+        try {
+          await meter(env, tenantId, kind);
+        } finally {
+          meterMs += performance.now() - start;
+        }
+      },
       // Real per-turn usage → monthly counters (total + in/out split) AND a structured
       // log line (model + counts + estimated flag) for cost analytics via Logpush/tail.
       meterTokens: async (usage) => {
-        await meterUsage(env, tenantId, usage);
-        console.log(
-          "chat_usage",
-          JSON.stringify({
-            tenant: tenantId,
-            model: tenant?.model || env.AI_MODEL || DEFAULT_MODEL,
-            promptTokens: usage.promptTokens,
-            completionTokens: usage.completionTokens,
-            estimated: usage.estimated,
-          }),
-        );
+        const start = performance.now();
+        try {
+          await meterUsage(env, tenantId, usage);
+          console.log(
+            "chat_usage",
+            JSON.stringify({
+              tenant: tenantId,
+              model: tenant?.model || env.AI_MODEL || DEFAULT_MODEL,
+              promptTokens: usage.promptTokens,
+              completionTokens: usage.completionTokens,
+              estimated: usage.estimated,
+            }),
+          );
+        } finally {
+          meterMs += performance.now() - start;
+        }
       },
       getHandoffState: ctx
         ? async () => ctx.handoffState // already read in the combined /context fetch
@@ -450,11 +659,13 @@ async function handleChat(
     },
     { sessionId: body.sessionId, message },
   );
+  const flowEndedAt = performance.now();
 
   // Mirror the turn into the session's ring buffer (operator-app inbox preview +
   // thread read) — best-effort, same posture as the Telegram mirror. On handoff,
   // seed the ring from the widget's re-sent history FIRST (the DO no-ops the seed
   // unless the ring is still empty), so pre-ring turns aren't lost.
+  const ringStartedAt = performance.now();
   {
     const seed = result.handoff ? historySeed(clientHistory, message) : [];
     const turn: { role: "visitor" | "ai"; text: string }[] = [{ role: "visitor", text: message }];
@@ -470,6 +681,7 @@ async function handleChat(
       body: JSON.stringify({ messages: turn }),
     }).catch((e) => console.error("ring mirror failed (best-effort):", e));
   }
+  const ringEndedAt = performance.now();
 
   // If the AI escalated, nudge the visitor's browser to open contact capture AND fire
   // the ONE loud handoff alert into the topic — @mentioning the tenant's operators so a
@@ -539,6 +751,23 @@ async function handleChat(
       result.formId = null;
       result.form = null;
     }
+  }
+  if (env.CHAT_TIMING_DEBUG === "1") {
+    const endedAt = performance.now();
+    console.log(
+      "chat_timing",
+      JSON.stringify({
+        tenant: tenantId,
+        model: tenant?.model || env.AI_MODEL || DEFAULT_MODEL,
+        preFlowMs: Math.round(flowStartedAt - startedAt),
+        aiMs: Math.round(aiMs),
+        meterMs: Math.round(meterMs),
+        flowOtherMs: Math.round(flowEndedAt - flowStartedAt - aiMs - meterMs),
+        ringMs: Math.round(ringEndedAt - ringStartedAt),
+        postRingMs: Math.round(endedAt - ringEndedAt),
+        totalMs: Math.round(endedAt - startedAt),
+      }),
+    );
   }
   return json(env, result);
 }
@@ -697,7 +926,7 @@ async function handleLead(request: Request, env: Env): Promise<Response> {
   if (siteId instanceof Response) return siteId;
   if (!(await checkLeadRate(env, tenantId, b.sessionId)))
     return json(env, { error: "rate_limited" }, 429);
-  await deliverLead(env, {
+  const delivered = await deliverLead(env, {
     tenantId,
     siteId,
     sessionId: b.sessionId,
@@ -705,6 +934,7 @@ async function handleLead(request: Request, env: Env): Promise<Response> {
     values: b.values || {},
     history: Array.isArray(b.history) ? b.history : [],
   });
+  if (!delivered) return json(env, { error: "delivery_failed" }, 502);
   return json(env, { ok: true });
 }
 
@@ -714,7 +944,7 @@ async function handleLead(request: Request, env: Env): Promise<Response> {
  *   • Email    — Resend, silent no-op without a key (email.ts)
  * whatsapp/instagram connectors are never delivered here (CTA-only in the widget).
  */
-export async function deliverLead(env: Env, lead: LeadPayload): Promise<void> {
+export async function deliverLead(env: Env, lead: LeadPayload): Promise<boolean> {
   const tenant = await getTenant(env, lead.tenantId, lead.siteId);
   const form = tenant?.forms?.find((f) => f.id === lead.formId) ?? null;
   const connectors = tenant?.connectors ?? [];
@@ -745,10 +975,17 @@ export async function deliverLead(env: Env, lead: LeadPayload): Promise<void> {
   // rely on Telegram only).
   const waPhone = targets.find((c) => c.type === "whatsapp")?.phone;
   const emailTargets = targets.filter((c) => c.type === "email" && c.toAddress);
+  let emailDelivered = false;
   for (const c of emailTargets) {
     const mail = renderLeadEmail(form, lead.values, lead.history, waPhone);
-    await sendLeadEmail(env.RESEND_API_KEY, env.LEAD_EMAIL_FROM, c.toAddress, mail);
+    emailDelivered =
+      (await sendLeadEmail(env.RESEND_API_KEY, env.LEAD_EMAIL_FROM, c.toAddress, mail)) ||
+      emailDelivered;
   }
+  // A configured form must have a confirmed delivery route before its widget may
+  // show a success state. Legacy contact capture and self-hosts without forms keep
+  // their existing best-effort behavior.
+  return !form || !emailTargets.length || emailDelivered;
 }
 
 // ── POST /api/telegram/webhook ─────────────────────────────────────────────
@@ -819,6 +1056,104 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
 // ponytail: single app-operator sentinel id per tenant (Operator.id is a Telegram
 // numeric id; the app has none). Per-operator ids when the app grows multi-operator auth.
 const APP_OPERATOR_ID = 0;
+
+/** Resolve a session's authoritative site before reading any configured action. */
+async function operatorSessionSite(
+  env: Env,
+  tenantId: string,
+  sessionId: string,
+  claimedSiteId?: string,
+): Promise<string | Response> {
+  const identity = await doFetch(env, tenantId, sessionId, "https://do/identity");
+  const stored = (await identity.json()) as { tenantId: string | null; siteId: string };
+  if (stored.tenantId !== tenantId) return json(env, { error: "session_not_found" }, 404);
+  if (claimedSiteId && claimedSiteId !== stored.siteId)
+    return json(env, { error: "site_mismatch" }, 403);
+  return stored.siteId;
+}
+
+function operatorActionCatalog(config: TenantConfig | null) {
+  return {
+    forms: (config?.forms ?? [])
+      .filter((form) => form.id && Array.isArray(form.fields))
+      .map((form) => ({ id: form.id, title: form.title })),
+    connectors: publicWidgetConfig(config).ctas.filter(
+      (cta) => cta.type === "instagram" && cta.url?.startsWith("https://"),
+    ),
+  };
+}
+
+// Both routes require a real session. The DO's identity was written on its first
+// visitor chat turn; the supplied site is only an optional assertion against it.
+async function operatorActionContext(request: Request, env: Env) {
+  const body = (await request.json().catch(() => null)) as {
+    tenantId?: string;
+    sessionId?: string;
+    siteId?: string;
+    kind?: "form" | "instagram";
+    id?: string;
+  } | null;
+  if (!body?.tenantId || !body.sessionId)
+    return { error: json(env, { error: "tenantId and sessionId required" }, 400) };
+  const siteId = siteOr400(env, body.siteId);
+  if (siteId instanceof Response) return { error: siteId };
+  const denied = await authorizeOperator(request, env, body.tenantId);
+  if (denied) return { error: json(env, { error: denied.error }, denied.status) };
+  const actualSite = await operatorSessionSite(env, body.tenantId, body.sessionId, siteId);
+  if (actualSite instanceof Response) return { error: actualSite };
+  const config = await readTenantConfig(env, body.tenantId, actualSite);
+  return { body, config, actualSite };
+}
+
+async function handleOperatorActions(request: Request, env: Env): Promise<Response> {
+  const context = await operatorActionContext(request, env);
+  if (context.error) return context.error;
+  return json(env, operatorActionCatalog(context.config));
+}
+
+async function handleOperatorSendAction(request: Request, env: Env): Promise<Response> {
+  const context = await operatorActionContext(request, env);
+  if (context.error) return context.error;
+  const { body, config } = context;
+  if (!body?.id || (body.kind !== "form" && body.kind !== "instagram"))
+    return json(env, { error: "kind and id required" }, 400);
+  const catalog = operatorActionCatalog(config);
+  let action: OperatorAction;
+  if (body.kind === "form") {
+    const configured = config?.forms?.find((form) => form.id === body.id);
+    if (!configured || !catalog.forms.some((form) => form.id === body.id))
+      return json(env, { error: "action_not_found" }, 404);
+    action = {
+      kind: "form",
+      form: {
+        id: configured.id,
+        title: configured.title,
+        fields: configured.fields,
+        successText: configured.successText,
+      },
+    };
+  } else {
+    const configured = catalog.connectors.find((connector) => connector.id === body.id);
+    if (!configured?.url) return json(env, { error: "action_not_found" }, 404);
+    action = {
+      kind: "instagram",
+      connector: {
+        id: configured.id,
+        type: "instagram",
+        label: configured.label ?? "DM us on Instagram",
+        caption: configured.caption,
+        url: configured.url,
+      },
+    };
+  }
+  const response = await doFetch(env, body.tenantId!, body.sessionId!, "https://do/action", {
+    method: "POST",
+    body: JSON.stringify({ action }),
+  });
+  const { delivered } = (await response.json()) as { delivered: number };
+  await meter(env, body.tenantId!, "handoff");
+  return json(env, { ok: true, delivered, action });
+}
 
 // POST /api/operator/reply { tenantId, sessionId, text, operatorName? }
 // → visitor's widget receives { type: "operator", handoffState: "operator", text }
@@ -897,6 +1232,7 @@ async function handleOperatorHandoffs(request: Request, env: Env): Promise<Respo
         resolved?: boolean;
         lastMessage: string | null;
         ts: number | null;
+        siteId?: string;
       };
       const handoffState = s.handoffState ?? (s.handedOff ? "operator" : "ai");
       const resolved = s.resolved === true;
@@ -911,6 +1247,7 @@ async function handleOperatorHandoffs(request: Request, env: Env): Promise<Respo
             handoffState,
             handedOff: s.handedOff,
             ts: s.ts,
+            siteId: s.siteId ?? "default",
             resolved,
           }
         : null;
@@ -1027,6 +1364,23 @@ const AVATAR_SCHEME = /^(https:\/\/|data:image\/(png|webp|jpeg);base64,)/;
 function tenantConfigCapError(
   cfg: Partial<TenantConfig>,
 ): { error: string; status: number } | null {
+  if (cfg.callSettings !== undefined) {
+    const settings = cfg.callSettings;
+    if (
+      !settings ||
+      typeof settings !== "object" ||
+      Array.isArray(settings) ||
+      (settings.enabled !== undefined && typeof settings.enabled !== "boolean") ||
+      (settings.visitorRequestsEnabled !== undefined &&
+        typeof settings.visitorRequestsEnabled !== "boolean") ||
+      (settings.notifyOnVisitorRequest !== undefined &&
+        typeof settings.notifyOnVisitorRequest !== "boolean") ||
+      (settings.visitorRequestTrigger !== undefined &&
+        settings.visitorRequestTrigger !== "after_handoff" &&
+        settings.visitorRequestTrigger !== "always")
+    )
+      return { error: "invalid_call_settings", status: 400 };
+  }
   const avatar = cfg.theme?.avatar;
   if (avatar !== undefined) {
     if (avatar.length > AVATAR_MAX_CHARS) return { error: "avatar_too_large", status: 413 };

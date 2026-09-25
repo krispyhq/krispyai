@@ -83,6 +83,68 @@ describe("publicWidgetConfig", () => {
     expect((out as Record<string, unknown>).botToken).toBeUndefined();
   });
 
+  test("forms expose render fields without delivery routing or destinations", () => {
+    const out = publicWidgetConfig({
+      forms: [
+        {
+          id: "contact",
+          title: "Leave details",
+          fields: [{ name: "email", label: "Your email", type: "email", required: true }],
+          connectorIds: ["secret-inbox"],
+          successText: "Received",
+        },
+      ],
+      connectors: [{ id: "secret-inbox", type: "email", toAddress: "private@example.test" }],
+    });
+    expect(out.forms).toEqual([
+      {
+        id: "contact",
+        title: "Leave details",
+        fields: [
+          { name: "email", label: "Your email", type: "email", required: true, options: undefined },
+        ],
+        successText: "Received",
+      },
+    ]);
+    expect(JSON.stringify(out)).not.toContain("secret-inbox");
+    expect(JSON.stringify(out)).not.toContain("private@example.test");
+    expect(publicWidgetConfig(null).forms).toEqual([]);
+  });
+
+  test("malformed stored forms cannot break the public widget projection", () => {
+    const malformed = [
+      null,
+      { id: "broken", title: "Broken", fields: [null, { name: "x", type: "unknown" }] },
+      {
+        id: "valid",
+        title: "Valid",
+        fields: [
+          {
+            name: "email",
+            label: "Email",
+            type: "email",
+            options: ["safe", 42],
+            privateNote: "hidden",
+          },
+        ],
+        connectorIds: ["private-destination"],
+      },
+    ] as unknown as NonNullable<Parameters<typeof publicWidgetConfig>[0]>["forms"];
+    const out = publicWidgetConfig({ forms: malformed });
+    expect(out.forms).toEqual([
+      {
+        id: "valid",
+        title: "Valid",
+        fields: [
+          { name: "email", label: "Email", type: "email", required: false, options: ["safe"] },
+        ],
+        successText: undefined,
+      },
+    ]);
+    expect(JSON.stringify(out)).not.toContain("private-destination");
+    expect(JSON.stringify(out)).not.toContain("hidden");
+  });
+
   test("capabilities expose attachment availability without connector secrets", () => {
     expect(publicWidgetConfig({ systemPrompt: "app only" }).capabilities.attachments).toBe(false);
     expect(

@@ -14,7 +14,7 @@
     "lint": "oxlint",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
-    "test": "bun --filter '@krispy*/*' test && bun test packages/widget/widget.test.ts",
+    "test": "bun --filter '@krispy*/*' test && bun test packages/widget/widget.test.ts packages/widget/widget-call.test.ts packages/widget/widget-handoff.test.ts",
     "check": "bun run typecheck && bun run lint && bun run test"
   },
   "devDependencies": {

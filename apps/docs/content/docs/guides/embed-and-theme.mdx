@@ -175,6 +175,14 @@ in its inline style, which is what integrators had to do before the class existe
   iOS zoom, safe-area insets, and 44px mute/close touch targets on coarse pointers.
 - **resilience** — the operator WebSocket reconnects with exponential backoff + jitter; the
   chat still works over plain `POST` if the socket is down.
+- **audio calls** — when enabled, a team member can invite a visitor; a visitor can also
+  request a call after human handoff if the tenant allows it. A request alerts the operator
+  app and waits for a team member to accept; the visitor explicitly joins afterward.
+  An invited visitor accepts, then joins before the microphone turns on.
+  The call card distinguishes waiting for the team member, connected, and reconnecting;
+  Mute/Unmute and End call remain available during the call. Calls require the page in the
+  foreground: switching tabs, minimizing the browser, navigating away, or closing the page
+  stops local media and ends the call. Closing only the chat panel leaves the call active.
 
 ## local demo
 

@@ -117,8 +117,22 @@ export interface ParsedReply {
 
 /** Split a raw model reply into visitor text + the handoff signal. */
 export function parseHandoff(raw: string): ParsedReply {
-  const handoff = raw.includes(HANDOFF_MARKER);
-  const text = raw.split(HANDOFF_MARKER).join("").trim();
+  const bracketHandoff = raw.includes(HANDOFF_MARKER);
+  const withoutBracket = raw.split(HANDOFF_MARKER).join("");
+  // Compatibility with one provider that emits the bare token: accept it only as
+  // a standalone terminal control token after a sentence or a form marker. This
+  // deliberately excludes quoted, mid-sentence, and ordinary prose mentions.
+  const bareToken = /!HANDOFF\s*$/.exec(withoutBracket);
+  const tokenStart = bareToken?.index ?? -1;
+  const hasSeparator = tokenStart === 0 || /\s$/.test(withoutBracket.slice(0, tokenStart));
+  const barePrefix = bareToken ? withoutBracket.slice(0, tokenStart).trimEnd() : "";
+  const previous = barePrefix[barePrefix.length - 1];
+  const sentenceEnd = previous !== undefined && ".!?".includes(previous);
+  const formEnd = /\[!FORM:[a-z0-9_-]{1,32}\]$/i.test(barePrefix);
+  const bare =
+    bareToken !== null && hasSeparator && (barePrefix.length === 0 || sentenceEnd || formEnd);
+  const handoff = bracketHandoff || bare;
+  const text = bare ? barePrefix.trim() : withoutBracket.trim();
   return { text, handoff };
 }
 

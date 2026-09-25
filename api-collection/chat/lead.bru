@@ -38,4 +38,6 @@ docs {
   DELIVERY connectors (Telegram topic + email via Resend). `whatsapp`/`instagram` connectors
   are CTA-only — nothing is delivered server-side for them. Rate-limited per (tenant, session):
   over the limit → 429 `{ error: "rate_limited" }`. Missing `sessionId` → 400.
+  A configured form whose email delivery is rejected returns 502 `{ error: "delivery_failed" }`;
+  the widget keeps the visitor's details in place so they can retry.
 }

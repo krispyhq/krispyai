@@ -1,0 +1,27 @@
+meta {
+  name: Visitor audio call
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/call
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "tenantId": "self",
+    "sessionId": "sess-demo-1",
+    "visitorSecret": "REPLACE_WITH_REGISTERED_VISITOR_CAPABILITY",
+    "action": "status"
+  }
+}
+
+docs {
+  Actions: status, invite, accept, decline, cancel, end, grant. Include id for
+  transitions/grant and the private nonce for visitor transitions. invite is
+  allowed only when tenant callSettings enables visitor requests and the handoff
+  trigger qualifies. The visitorSecret is registered by the chat flow.
+}

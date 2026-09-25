@@ -62,6 +62,8 @@ visitor ──▶ AI answers (Cloudflare Workers AI) ──▶ visitor
 - You reply from Telegram → it's pushed into the browser over a WebSocket, **live**.
 - The bot detects it's a human job and steps back immediately. Messages sent while you are
   on the way still reach the same topic; the bot stays quiet until you resolve the handoff.
+- A handoff marker by itself still returns a short acknowledgement to the visitor while the
+  human takes over.
 - A complete answer should not summon an operator merely because it describes a limitation,
   an extra cost or included human support. Explicit human requests and missing information
   still escalate; business-specific approval requirements remain authoritative.
@@ -120,6 +122,21 @@ live via Telegram's `getMe` → supergroup-with-Topics + add-bot-as-admin → ch
 before `</body>`), and **④ Next steps** (`krispy dev` / `wrangler deploy`, and how to test
 the loop). Each step persists as you go via `POST /api/tenant/config`. Re-run it any time;
 it never clobbers what you've already set.
+
+When a business adds a lead form and email connector, Krispy sends the captured
+details and recent conversation to the configured inbox. The widget confirms
+submission only after the email provider accepts it; on failure the visitor keeps
+their entries and can retry.
+Instagram connectors render as clear, tappable chat buttons with the familiar
+Instagram glyph; the business chooses their label, link, and reveal timing.
+Operators can also send a configured form or Instagram button into an existing
+visitor conversation. The edge resolves the selected ID from that session's site,
+stores the card in the conversation history, and restores it when the widget reconnects.
+While a visitor waits for a team member, a compact "Talk to the team" card offers
+only the site's configured forms and contact links, plus a call request when that
+tenant's call settings and live call status permit it. Selecting a form opens it
+inside the chat; the lead includes recent conversation context. The choice card
+closes on operator takeover or AI resume, while any expanded form keeps its input.
 
 <details>
 <summary>Or set it up by hand (wrangler secrets)</summary>
@@ -228,6 +245,7 @@ contrast, then chooses black or white for darker custom accents.
 **Bring your own launcher.** The theme restyles Krispy's launcher; it can't replace it. Set `data-launcher="none"` and drive the panel from your own mark with `window.krispy` (`open` · `close` · `toggle` · `isOpen` · `unread` · `el`), listening for `krispy:open` / `krispy:close` / `krispy:unread` on `document`. The host element carries `class="krispy-widget"`. All opt-in — leave it off and nothing changes. See [**docs → bring your own launcher**](./apps/docs/content/docs/guides/embed-and-theme.mdx#bring-your-own-launcher).
 Set `theme.avatar` to `"none"` for a text-only customer header; the built-in launcher uses a neutral chat mark while the default remains Buttr.
 On coarse-pointer devices, the mute and close controls expand to 44px touch targets while their icons and desktop sizing stay unchanged.
+Audio calls are opt-in through tenant `callSettings`. A team member can invite a visitor, or the visitor can request a call after human handoff when visitor requests are enabled. A visitor request alerts the operator app and waits for a team member to accept; it does not activate the microphone. The visitor explicitly joins after acceptance. The call card shows whether the team member has joined, provides Mute/Unmute and End call controls, and ends the call when the page goes into the background or closes. Closing the chat panel alone leaves the call active.
 
 Details: [`packages/widget/README.md`](./packages/widget/README.md).
 

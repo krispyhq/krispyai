@@ -1,0 +1,28 @@
+meta {
+  name: Operator - available visitor actions
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/operator/actions
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{operatorToken}}
+}
+
+body:json {
+  {
+    "tenantId": "self",
+    "sessionId": "sess-demo-1"
+  }
+}
+
+docs {
+  Returns configured form choices and safe visitor-facing Instagram connectors for
+  the session's recorded site. An optional siteId asserts the expected site. Requires
+  an operator bearer or x-tenant-sync-secret. Unknown sessions return 404.
+}

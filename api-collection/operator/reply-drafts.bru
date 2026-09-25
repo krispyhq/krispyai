@@ -1,0 +1,30 @@
+meta {
+  name: Operator - contextual reply drafts
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/api/operator/reply-drafts
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{operatorToken}}
+}
+
+body:json {
+  {
+    "tenantId": "self",
+    "sessionId": "sess-demo-1"
+  }
+}
+
+docs {
+  Reads the authoritative session ring and tenant knowledge server-side. Returns up
+  to three editable strings plus sourceRevision and sourceLastMessageTs; never sends
+  to the visitor. The client discards drafts if the thread changed before display.
+  No supported draft, provider failure, or a stale ring gives an empty array. Limit:
+  20 generations per tenant/session/hour. Operator bearer or x-tenant-sync-secret.
+}
