@@ -33,6 +33,10 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Fixed
 
+- Operator reply drafts now retain tenant-approved or validated knowledge links
+  with sentence punctuation, including links beyond the model prompt slice;
+  changed links remain filtered.
+
 - Preview edge deploys now sync the configured Gemini and LiveKit
   bindings alongside the existing Worker secrets.
 - Preview widget deploys stage the pinned LiveKit browser UMD and license from

@@ -199,6 +199,101 @@ describe("operator reply drafts", () => {
     });
   });
 
+  test("keeps approved checkout links followed by a period without accepting changed URLs", async () => {
+    const checkout = "https://preview.delulus.productions/course/checkout?lang=en";
+    const checkoutEnv = {
+      KRISPY_KV: {
+        get: async (key: string) =>
+          key.startsWith("tenant:")
+            ? JSON.stringify({ systemPrompt: `Enroll at ${checkout}` })
+            : null,
+        put: async () => {},
+      },
+    } as unknown as Env;
+    const response = await handleOperatorReplyDrafts(request(), checkoutEnv, {
+      authorize: async () => null,
+      doFetch: identityOrRing,
+      runner: async () => ({
+        text: JSON.stringify({
+          drafts: [
+            `You can review the current checkout here: ${checkout}.`,
+            `The checkout confirms your country-specific price: ${checkout}.`,
+            `This altered query is not approved: ${checkout}&discount=guaranteed.`,
+            `This altered path is not approved: ${checkout}/other.`,
+          ],
+        }),
+      }),
+    });
+    expect((await response.json()) as { drafts: string[] }).toMatchObject({
+      drafts: [
+        `You can review the current checkout here: ${checkout}.`,
+        `The checkout confirms your country-specific price: ${checkout}.`,
+      ],
+    });
+  });
+
+  test("validates a tenant-approved link beyond the model prompt cap", async () => {
+    const checkout = "https://preview.delulus.productions/course/checkout?lang=en";
+    const checkoutEnv = {
+      KRISPY_KV: {
+        get: async (key: string) =>
+          key.startsWith("tenant:")
+            ? JSON.stringify({ systemPrompt: `${"x".repeat(4_500)} ${checkout}` })
+            : null,
+        put: async () => {},
+      },
+    } as unknown as Env;
+    const response = await handleOperatorReplyDrafts(request(), checkoutEnv, {
+      authorize: async () => null,
+      doFetch: identityOrRing,
+      runner: async () => ({ text: JSON.stringify({ drafts: [`Enroll here: ${checkout}.`] }) }),
+    });
+    expect((await response.json()) as { drafts: string[] }).toMatchObject({
+      drafts: [`Enroll here: ${checkout}.`],
+    });
+  });
+
+  test("accepts a link only from gateway evidence for the session tenant and site", async () => {
+    const checkout = "https://preview.example.test/course/checkout";
+    const gatewayEnv = {
+      KNOWLEDGE_GATEWAY_URL: "https://knowledge.example.test/sales-context",
+      KNOWLEDGE_GATEWAY_SECRET: "test-gateway-secret",
+      KNOWLEDGE_TENANT_ID: "shop",
+      KRISPY_KV: {
+        get: async (key: string) =>
+          key.startsWith("tenant:") ? JSON.stringify({ systemPrompt: "Answer concisely." }) : null,
+        put: async () => {},
+      },
+      AI: {
+        run: async () => ({ response: `{"drafts":["The approved checkout is ${checkout}."]}` }),
+      },
+    } as unknown as Env;
+    let gatewayBody: { tenantId?: string; siteId?: string } = {};
+    const response = await handleOperatorReplyDrafts(request(), gatewayEnv, {
+      authorize: async () => null,
+      doFetch: identityOrRing,
+      gatewayFetch: async (_input, init) => {
+        if (typeof init?.body !== "string") throw new Error("missing gateway body");
+        gatewayBody = JSON.parse(init.body);
+        return Response.json({
+          evidence: [
+            {
+              text: "Use the approved checkout.",
+              sourceId: "course",
+              revision: "v1",
+              url: checkout,
+            },
+          ],
+          guidance: [],
+        });
+      },
+    });
+    expect(gatewayBody).toMatchObject({ tenantId: "shop", siteId: "" });
+    expect((await response.json()) as { drafts: string[] }).toMatchObject({
+      drafts: [`The approved checkout is ${checkout}.`],
+    });
+  });
+
   test("provider failure returns no drafts and no error detail", async () => {
     const response = await handleOperatorReplyDrafts(request(), env, {
       authorize: async () => null,
