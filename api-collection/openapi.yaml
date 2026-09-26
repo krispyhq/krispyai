@@ -123,6 +123,193 @@ paths:
         "409": { description: "Stale call or visitor unavailable for operator invite." }
         "502": { description: "Room disconnect failed." }
         "503": { description: "RTC unavailable or cleanup pending." }
+  /api/livekit/webhook:
+    post:
+      tags: [secret-guarded]
+      summary: Signed LiveKit media event for a coordinator-owned call
+      operationId: livekitWebhook
+      description: >
+        LiveKit sends the raw JSON body and its HS256 Authorization JWT. The Worker
+        verifies issuer, signature, and raw-body sha256, then rechecks the
+        SessionDO's persisted owner. Legacy calls are acknowledged and ignored.
+        participant_joined requires both signed peers and a simultaneous
+        authenticated room observation before recording connection; room_finished
+        advances terminal state. Duplicate and old events are idempotent.
+      security:
+        - livekitWebhookToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, event, room, createdAt]
+              properties:
+                id: { type: string, format: uuid }
+                event: { type: string, enum: [participant_joined, participant_left, room_finished] }
+                createdAt: { type: integer, description: "Signed LiveKit Unix seconds." }
+                room:
+                  type: object
+                  required: [name]
+                  properties:
+                    name: { type: string }
+                participant:
+                  type: object
+                  properties:
+                    identity: { type: string }
+      responses:
+        "200": { description: "Verified event acknowledged or unrelated legacy event ignored." }
+        "401": { description: "Invalid signature, issuer, or body hash." }
+        "503": { description: "Coordinator or persisted owner temporarily unavailable; retry." }
+  /api/internal/call-coordinator/availability:
+    post:
+      tags: [secret-guarded]
+      summary: Cloud checks a thread's native invitation availability
+      operationId: nativeCallAvailability
+      security: [{ tenantSyncSecret: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NativeCallPrincipal" }
+      responses:
+        "200":
+          {
+            description: "{ canInvite, reason } from tenant/site config, visitor presence and occupancy.",
+          }
+        "403": { description: "Missing or wrong tenant sync secret." }
+  /api/internal/call-coordinator/start:
+    post:
+      tags: [secret-guarded]
+      summary: Cloud starts a native outgoing invitation
+      operationId: nativeCallStart
+      security: [{ tenantSyncSecret: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/NativeCallPrincipal" }
+                - type: object
+                  required: [actionEventId]
+                  properties:
+                    actionEventId: { type: string }
+      responses:
+        "200":
+          {
+            description: "Canonical call decision with callId, sessionId, status, revision, expiresAt and disposition.",
+          }
+        "403": { description: "Unauthorized or tenant/site calls disabled." }
+        "409": { description: "Visitor unavailable, legacy call active or operator busy." }
+  /api/internal/call-coordinator/action:
+    post:
+      tags: [secret-guarded]
+      summary: Cloud applies an authenticated native call action
+      operationId: nativeCallAction
+      security: [{ tenantSyncSecret: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/NativeCallPrincipal" }
+                - type: object
+                  required: [callId, actionEventId, action]
+                  properties:
+                    callId: { type: string, format: uuid }
+                    actionEventId: { type: string }
+                    action: { type: string, enum: [accept, decline, cancel_outgoing, end] }
+      responses:
+        "200": { description: "Canonical idempotent call decision." }
+        "403": { description: "Unauthorized or wrong call actor." }
+        "404": { description: "Call not owned by this session." }
+  /api/internal/call-coordinator/status:
+    post:
+      tags: [secret-guarded]
+      summary: Cloud reads canonical per-device call state
+      operationId: nativeCallStatus
+      security: [{ tenantSyncSecret: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/NativeCallPrincipal" }
+                - type: object
+                  required: [callId]
+                  properties:
+                    callId: { type: string, format: uuid }
+      responses:
+        "200": { description: "Canonical call decision, including losing-device disposition." }
+        "404": { description: "Call not owned by this session." }
+  /api/internal/call-coordinator/grant:
+    post:
+      tags: [secret-guarded]
+      summary: Cloud obtains a short-lived winner-only room grant
+      operationId: nativeCallGrant
+      security: [{ tenantSyncSecret: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/NativeCallPrincipal" }
+                - type: object
+                  required: [callId]
+                  properties:
+                    callId: { type: string, format: uuid }
+      responses:
+        "200": { description: "{ callId, revision, livekitUrl, token } only after acceptance." }
+        "409": { description: "Call not accepted by this device." }
+  /api/internal/call-coordinator/revoke-device:
+    post:
+      tags: [secret-guarded]
+      summary: Cloud waits for old installation offers and room cleanup on rebind
+      operationId: nativeCallRevokeDevice
+      security: [{ tenantSyncSecret: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenantId, deviceInstanceId, actionEventId]
+              properties:
+                tenantId: { type: string }
+                deviceInstanceId: { type: string, format: uuid }
+                actionEventId: { type: string, description: "Stable rebind:<jobId> retry key." }
+      responses:
+        "200": { description: "{ cleanupConfirmed: true } only after verified closure." }
+        "202": { description: "{ cleanupConfirmed: false }; retry the same actionEventId." }
+  /api/internal/call-coordinator/offer-validity:
+    post:
+      tags: [secret-guarded]
+      summary: Cloud rechecks the exact per-device offer before sending APNs
+      operationId: nativeCallOfferValidity
+      security: [{ tenantSyncSecret: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenantId, callId, operatorId, deviceInstanceId, offerId, expiresAt]
+              properties:
+                tenantId: { type: string }
+                callId: { type: string, format: uuid }
+                operatorId: { type: string }
+                deviceInstanceId: { type: string, format: uuid }
+                offerId: { type: string }
+                expiresAt: { type: integer }
+      responses:
+        "200":
+          {
+            description: "{ valid: boolean }; unrelated global revision changes do not invalidate a live offer.",
+          }
   /health:
     get:
       tags: [public]
@@ -960,8 +1147,21 @@ components:
       in: header
       name: x-telegram-bot-api-secret-token
       description: Must equal the Worker's `TELEGRAM_WEBHOOK_SECRET` (Telegram echoes it back).
+    livekitWebhookToken:
+      type: http
+      scheme: bearer
+      description: LiveKit HS256 JWT with API key issuer and raw-body sha256 claim.
 
   schemas:
+    NativeCallPrincipal:
+      type: object
+      required: [tenantId, sessionId, operatorId, deviceInstanceId]
+      properties:
+        tenantId: { type: string }
+        sessionId: { type: string }
+        operatorId: { type: string, description: "Server-resolved Cloud operator ID." }
+        deviceInstanceId: { type: string, format: uuid }
+
     Ok:
       type: object
       required: [ok]

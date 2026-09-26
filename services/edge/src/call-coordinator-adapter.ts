@@ -54,7 +54,7 @@ export type CoordinatorOutcome =
   | { ok: true; receipt: CallReceipt }
   | { ok: false; status: 400 | 401 | 403 | 404 | 409 | 503; error: string };
 
-const STATE_KEY = "coordinator:v1";
+export const COORDINATOR_STATE_KEY = "coordinator:v1";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const EVENT_ID = /^[A-Za-z0-9:_-]{1,128}$/;
 
@@ -115,7 +115,7 @@ export async function applyOperatorCoordinatorAction(
   if (access.operator.tenantId !== tenantId)
     return { ok: false, status: 403, error: "call_tenant_mismatch" };
   return storage.transaction(async (tx) => {
-    const state = await tx.get(STATE_KEY);
+    const state = await tx.get(COORDINATOR_STATE_KEY);
     const call = state?.calls[body.callId];
     if (!state || state.tenantId !== tenantId || !call || call.sessionId !== body.sessionId)
       return { ok: false, status: 404, error: "call_not_found" } as const;
@@ -136,7 +136,7 @@ export async function applyOperatorCoordinatorAction(
         break;
     }
     const result = applyCallCommand(state, command);
-    await tx.put(STATE_KEY, result.state);
+    await tx.put(COORDINATOR_STATE_KEY, result.state);
     return { ok: true, receipt: result.result } as const;
   });
 }
@@ -157,14 +157,14 @@ export async function applyVerifiedRoomClosure(
   if (!(await boundary.verifySystemEvent(request, tenantId)))
     return { ok: false, status: 401, error: "system_auth_required" };
   const belongsToTenant = await storage.transaction(async (tx) => {
-    const state = await tx.get(STATE_KEY);
+    const state = await tx.get(COORDINATOR_STATE_KEY);
     return state?.tenantId === tenantId && !!state.calls[callId];
   });
   if (!belongsToTenant) return { ok: false, status: 404, error: "call_not_found" };
   if (!(await boundary.verifyRoomClosed(callId, evidence)))
     return { ok: false, status: 409, error: "room_not_closed" };
   return storage.transaction(async (tx) => {
-    const state = await tx.get(STATE_KEY);
+    const state = await tx.get(COORDINATOR_STATE_KEY);
     if (!state || state.tenantId !== tenantId || !state.calls[callId])
       return { ok: false, status: 404, error: "call_not_found" } as const;
     const result = applyCallCommand(state, {
@@ -174,7 +174,7 @@ export async function applyVerifiedRoomClosure(
       now,
       source: "verified_room_absent",
     });
-    await tx.put(STATE_KEY, result.state);
+    await tx.put(COORDINATOR_STATE_KEY, result.state);
     return { ok: true, receipt: result.result } as const;
   });
 }

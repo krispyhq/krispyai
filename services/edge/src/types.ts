@@ -193,6 +193,8 @@ export interface Env {
   // --- bindings (wrangler.toml) ---
   AI: Ai;
   SESSION: DurableObjectNamespace;
+  /** Tenant-scoped, gated 0.5 call owner; SessionDO remains owner of legacy calls. */
+  CALL_COORDINATOR?: DurableObjectNamespace;
   KRISPY_KV: KVNamespace;
 
   // --- single-tenant "self" config (secrets) ---
@@ -258,6 +260,13 @@ export interface Env {
   LIVEKIT_API_SECRET?: string;
   /** Pinned, trusted browser UMD bundle URL for livekit-client; no runtime widget deps. */
   LIVEKIT_CLIENT_URL?: string;
+  /** New 0.5 calls are limited to this tenant while enabled; unset means legacy only. */
+  NATIVE_CALLS_ENABLED?: string;
+  CALL_PILOT_TENANT_ID?: string;
+  /** Cloud native-call offer/stop sender, paired with x-push-secret. */
+  PUSH_TRIGGER_SECRET?: string;
+  /** Tenant-approved non-PII label in native incoming-call presentation. */
+  CALL_PUBLIC_LABEL?: string;
 
   // --- operator-app push (Buttr; optional — unset → pushToApp no-ops) ---
   /** Cloud endpoint returning a tenant's Expo push tokens (see push.ts contract). */

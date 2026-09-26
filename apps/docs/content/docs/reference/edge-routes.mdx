@@ -61,6 +61,35 @@ an `ended`/`missed`/`declined`/`canceled` outcome, and whether the connection
 and end times came from signed events or later room observations. It contains no recording or
 conversation summary. Runtime 0.4 call routes do not create these receipts.
 
+For the exact `CALL_PILOT_TENANT_ID` with `NATIVE_CALLS_ENABLED=1`, new guest and
+native calls share a tenant Durable Object. Existing 0.4 calls remain under their
+SessionDO owner, including after a flag change. Cloud resolves operator and
+installation identity before calling the internal coordinator routes; the guest
+still uses its registered visitor capability and call nonce. New invitations
+require site `callSettings.enabled` and a connected visitor. Turning the pilot
+flag off blocks new invitations and acceptance while allowing owned calls to
+finish, report status, issue accepted-room grants, and clean up.
+
+LiveKit sends `POST /api/livekit/webhook` with the raw event body and signed
+`Authorization` token. The Worker verifies the HMAC signature and body hash,
+uses the room ID to locate a call in the configured pilot tenant, then confirms that the
+persisted owner is the coordinator. Legacy 0.4 rooms are ignored by this route.
+Two signed participant joins require an authenticated room query proving both
+peers active simultaneously before connection time is recorded. A signed
+`room_finished` ends the call and advances the device signal revision. Duplicate
+or older events cannot reopen a terminal call. Unverified late joins retain an
+approximate duration rather than claiming exact simultaneous media.
+
+Cloud-only `POST /api/internal/call-coordinator/{availability,start,action,status,grant,revoke-device,offer-validity}`
+requires `x-tenant-sync-secret`. Cloud supplies server-resolved `tenantId`,
+`operatorId`, and `deviceInstanceId`; the Worker never trusts a browser bearer
+for this surface. `availability` returns `{canInvite,reason}`. `start` and
+`action` return the canonical call decision. `status` is read-only; `grant`
+returns the accepted winner's room token. `revoke-device` returns
+`202 {cleanupConfirmed:false}` until old offers and media are closed, then
+`200 {cleanupConfirmed:true}` for the same `rebind:<jobId>` action ID.
+`offer-validity` checks the exact per-device offer, not a global revision.
+
 ### Operator bearer authorization
 
 The operator app sends its Better Auth bearer in `Authorization: Bearer <session token>`

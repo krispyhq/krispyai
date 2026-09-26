@@ -55,6 +55,8 @@ export interface CoordinatedCall {
   /** A declined/revoked offer must not be sent back to the same target. */
   ineligibleDevices?: string[];
   ineligibleOperators?: string[];
+  /** Retain every installation that saw an offer for terminal signal fan-out. */
+  notifiedDeviceInstanceIds?: string[];
 }
 
 export interface CallOffer {
@@ -233,6 +235,23 @@ export type CallCommand =
 export const defaultCallWaitMs = CALL_INVITE_TTL_MS;
 export const DEFAULT_CALL_JOIN_WAIT_MS = 30_000;
 export const DEFAULT_CALL_RECEIPT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+export const MAX_CALL_SIGNAL_DEVICES = 32;
+
+function rememberNotifiedDevice(call: CoordinatedCall, deviceId: string): boolean {
+  const devices = call.notifiedDeviceInstanceIds ?? [];
+  if (devices.includes(deviceId)) return true;
+  if (devices.length >= MAX_CALL_SIGNAL_DEVICES) return false;
+  call.notifiedDeviceInstanceIds = [...devices, deviceId];
+  return true;
+}
+
+export function callSignalDeviceInstanceIds(call: CoordinatedCall): string[] {
+  return (call.notifiedDeviceInstanceIds ?? [])
+    .filter((id) =>
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id),
+    )
+    .slice(0, MAX_CALL_SIGNAL_DEVICES);
+}
 
 function excludeDevice(call: CoordinatedCall, deviceId: string): void {
   if (!call.ineligibleDevices?.includes(deviceId))
@@ -419,6 +438,9 @@ export function applyCallCommand(
       expiresAt: command.now + state.waitMs,
       revision: 1,
       ...(command.type === "invite_operator"
+        ? { notifiedDeviceInstanceIds: [command.operator.deviceInstanceId] }
+        : {}),
+      ...(command.type === "invite_operator"
         ? {
             outgoingBy: {
               operatorId: command.operator.operatorId,
@@ -429,6 +451,7 @@ export function applyCallCommand(
     };
     state.calls[call.callId] = call;
     emit(state, call, "status");
+    if (command.type === "invite_visitor") dispatchNextWaiting(state, command.now);
     return finish(receipt(call, call.status === "waiting" ? "queued" : "offered", call.callId));
   }
 
@@ -507,6 +530,8 @@ export function applyCallCommand(
     )
       return finish(receipt(call, "operator_busy", call.callId));
     if (!currentOffer) {
+      if (!rememberNotifiedDevice(call, command.operator.deviceInstanceId))
+        return finish(receipt(call, "unavailable", call.callId));
       state.offers[command.operator.deviceInstanceId] = {
         callId: call.callId,
         operatorId: command.operator.operatorId,
@@ -671,22 +696,26 @@ export function applyCallCommand(
   }
 
   if (command.type === "media_joined") {
+    const signedOnTime =
+      command.source === "signed_livekit_event" &&
+      command.occurredAt != null &&
+      Number.isFinite(command.occurredAt) &&
+      command.occurredAt >= (call.acceptedAt ?? call.createdAt) &&
+      command.occurredAt <= command.now &&
+      (!call.joinDueAt || command.occurredAt < call.joinDueAt);
     if (
       call.status !== "accepted" ||
-      (call.joinDueAt && command.now >= call.joinDueAt && !call.mediaConnectedAt) ||
+      (call.joinDueAt &&
+        command.now >= call.joinDueAt &&
+        !call.mediaConnectedAt &&
+        !signedOnTime) ||
       call.winner?.operatorId !== command.operator.operatorId ||
       call.winner.deviceInstanceId !== command.operator.deviceInstanceId
     )
       return finish(receipt(call, "unavailable", call.callId));
     if (!call.mediaConnectedAt) {
-      const exactSignedStart =
-        command.source === "signed_livekit_event" &&
-        command.occurredAt != null &&
-        Number.isFinite(command.occurredAt) &&
-        command.occurredAt >= (call.acceptedAt ?? call.createdAt) &&
-        command.occurredAt <= command.now;
-      call.mediaConnectedAt = exactSignedStart ? command.occurredAt : command.now;
-      call.mediaStartProvenance = exactSignedStart ? "signed_event" : "observed_room_present";
+      call.mediaConnectedAt = signedOnTime ? command.occurredAt : command.now;
+      call.mediaStartProvenance = signedOnTime ? "signed_event" : "observed_room_present";
       call.revision++;
       emit(state, call, "status");
     }
@@ -748,6 +777,37 @@ export function operatorMayReceiveGrant(
     (!!call.mediaConnectedAt || (!!call.joinDueAt && now < call.joinDueAt)) &&
     call.winner?.operatorId === operator.operatorId &&
     call.winner.deviceInstanceId === operator.deviceInstanceId
+  );
+}
+
+/** APNs send-time check for one offer, independent of later unrelated call revisions. */
+export function offerStillValid(
+  state: CoordinatorState,
+  input: {
+    tenantId: string;
+    callId: string;
+    operatorId: string;
+    deviceInstanceId: string;
+    offerId: string;
+    expiresAt: number;
+  },
+  now: number,
+): boolean {
+  const call = state.calls[input.callId];
+  const offer = state.offers[input.deviceInstanceId];
+  const outbox = state.outbox[input.offerId];
+  return (
+    state.tenantId === input.tenantId &&
+    call?.requestedBy === "visitor" &&
+    call.status === "ringing" &&
+    !call.winner &&
+    call.expiresAt === input.expiresAt &&
+    now < call.expiresAt &&
+    offer?.callId === input.callId &&
+    offer.operatorId === input.operatorId &&
+    outbox?.kind === "offer" &&
+    outbox.callId === input.callId &&
+    outbox.deviceInstanceId === input.deviceInstanceId
   );
 }
 

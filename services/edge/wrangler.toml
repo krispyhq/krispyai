@@ -16,9 +16,17 @@ binding = "AI"
 name = "SESSION"
 class_name = "SessionDO"
 
+[[durable_objects.bindings]]
+name = "CALL_COORDINATOR"
+class_name = "TenantCallCoordinatorDO"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["SessionDO"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["TenantCallCoordinatorDO"]
 
 # topic<->session map, tenant config, usage counters.
 [[kv_namespaces]]
@@ -46,6 +54,11 @@ ALLOWED_ORIGIN = "*" # lock to your site origin in production
 # target environment. Set the two keys as secrets, and the URLs as vars.
 # LIVEKIT_URL = "wss://your-livekit-host"
 # LIVEKIT_CLIENT_URL = "https://your-trusted-host/livekit-client-v2.22.3.umd.min.js"
+# Native 0.5 pilot. Both gates are required for new calls; leave unset for 0.4.
+# NATIVE_CALLS_ENABLED = "0"
+# CALL_PILOT_TENANT_ID = "your-exact-tenant-id"
+# CALL_PUBLIC_LABEL = "Buttr call" # public label, never visitor PII
+# PUSH_TRIGGER_SECRET is a Worker secret shared with the Cloud offer/signal API.
 
 # ── deploy environments ──────────────────────────────────────────────────────
 # Two isolated Workers, one per env — a deploy targets one with `wrangler deploy
@@ -60,9 +73,15 @@ binding = "AI"
 [[env.preview.durable_objects.bindings]]
 name = "SESSION"
 class_name = "SessionDO"
+[[env.preview.durable_objects.bindings]]
+name = "CALL_COORDINATOR"
+class_name = "TenantCallCoordinatorDO"
 [[env.preview.migrations]]
 tag = "v1"
 new_sqlite_classes = ["SessionDO"]
+[[env.preview.migrations]]
+tag = "v2"
+new_sqlite_classes = ["TenantCallCoordinatorDO"]
 [[env.preview.kv_namespaces]]
 binding = "KRISPY_KV"
 id = "a018c2ee187c4617ac218f06b83efe97" # `bunx wrangler kv namespace create KRISPY_KV_preview`
@@ -82,9 +101,15 @@ binding = "AI"
 [[env.production.durable_objects.bindings]]
 name = "SESSION"
 class_name = "SessionDO"
+[[env.production.durable_objects.bindings]]
+name = "CALL_COORDINATOR"
+class_name = "TenantCallCoordinatorDO"
 [[env.production.migrations]]
 tag = "v1"
 new_sqlite_classes = ["SessionDO"]
+[[env.production.migrations]]
+tag = "v2"
+new_sqlite_classes = ["TenantCallCoordinatorDO"]
 [[env.production.kv_namespaces]]
 binding = "KRISPY_KV"
 id = "727ff93f7785455ba71745b160dd4809" # `bunx wrangler kv namespace create KRISPY_KV_production`

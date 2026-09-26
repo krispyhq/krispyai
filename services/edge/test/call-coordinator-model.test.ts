@@ -5,6 +5,7 @@ import {
   createCoordinatorState,
   expireCoordinatedCalls,
   operatorMayReceiveGrant,
+  offerStillValid,
   pruneCoordinatorState,
   isCallTimelineReceipt,
   waitingCalls,
@@ -96,6 +97,40 @@ test("same user on two devices sees one winner; retries return its canonical cur
   expect(duplicate.result.revision).toBe(state.calls.one!.revision);
   expect(Object.keys(duplicate.state.outbox)).toHaveLength(outboxCount);
   expect(accept(state, "one", a2, "native-event-1").result.disposition).toBe("unavailable");
+});
+
+test("first device offer stays valid after a second offer revision, then winner suppresses both", () => {
+  let state = visitorCall(createCoordinatorState("tenant", { maxPending: 2 }), "one");
+  state = offer(state, "one", a1).state;
+  const firstOfferId = Object.values(state.outbox).find(
+    (event) => event.kind === "offer" && event.deviceInstanceId === a1.deviceInstanceId,
+  )?.key;
+  expect(firstOfferId).toBeDefined();
+  const firstRevision = state.calls.one!.revision;
+  state = offer(state, "one", a2).state;
+  expect(state.calls.one!.revision).toBeGreaterThan(firstRevision);
+  const secondOfferId = Object.values(state.outbox).find(
+    (event) => event.kind === "offer" && event.deviceInstanceId === a2.deviceInstanceId,
+  )?.key;
+  const validity = (who: VerifiedCallOperator, offerId: string) =>
+    offerStillValid(
+      state,
+      {
+        tenantId: "tenant",
+        callId: "one",
+        operatorId: who.operatorId,
+        deviceInstanceId: who.deviceInstanceId,
+        offerId,
+        expiresAt: state.calls.one!.expiresAt,
+      },
+      3,
+    );
+  expect(validity(a1, firstOfferId!)).toBe(true);
+  expect(validity(a2, secondOfferId!)).toBe(true);
+  expect(validity(a1, secondOfferId!)).toBe(false);
+  state = accept(state, "one", a1, "first-winner", 4).state;
+  expect(validity(a1, firstOfferId!)).toBe(false);
+  expect(validity(a2, secondOfferId!)).toBe(false);
 });
 
 test("a ringing offer reconciles as nonterminal and late native acceptance can release its claim", () => {
@@ -336,6 +371,32 @@ test("accepted call with lost response closes after join deadline and blocks reu
   }).state;
   expect(state.calls.one?.status).toBe("ended");
   expect(offer(state, "two", a1).result.disposition).toBe("offered");
+});
+
+test("delayed signed two-party join keeps an accepted call when media started before deadline", () => {
+  let state = visitorCall(
+    createCoordinatorState("tenant", { maxPending: 2, joinWaitMs: 20 }),
+    "one",
+  );
+  state = offer(state, "one", a1).state;
+  state = accept(state, "one", a1, "answer", 2).state;
+  const late = run(state, {
+    type: "media_joined",
+    callId: "one",
+    eventId: "signed-join-delayed",
+    now: 24,
+    occurredAt: 18,
+    operator: a1,
+    source: "signed_livekit_event",
+  });
+  expect(late.result.disposition).toBe("completed_self");
+  expect(late.state.calls.one).toMatchObject({
+    status: "accepted",
+    mediaConnectedAt: 18,
+    mediaStartProvenance: "signed_event",
+  });
+  expect(expireCoordinatedCalls(late.state, 24).calls.one?.status).toBe("accepted");
+  expect(operatorMayReceiveGrant(late.state, "one", a1, 24)).toBe(true);
 });
 
 test("outgoing offer reserves one operator and revocation cancels it before media exists", () => {

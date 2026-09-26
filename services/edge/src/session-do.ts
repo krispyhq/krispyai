@@ -48,6 +48,13 @@ import {
 } from "./call";
 import { closeCallRoom, issueCallToken } from "./call-token";
 import { isCallTimelineReceipt, type CallTimelineReceipt } from "./call-coordinator-model";
+import {
+  coordinatorOwnsActiveCall,
+  legacyOwnsActiveCall,
+  publicCoordinatedCall,
+  type CallAuthority,
+} from "./call-authority";
+import type { CoordinatedCall } from "./call-coordinator-model";
 
 interface Sendable {
   send(data: string): void;
@@ -190,13 +197,18 @@ export class SessionDO {
     const handoffDue = await this.state.storage.get<number>("handoffDueAt");
     const cleanupDue = await this.state.storage.get<number>("callCleanupDueAt");
     const archiveDue = await this.state.storage.get<number>("archiveDueAt");
+    const authority = await this.state.storage.get<CallAuthority>("callAuthority");
+    const claimDue =
+      authority && !authority.publicCall && coordinatorOwnsActiveCall(authority)
+        ? authority.claimExpiresAt
+        : 0;
     const callDue =
       call?.status === "ringing"
         ? call.expiresAt
         : call?.status === "accepted"
           ? (call.acceptedAt ?? call.createdAt) + CALL_MAX_DURATION_MS
           : 0;
-    const due = [handoffDue, callDue, cleanupDue, archiveDue].filter(
+    const due = [handoffDue, callDue, cleanupDue, archiveDue, claimDue].filter(
       (n): n is number => typeof n === "number" && n > 0,
     );
     if (due.length) await this.state.storage.setAlarm(Math.min(...due));
@@ -208,6 +220,31 @@ export class SessionDO {
     broadcast(this.state.getWebSockets("operator"), { type: "call", call: basic });
     const nonce = await this.state.storage.get<string>("callNonce");
     broadcast(this.state.getWebSockets("call-visitor"), { type: "call", call: basic, nonce });
+  }
+
+  private async presentedCall(): Promise<{
+    call: ReturnType<typeof publicCall>;
+    nonce?: string;
+  }> {
+    const authority = await this.state.storage.get<CallAuthority>("callAuthority");
+    if (authority && (coordinatorOwnsActiveCall(authority) || authority.publicCall))
+      return { call: authority.publicCall ?? null, nonce: authority.nonce };
+    return {
+      call: publicCall(await this.callState(), Date.now()),
+      nonce: await this.state.storage.get<string>("callNonce"),
+    };
+  }
+
+  private async sendCoordinatorCall(authority: CallAuthority): Promise<void> {
+    broadcast(this.state.getWebSockets("operator"), {
+      type: "call",
+      call: authority.publicCall ?? null,
+    });
+    broadcast(this.state.getWebSockets("call-visitor"), {
+      type: "call",
+      call: authority.publicCall ?? null,
+      nonce: authority.nonce,
+    });
   }
 
   private async appendRing(msgs: RingMsg[]): Promise<RingMsg[]> {
@@ -318,6 +355,20 @@ export class SessionDO {
   async alarm(): Promise<void> {
     await this.callState();
     const now = Date.now();
+    const authority = await this.state.storage.get<CallAuthority>("callAuthority");
+    if (
+      authority &&
+      !authority.publicCall &&
+      coordinatorOwnsActiveCall(authority) &&
+      authority.claimExpiresAt <= now
+    ) {
+      const expired: CallAuthority = { ...authority, status: "expired" };
+      await Promise.all([
+        this.state.storage.put("callAuthority", expired),
+        this.state.storage.put(`callOwner:${authority.callId}`, expired),
+      ]);
+      await this.sendCoordinatorCall(expired);
+    }
     const handoffDue = await this.state.storage.get<number>("handoffDueAt");
     if (handoffDue && handoffDue <= now) await this.handBack({ note: HANDBACK_NOTE });
     const cleanupDue = await this.state.storage.get<number>("callCleanupDueAt");
@@ -373,8 +424,9 @@ export class SessionDO {
         for (const receipt of await this.callReceipts())
           server.send(JSON.stringify({ type: "call_receipt", receipt }));
         if (operator || callVisitor) {
-          const call = publicCall(await this.callState(), Date.now());
-          const nonce = callVisitor ? await this.state.storage.get<string>("callNonce") : undefined;
+          const presentation = await this.presentedCall();
+          const call = presentation.call;
+          const nonce = callVisitor ? presentation.nonce : undefined;
           server.send(JSON.stringify({ type: "call", call, nonce }));
         }
       } catch {
@@ -385,6 +437,211 @@ export class SessionDO {
 
     // Everything past the WS upgrade is the internal Worker→DO surface — gated.
     if (!this.internalAuthed(request)) return new Response("forbidden", { status: 403 });
+
+    if (request.method === "GET" && url.pathname.endsWith("/call/authority")) {
+      const actor = request.headers.get("x-call-actor");
+      if (actor !== "visitor" && actor !== "operator")
+        return Response.json({ error: "actor_required" }, { status: 403 });
+      const visitorSecret = await this.state.storage.get<string>("callVisitorSecret");
+      if (
+        actor === "visitor" &&
+        (!visitorSecret || request.headers.get("x-call-visitor-secret") !== visitorSecret)
+      )
+        return Response.json({ error: "visitor_auth_required" }, { status: 403 });
+      const requestedId = url.searchParams.get("id");
+      const [current, legacy, cleanupRoom, lastRequest] = await Promise.all([
+        this.state.storage.get<CallAuthority>("callAuthority"),
+        this.callState(),
+        this.state.storage.get<string>("callCleanupRoom"),
+        this.state.storage.get<number>("visitorCallRequestAt"),
+      ]);
+      const owner = requestedId
+        ? requestedId === current?.callId
+          ? current
+          : await this.state.storage.get<CallAuthority>(`callOwner:${requestedId}`)
+        : current;
+      return Response.json({
+        owner:
+          owner?.owner ?? (legacy && (!requestedId || legacy.id === requestedId) ? "legacy" : null),
+        current: !!owner && owner.callId === current?.callId && owner.version === current.version,
+        callId:
+          owner?.callId ??
+          (legacy && (!requestedId || legacy.id === requestedId) ? legacy.id : null),
+        ownerVersion: owner?.version ?? (legacy ? 0 : null),
+        status:
+          owner?.status ??
+          (legacy && (!requestedId || legacy.id === requestedId) ? legacy.status : null),
+        call:
+          owner?.publicCall ??
+          (legacy && (!requestedId || legacy.id === requestedId)
+            ? publicCall(legacy, Date.now())
+            : null),
+        ...(actor === "visitor"
+          ? { nonce: owner?.nonce ?? (await this.state.storage.get<string>("callNonce")) }
+          : {}),
+        tenantId: (await this.state.storage.get<string>("tenantId")) ?? null,
+        siteId: (await this.state.storage.get<string>("siteId")) ?? "default",
+        visitorRegistered: !!visitorSecret,
+        visitorPresent: this.state.getWebSockets("call-visitor").length > 0,
+        visitorRequestReady: Date.now() - (lastRequest ?? 0) >= 60_000,
+        handoffState: await this.handoffState(),
+        cleanupPending: !!cleanupRoom,
+      });
+    }
+
+    if (request.method === "POST" && url.pathname.endsWith("/call/claim")) {
+      const body = (await request.json().catch(() => null)) as {
+        tenantId?: string;
+        sessionId?: string;
+        callId?: string;
+        eventId?: string;
+        requestedBy?: "visitor" | "operator";
+      } | null;
+      const actor = request.headers.get("x-call-actor");
+      const tenantId = body?.tenantId;
+      const sessionId = body?.sessionId;
+      const callId = body?.callId;
+      const eventId = body?.eventId;
+      if (
+        !tenantId ||
+        !sessionId ||
+        sessionId.length > 200 ||
+        !callId ||
+        callId.length > 100 ||
+        !eventId ||
+        eventId.length > 128 ||
+        body?.requestedBy !== actor ||
+        (actor !== "visitor" && actor !== "operator")
+      )
+        return Response.json({ error: "invalid_claim" }, { status: 400 });
+      const visitorSecret = await this.state.storage.get<string>("callVisitorSecret");
+      if (
+        actor === "visitor" &&
+        (!visitorSecret || request.headers.get("x-call-visitor-secret") !== visitorSecret)
+      )
+        return Response.json({ error: "visitor_auth_required" }, { status: 403 });
+      const now = Date.now();
+      const result = await this.state.storage.transaction(async (tx) => {
+        const [tenant, session, legacy, cleanupRoom, current, lastRequest, priorVersion] =
+          await Promise.all([
+            tx.get<string>("tenantId"),
+            tx.get<string>("sessionId"),
+            tx.get<CallState>("call"),
+            tx.get<string>("callCleanupRoom"),
+            tx.get<CallAuthority>("callAuthority"),
+            tx.get<number>("visitorCallRequestAt"),
+            tx.get<number>("callAuthorityVersion"),
+          ]);
+        if ((tenant && tenant !== tenantId) || (session && session !== sessionId))
+          return { error: "session_mismatch", status: 403 } as const;
+        if (current && current.eventId === eventId && current.requestedBy === actor)
+          return { marker: current, reused: true } as const;
+        if (legacyOwnsActiveCall(legacy, cleanupRoom))
+          return { error: "legacy_call_active", status: 409 } as const;
+        if (coordinatorOwnsActiveCall(current))
+          return { error: "call_in_progress", status: 409 } as const;
+        if (
+          actor === "operator" &&
+          (!visitorSecret || this.state.getWebSockets("call-visitor").length === 0)
+        )
+          return { error: "visitor_unavailable", status: 409 } as const;
+        if (actor === "visitor" && now - (lastRequest ?? 0) < 60_000)
+          return { error: "call_request_rate_limited", status: 429 } as const;
+        const marker: CallAuthority = {
+          owner: "coordinator",
+          callId,
+          version: (priorVersion ?? 0) + 1,
+          eventId,
+          requestedBy: actor,
+          status: actor === "visitor" ? "waiting" : "ringing",
+          revision: 0,
+          nonce: crypto.randomUUID(),
+          claimExpiresAt: now + 60_000,
+        };
+        await tx.put("tenantId", tenantId);
+        await tx.put("sessionId", sessionId);
+        await tx.put("callAuthorityVersion", marker.version);
+        await tx.put("callAuthority", marker);
+        await tx.put(`callOwner:${marker.callId}`, marker);
+        if (actor === "visitor") await tx.put("visitorCallRequestAt", now);
+        return { marker, reused: false } as const;
+      });
+      if ("error" in result)
+        return Response.json({ error: result.error }, { status: result.status });
+      if (!result.reused) {
+        if (actor === "visitor") await this.markHumanInquiry();
+        await this.scheduleAlarm();
+      }
+      return Response.json({ owner: "coordinator", ...result });
+    }
+
+    if (request.method === "POST" && url.pathname.endsWith("/call/release")) {
+      const body = (await request.json().catch(() => null)) as {
+        callId?: string;
+        version?: number;
+      } | null;
+      const result = await this.state.storage.transaction(async (tx) => {
+        const current = await tx.get<CallAuthority>("callAuthority");
+        if (
+          !current ||
+          current.callId !== body?.callId ||
+          current.version !== body?.version ||
+          current.publicCall
+        )
+          return null;
+        const released: CallAuthority = { ...current, status: "canceled" };
+        await tx.put("callAuthority", released);
+        await tx.put(`callOwner:${current.callId}`, released);
+        return released;
+      });
+      if (!result) return Response.json({ error: "claim_changed" }, { status: 409 });
+      await this.sendCoordinatorCall(result);
+      await this.scheduleAlarm();
+      return Response.json({ released: true });
+    }
+
+    if (request.method === "POST" && url.pathname.endsWith("/call/project")) {
+      const body = (await request.json().catch(() => null)) as {
+        callId?: string;
+        version?: number;
+        call?: CoordinatedCall;
+      } | null;
+      const call = body?.call;
+      if (
+        !call ||
+        call.callId !== body?.callId ||
+        typeof call.revision !== "number" ||
+        !Number.isInteger(call.revision) ||
+        call.revision < 1
+      )
+        return Response.json({ error: "invalid_projection" }, { status: 400 });
+      const result = await this.state.storage.transaction(async (tx) => {
+        const current = await tx.get<CallAuthority>("callAuthority");
+        if (!current || current.callId !== call.callId || current.version !== body?.version)
+          return { error: "owner_changed" } as const;
+        if (call.revision <= current.revision) return { marker: current, changed: false } as const;
+        const projected: CallAuthority = {
+          ...current,
+          status: call.status,
+          revision: call.revision,
+          publicCall: publicCoordinatedCall(call),
+        };
+        await tx.put("callAuthority", projected);
+        await tx.put(`callOwner:${call.callId}`, projected);
+        return { marker: projected, changed: true } as const;
+      });
+      if ("error" in result) return Response.json({ error: result.error }, { status: 409 });
+      if (result.changed) {
+        if (call.status === "accepted") {
+          await this.setHandoffState("operator");
+          await this.state.storage.put("handoffDueAt", 0);
+          broadcast(this.state.getWebSockets(), { type: "handoff", handoffState: "operator" });
+        }
+        await this.sendCoordinatorCall(result.marker);
+        await this.scheduleAlarm();
+      }
+      return Response.json({ projected: result.changed, ownerVersion: result.marker.version });
+    }
 
     if (request.method === "POST" && url.pathname.endsWith("/call/receipt")) {
       const body = (await request.json().catch(() => null)) as {
@@ -557,6 +814,8 @@ export class SessionDO {
         return Response.json({ error: "visitor_auth_required" }, { status: 403 });
       const body = (await request.json().catch(() => ({}))) as { id?: string };
       if (!body.id) return Response.json({ error: "stale_call" }, { status: 409 });
+      if (await this.state.storage.get<CallAuthority>(`callOwner:${body.id}`))
+        return Response.json({ error: "call_owned_by_coordinator" }, { status: 409 });
       const rtc = {
         url: this.env.LIVEKIT_URL,
         apiKey: this.env.LIVEKIT_API_KEY,
@@ -592,6 +851,8 @@ export class SessionDO {
       if (actor !== "visitor" && actor !== "operator")
         return Response.json({ error: "actor_required" }, { status: 403 });
       if (request.method === "GET") {
+        if (coordinatorOwnsActiveCall(await this.state.storage.get<CallAuthority>("callAuthority")))
+          return Response.json({ error: "call_owned_by_coordinator" }, { status: 409 });
         const call = await this.callState();
         const lastRequest = (await this.state.storage.get<number>("visitorCallRequestAt")) ?? 0;
         return Response.json({
@@ -608,6 +869,8 @@ export class SessionDO {
       if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
       const action = body?.action;
       if (action === "invite") {
+        if (coordinatorOwnsActiveCall(await this.state.storage.get<CallAuthority>("callAuthority")))
+          return Response.json({ error: "call_owned_by_coordinator" }, { status: 409 });
         const previous = await this.callState();
         if (
           actor === "operator" &&
@@ -627,6 +890,7 @@ export class SessionDO {
         const result = inviteCall(previous, Date.now(), crypto.randomUUID(), actor);
         if (!result.ok) return Response.json({ error: result.reason }, { status: 409 });
         if (result.changed) {
+          await this.state.storage.put("callAuthority", null);
           await this.state.storage.put("call", result.call);
           await this.state.storage.put("callNonce", crypto.randomUUID());
           if (actor === "visitor") await this.state.storage.put("visitorCallRequestAt", Date.now());
@@ -643,6 +907,8 @@ export class SessionDO {
         });
       }
       if (!action || !body?.id) return Response.json({ error: "invalid_action" }, { status: 400 });
+      if (await this.state.storage.get<CallAuthority>(`callOwner:${body.id}`))
+        return Response.json({ error: "call_owned_by_coordinator" }, { status: 409 });
       const current = await this.callState();
       const requester = current?.requestedBy ?? "operator";
       if ((action === "accept" || action === "decline") && actor === requester)
