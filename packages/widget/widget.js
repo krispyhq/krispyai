@@ -1770,6 +1770,8 @@
     callSettingsOpen = false,
     callExpiryTimer = null;
   var livekitLoading = null;
+  var callJoinStage = null;
+  var callFailure = null;
   var callVisitorConnected = false;
   var callCanRequest = false;
   var callStatusEpoch = 0;
@@ -2062,7 +2064,10 @@
     if (next && next.status === "ringing" && next.requestedBy !== "visitor")
       startIncomingRing(next.id, next.expiresAt);
     else stopIncomingRing(next && next.status === "accepted");
-    if (next && (!callState || next.id !== callState.id)) stopCallMedia();
+    if (next && (!callState || next.id !== callState.id)) {
+      stopCallMedia();
+      callFailure = null;
+    }
     callState = next;
     refreshHandoffChoices();
     if (nonce) callNonce = nonce;
@@ -2163,6 +2168,13 @@
         callButton("Join call", true, function () {
           joinCall(next.id).catch(showCallError);
         });
+      if (callFailure && !callRoom && !callJoinPromise) {
+        callNote.textContent = callFailure.message;
+        callButton("Connection details", false, function () {
+          callNote.textContent =
+            callFailure.message + " Step: " + callFailure.stage + ". Share this step with support.";
+        });
+      }
       if (callRoom) {
         var micButton = callButton(
           callMicPending ? "Updating…" : callMicEnabled ? "Mute" : "Unmute",
@@ -2201,6 +2213,10 @@
     else if (callRoom && error && error.message)
       callNote.textContent = error.message.replace(/_/g, " ");
     else callNote.textContent = "Audio could not connect. Check your connection and try again.";
+    if (callFailure && !callRoom && !callJoinPromise) {
+      callFailure.message = callNote.textContent;
+      renderCall(callState);
+    }
   }
   function loadLivekit(clientUrl) {
     if (window.LivekitClient && window.LivekitClient.Room)
@@ -2231,6 +2247,8 @@
       return Promise.reject(new Error("Calls require this page in the foreground"));
     if (callRoom) return Promise.resolve();
     if (callJoinPromise) return callJoinPromise;
+    callFailure = null;
+    callJoinStage = "grant";
     var epoch = callMediaEpoch;
     var failedCurrentJoin = false;
     function active() {
@@ -2245,8 +2263,10 @@
     callJoinPromise = callRequest("grant", { id: id })
       .then(function (grant) {
         if (!active()) return;
+        callJoinStage = "audio library";
         return loadLivekit(grant.clientUrl).then(function (LK) {
           if (!active()) return;
+          callJoinStage = "room connection";
           var room = new LK.Room();
           pendingCallRoom = room;
           room.on("trackSubscribed", function (track) {
@@ -2293,6 +2313,7 @@
               pendingCallRoom = null;
               callRoom = room;
               callMicPending = true;
+              callJoinStage = "microphone";
               return room.localParticipant.setMicrophoneEnabled(true).then(function () {
                 if (!active()) {
                   stopCallMedia();
@@ -2300,6 +2321,7 @@
                 }
                 callMicPending = false;
                 callMicEnabled = true;
+                callJoinStage = null;
                 renderCall(callState);
               });
             })
@@ -2317,6 +2339,10 @@
       })
       .catch(function (error) {
         if (epoch !== callMediaEpoch && !failedCurrentJoin) return;
+        callFailure = {
+          stage: callJoinStage || "join",
+          message: "Audio could not connect. Check your connection and try again.",
+        };
         throw error;
       })
       .finally(function () {

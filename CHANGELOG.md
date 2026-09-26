@@ -12,6 +12,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Changed
 
+- Failed visitor audio joins now offer a safe Connection details step for support
+  while keeping the retry message and call credentials private.
 - Edge deploys now sync the optional archive window and authenticated inbox URL
   from the target Infisical environment, preserving existing bindings when unset.
 - The visitor call card now reports a microphone or connection failure after

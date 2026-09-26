@@ -13,6 +13,7 @@ type Element = {
   hidden: boolean;
   value: string;
   attributes: Record<string, string>;
+  onerror?: () => void;
   click: () => void;
   change: () => void;
   setAttribute: (name: string, value: string) => void;
@@ -59,6 +60,7 @@ function harness(
   storage = new Map<string, string>(),
   testSessionId = "session",
   ringAudio?: unknown,
+  libraryAvailable = true,
 ) {
   const callTitle = element(),
     callNote = element(),
@@ -83,6 +85,7 @@ function harness(
   const document = {
     visibilityState: "visible",
     createElement: (_tag: string) => element(),
+    head: { appendChild: (script: Element) => queueMicrotask(() => script.onerror?.()) },
     addEventListener(
       name: string,
       fn: (event: { isTrusted: boolean; composedPath?: () => object[] }) => void,
@@ -148,7 +151,9 @@ function harness(
     }
   }
   const window = {
-    LivekitClient: { Room: FakeRoom, supportsAudioOutputSelection: () => outputSupported },
+    LivekitClient: libraryAvailable
+      ? { Room: FakeRoom, supportsAudioOutputSelection: () => outputSupported }
+      : null,
     AudioContext: ringAudio,
     addEventListener(name: string, fn: () => void) {
       listeners.set(name, fn);
@@ -583,11 +588,43 @@ describe("visitor audio call controller", () => {
     app.click("Join call");
     app.grant.resolve({ clientUrl: "library", url: "room", token: "token" });
     for (let i = 0; i < 10 && !app.rooms.length; i++) await tick();
-    app.connect.reject(new Error("connection failed"));
+    app.connect.reject(
+      new Error("connection failed with token=private-token at wss://private.invalid"),
+    );
     for (let i = 0; i < 10; i++) await tick();
     expect(app.rooms[0]!.disconnected).toBe(true);
     expect(app.callControls.children.some((item) => item.textContent === "Join call")).toBe(true);
     expect(app.callNote.textContent).toContain("Check your connection");
+    app.click("Connection details");
+    expect(app.callNote.textContent).toContain("Step: room connection");
+    expect(app.callNote.textContent).not.toContain("private-token");
+    expect(app.callNote.textContent).not.toContain("private.invalid");
+  });
+
+  test("grant failure identifies the pre-media step without exposing the server error", async () => {
+    const app = harness();
+    app.renderCall(accepted);
+    app.click("Join call");
+    app.grant.reject(new Error("private grant details"));
+    for (let i = 0; i < 10; i++) await tick();
+    expect(app.rooms).toHaveLength(0);
+    expect(app.callControls.children.some((item) => item.textContent === "Join call")).toBe(true);
+    app.click("Connection details");
+    expect(app.callNote.textContent).toContain("Step: grant");
+    expect(app.callNote.textContent).not.toContain("private grant details");
+  });
+
+  test("audio library failure identifies its step and permits a retry", async () => {
+    const app = harness(true, new Map(), "session", undefined, false);
+    app.renderCall(accepted);
+    app.click("Join call");
+    app.grant.resolve({ clientUrl: "https://private.invalid/lib.js", url: "room", token: "token" });
+    for (let i = 0; i < 10; i++) await tick();
+    expect(app.rooms).toHaveLength(0);
+    app.click("Connection details");
+    expect(app.callNote.textContent).toContain("Step: audio library");
+    expect(app.callNote.textContent).not.toContain("private.invalid");
+    expect(app.callControls.children.some((item) => item.textContent === "Join call")).toBe(true);
   });
 
   test("backgrounding during connect disconnects and ends the server call", async () => {
