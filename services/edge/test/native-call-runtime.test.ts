@@ -149,13 +149,14 @@ function fixture() {
       }),
     },
   } as unknown as Env;
-  const post = (path: string, body: object, auth = false) =>
+  const post = (path: string, body: object, auth = false, origin?: string) =>
     worker.fetch(
       new Request(`https://edge.example.test${path}`, {
         method: "POST",
         body: JSON.stringify(body),
         headers: {
           "content-type": "application/json",
+          ...(origin ? { Origin: origin } : {}),
           ...(auth ? { "x-tenant-sync-secret": env.TENANT_SYNC_SECRET! } : {}),
         },
       }),
@@ -163,8 +164,8 @@ function fixture() {
     );
   const internal = (path: string, body: object) =>
     post(`/api/internal/call-coordinator/${path}`, { tenantId, ...body }, true);
-  const guest = (action: string, extra: object = {}) =>
-    post("/api/call", { tenantId, sessionId, visitorSecret, action, ...extra });
+  const guest = (action: string, extra: object = {}, origin?: string) =>
+    post("/api/call", { tenantId, sessionId, visitorSecret, action, ...extra }, false, origin);
   const register = async () => {
     const stub = env.SESSION.get(env.SESSION.idFromName(`${tenantId}:${sessionId}`));
     await stub.fetch("https://do/call/visitor/register", {
@@ -209,7 +210,19 @@ test("guest accepts native outgoing call, grant is scoped, native End closes gue
     expect(status.call.id).toBe(started.callId);
     const accepted = await f.guest("accept", { id: started.callId, nonce: status.nonce });
     expect(accepted.status).toBe(200);
+    expect(accepted.headers.get("access-control-allow-origin")).toBe("*");
     expect(((await accepted.json()) as { call: { status: string } }).call.status).toBe("accepted");
+    f.env.ALLOWED_ORIGIN = "https://app.krispyai.com,https://preview.delulus.productions";
+    const guestGrant = await f.guest(
+      "grant",
+      { id: started.callId },
+      "https://preview.delulus.productions",
+    );
+    expect(guestGrant.status).toBe(200);
+    expect(guestGrant.headers.get("access-control-allow-origin")).toBe(
+      "https://preview.delulus.productions",
+    );
+    expect((await guestGrant.json()) as object).toMatchObject({ url: f.env.LIVEKIT_URL });
     f.env.NATIVE_CALLS_ENABLED = "0"; // rollback blocks new calls, not owned grant/end
     const grant = await f.internal("grant", {
       sessionId,

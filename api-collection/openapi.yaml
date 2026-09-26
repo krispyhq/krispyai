@@ -70,6 +70,10 @@ paths:
       responses:
         "200":
           description: Call status, transition result, or short lived LiveKit grant.
+          headers:
+            Access-Control-Allow-Origin:
+              description: Configured widget origin (or wildcard when unrestricted), including coordinator-owned grant responses.
+              schema: { type: string }
           content:
             application/json:
               schema:

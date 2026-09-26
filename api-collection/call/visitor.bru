@@ -24,4 +24,7 @@ docs {
   transitions/grant and the private nonce for visitor transitions. invite is
   allowed only when tenant callSettings enables visitor requests and the handoff
   trigger qualifies. The visitorSecret is registered by the chat flow.
+  Cross-origin widget responses, including coordinator-owned grants, return the
+  configured Access-Control-Allow-Origin header. Accepting in the widget begins
+  connecting without a second Join action.
 }

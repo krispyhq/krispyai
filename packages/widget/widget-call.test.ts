@@ -61,7 +61,7 @@ function harness(
   testSessionId = "session",
   ringAudio?: unknown,
   libraryAvailable = true,
-  grantHttpError?: { status: number; error: string },
+  grantHttpError?: { status: number; error: string; nonJson?: boolean },
 ) {
   const callTitle = element(),
     callNote = element(),
@@ -167,7 +167,10 @@ function harness(
       return Promise.resolve({
         ok: false,
         status: grantHttpError.status,
-        json: () => Promise.resolve({ error: grantHttpError.error }),
+        json: () =>
+          grantHttpError.nonJson
+            ? Promise.reject(new SyntaxError("private HTML response"))
+            : Promise.resolve({ error: grantHttpError.error }),
       });
     if (action === "grant")
       return grant.promise.then((data) => ({ ok: true, json: () => Promise.resolve(data) }));
@@ -258,6 +261,23 @@ const tick = async () => {
 };
 
 describe("visitor audio call controller", () => {
+  test("a visitor-requested call connects when the team accepts without a second tap", async () => {
+    const app = harness();
+    app.renderCall({
+      id: "call-1",
+      status: "ringing",
+      requestedBy: "visitor",
+      expiresAt: Date.now() + 60_000,
+    });
+    app.renderCall({ id: "call-1", status: "accepted", requestedBy: "visitor" });
+    expect(app.requests.some((request) => request.action === "grant")).toBe(true);
+    expect(app.callControls.children.some((item) => item.textContent === "Join call")).toBe(false);
+    app.grant.resolve({ clientUrl: "library", url: "room", token: "token" });
+    for (let i = 0; i < 10 && !app.rooms.length; i++) await tick();
+    app.connect.resolve();
+    for (let i = 0; i < 10 && !app.micCalls.length; i++) await tick();
+    expect(app.micCalls).toEqual([true]);
+  });
   test("trusted user gesture unlocks ringtone silently before an async invite", async () => {
     const contexts: Array<{ closed: boolean }> = [];
     let tones = 0;
@@ -574,7 +594,7 @@ describe("visitor audio call controller", () => {
     expect(app.callNote.textContent).toBe("Microphone unavailable");
   });
 
-  test("a blocked microphone returns to Join with an actionable error", async () => {
+  test("a blocked microphone offers a clearly labeled retry", async () => {
     const app = harness();
     app.renderCall(accepted);
     app.click("Join call");
@@ -585,11 +605,13 @@ describe("visitor audio call controller", () => {
     app.connect.resolve();
     for (let i = 0; i < 10; i++) await tick();
     expect(app.rooms[0]!.disconnected).toBe(true);
-    expect(app.callControls.children.some((item) => item.textContent === "Join call")).toBe(true);
+    expect(
+      app.callControls.children.some((item) => item.textContent === "Try connecting again"),
+    ).toBe(true);
     expect(app.callNote.textContent).toContain("Allow it for this site");
   });
 
-  test("a connection failure returns to Join with a retry explanation", async () => {
+  test("a connection failure offers a retry explanation", async () => {
     const app = harness();
     app.renderCall(accepted);
     app.click("Join call");
@@ -600,7 +622,9 @@ describe("visitor audio call controller", () => {
     );
     for (let i = 0; i < 10; i++) await tick();
     expect(app.rooms[0]!.disconnected).toBe(true);
-    expect(app.callControls.children.some((item) => item.textContent === "Join call")).toBe(true);
+    expect(
+      app.callControls.children.some((item) => item.textContent === "Try connecting again"),
+    ).toBe(true);
     expect(app.callNote.textContent).toContain("Check your connection");
     app.click("Connection details");
     expect(app.callNote.textContent).toContain("Step: room connection");
@@ -615,7 +639,9 @@ describe("visitor audio call controller", () => {
     app.grant.reject(new Error("private grant details"));
     for (let i = 0; i < 10; i++) await tick();
     expect(app.rooms).toHaveLength(0);
-    expect(app.callControls.children.some((item) => item.textContent === "Join call")).toBe(true);
+    expect(
+      app.callControls.children.some((item) => item.textContent === "Try connecting again"),
+    ).toBe(true);
     app.click("Connection details");
     expect(app.callNote.textContent).toContain("Step: grant");
     expect(app.callNote.textContent).not.toContain("private grant details");
@@ -634,6 +660,20 @@ describe("visitor audio call controller", () => {
     expect(app.callNote.textContent).not.toContain("private grant body");
     expect(app.callNote.textContent).not.toContain("token=secret");
     expect(app.callNote.textContent).not.toContain("private.invalid");
+  });
+
+  test("non-JSON grant errors still reveal the safe HTTP status", async () => {
+    const app = harness(true, new Map(), "session", undefined, true, {
+      status: 500,
+      error: "private body",
+      nonJson: true,
+    });
+    app.renderCall(accepted);
+    app.click("Join call");
+    for (let i = 0; i < 10; i++) await tick();
+    app.click("Connection details");
+    expect(app.callNote.textContent).toContain("Step: grant · HTTP 500");
+    expect(app.callNote.textContent).not.toContain("private HTML response");
   });
 
   test("invalid grant status is omitted from details", async () => {
@@ -660,7 +700,9 @@ describe("visitor audio call controller", () => {
     app.click("Connection details");
     expect(app.callNote.textContent).toContain("Step: audio library");
     expect(app.callNote.textContent).not.toContain("private.invalid");
-    expect(app.callControls.children.some((item) => item.textContent === "Join call")).toBe(true);
+    expect(
+      app.callControls.children.some((item) => item.textContent === "Try connecting again"),
+    ).toBe(true);
   });
 
   test("backgrounding during connect disconnects and ends the server call", async () => {

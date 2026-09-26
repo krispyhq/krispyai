@@ -12,6 +12,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Changed
 
+- Accepting a visitor call now begins connecting without a second tap. A failed
+  connection offers a clearly labeled retry and retains safe HTTP diagnostics.
 - New agent tasks now use a WT0-backed creation and dependency-preparation gate,
   with a branch-scoped task-end cleanup assessment that never removes a worktree.
 - Failed visitor audio joins now offer a safe Connection details step for support

@@ -75,18 +75,21 @@ attachment channel. App-only tenants do not present an upload path that would fa
 
 ## Audio call join errors
 
-The visitor chooses **Join call** after accepting an invitation. If the browser
-blocks microphone access, no device is found, or the media connection fails,
-the card returns to Join and shows what to try next. The hosting page must
+Accepting an invitation starts the visitor's audio connection immediately. If
+the visitor requested the call, the widget connects when the team accepts.
+If the browser blocks microphone access, no device is found, or the media
+connection fails, the card offers **Try connecting again** and explains what
+to try next. The hosting page must
 allow `microphone=(self)` in its `Permissions-Policy` for the browser to show
 its consent prompt; `microphone=()` prevents a prompt and blocks capture.
-Permission is still requested only after the visitor chooses Join.
+Permission is requested only when the accepted call starts connecting.
 After a failed join, **Connection details** reveals the failed step:
 `grant`, `audio library`, `room connection`, or `microphone`. Share that step
 with support to locate the failure. The card never displays the token, LiveKit
 URL, client bundle URL, or raw server error. A retry starts a fresh diagnosis.
 If the grant request received an HTTP error, details also shows its numeric
-status (for example, `HTTP 409`).
+status (for example, `HTTP 409`), including non-JSON server errors. The
+coordinated guest response carries the widget's configured CORS headers.
 
 A real incoming team invitation plays a repeating browser ringtone when sound is
 enabled and the browser permits audio. The visible **Accept** and **Decline**

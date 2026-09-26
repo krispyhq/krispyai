@@ -407,7 +407,13 @@ async function handleCall(
       clientUrl,
       callConfig,
     );
-    if (coordinated) return coordinated;
+    if (coordinated) {
+      // The coordinator returns bare JSON Responses. This public visitor route
+      // is called from an embedded cross-origin widget, including for media
+      // grants; preserve the route's CORS policy before final origin rewriting.
+      for (const [name, value] of Object.entries(cors(env))) coordinated.headers.set(name, value);
+      return coordinated;
+    }
   }
   if (!available && body.action === "status")
     return json(env, { error: "call_unavailable", available: false }, 503);

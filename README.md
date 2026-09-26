@@ -283,7 +283,7 @@ contrast, then chooses black or white for darker custom accents.
 **Bring your own launcher.** The theme restyles Krispy's launcher; it can't replace it. Set `data-launcher="none"` and drive the panel from your own mark with `window.krispy` (`open` · `close` · `toggle` · `isOpen` · `unread` · `el`), listening for `krispy:open` / `krispy:close` / `krispy:unread` on `document`. The host element carries `class="krispy-widget"`. All opt-in — leave it off and nothing changes. See [**docs → bring your own launcher**](./apps/docs/content/docs/guides/embed-and-theme.mdx#bring-your-own-launcher).
 Set `theme.avatar` to `"none"` for a text-only customer header; the built-in launcher uses a neutral chat mark while the default remains Buttr.
 On coarse-pointer devices, the mute and close controls expand to 44px touch targets while their icons and desktop sizing stay unchanged.
-Audio calls are opt-in through tenant `callSettings`. A team member can invite a visitor, or the visitor can request a call after human handoff when visitor requests are enabled. A visitor request alerts the operator app and waits for a team member to accept; it does not activate the microphone. The visitor explicitly joins after acceptance. The call card shows whether the team member has joined, provides Mute/Unmute and End call controls, and expands to available microphone and speaker choices. Unsupported speaker selection stays hidden. Calls end when the page goes into the background or closes. Closing the chat panel alone leaves the call active.
+Audio calls are opt-in through tenant `callSettings`. A team member can invite a visitor, or the visitor can request a call after human handoff when visitor requests are enabled. A visitor request alerts the operator app and waits for a team member to accept; it does not activate the microphone. Accepting an invitation starts the audio connection immediately; when the visitor requested the call, the widget connects as soon as the team accepts. The browser may then ask for microphone permission. The call card shows whether the team member has joined, provides Mute/Unmute and End call controls, and expands to available microphone and speaker choices. Unsupported speaker selection stays hidden. Calls end when the page goes into the background or closes. Closing the chat panel alone leaves the call active.
 An idle call suggestion can be dismissed for the current chat session without declining an incoming invitation or ending a call.
 The widget can render durable runtime 0.5 call receipts with outcome, occurred time, and verified connected duration once the coordinator outbox emits them; no audio recording or content summary is stored.
 Real incoming invitations ring in the visitor browser when audio is permitted; the visible Accept/Decline card still works when autoplay blocks sound.
@@ -298,14 +298,15 @@ described in the [integration design](./docs/operator-call-coordinator.md).
 
 Details: [`packages/widget/README.md`](./packages/widget/README.md).
 
-If joining cannot start the microphone or the audio connection fails, the call
-card returns to **Join call** with a retry message. A hosting page must permit
-microphone access for its own origin in `Permissions-Policy`; the browser still
-asks the visitor for consent on Join.
+If the automatic connection cannot start the microphone or reach the room, the
+call card offers **Try connecting again** with a retry message. A hosting page
+must permit microphone access for its own origin in `Permissions-Policy`; the
+browser asks the visitor for consent when the connection starts.
 The visitor can open **Connection details** after a failed join to see whether
 the grant, audio library, room connection, or microphone step failed. No call
 credential or endpoint is displayed.
-Grant request failures also show the numeric HTTP status when available.
+Grant request failures also show the numeric HTTP status when available, even
+when a server error does not return JSON.
 
 ## Documentation
 
