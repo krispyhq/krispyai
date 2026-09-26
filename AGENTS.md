@@ -125,14 +125,14 @@ For a **new** agent task, use the project entry point, not raw `git worktree add
 WT0_OWNER=<agent-or-session-id> node scripts/agent-worktree.mjs start <task-id> <branch>
 ```
 
-It fetches `origin/master`, creates a managed CoW checkout outside this repo with a
+It fetches `origin/master`, creates an ephemeral managed CoW checkout outside this repo with a
 20G free-space floor and an idempotency key, prepares dependencies, and requires
 doctor's complete thin-runtime promise before returning `ready: true`. Pass the
 returned absolute `worktree` path to the agent. A failed checkout stays in place
 for repair; retry the same task ID and branch. Keep a long task's lease current with
-`wt0 heartbeat <worktree>`. The installed WT0 0.1.19 has no `--require-ready` flag;
-the script checks `ready`, `dependency_ready`, and `promise.verdict=holds` until a
-released WT0 provides `automation_ready`.
+`wt0 heartbeat <worktree>`. WT0 0.1.20 provides `automation_ready`, which the
+script requires; its 0.1.19 fallback checks `ready`, `dependency_ready`, and
+`promise.verdict=holds` when an older installation is still present.
 
 After the task's PR, tests, and acceptance are assessed, leave that checkout and
 its agent process, then run `node scripts/agent-worktree.mjs assess <worktree>` from

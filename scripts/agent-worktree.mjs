@@ -68,7 +68,7 @@ export function cleanupAssessment(report, worktree) {
   if (report?.mode !== "dry-run" || !Array.isArray(report.reaped) || !Array.isArray(report.skipped))
     throw new Error("WT0 did not return a dry-run assessment");
   if (report.adopted_for_removal?.length) throw new Error("Unmanaged checkout entered assessment");
-  const eligible = report.reaped.some((item) => item.worktree === worktree);
+  const eligible = report.reaped.includes(worktree);
   const skipped = report.skipped.find((item) => item.worktree === worktree);
   if (!eligible && !skipped) throw new Error("WT0 did not assess the selected checkout");
   return { cleanupEligible: eligible, reason: skipped?.reason ?? null };
@@ -112,6 +112,7 @@ function start(taskId, branch, owner) {
       "--base",
       branchBase,
       "--require-cow",
+      "--ephemeral",
       "--require-free",
       process.env.WT0_REQUIRE_FREE || "20G",
       "--owner",
