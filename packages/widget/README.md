@@ -81,6 +81,12 @@ the card returns to Join and shows what to try next. The hosting page must
 allow `microphone=(self)` in its `Permissions-Policy` for the browser to show
 its consent prompt; `microphone=()` prevents a prompt and blocks capture.
 Permission is still requested only after the visitor chooses Join.
+After a failed join, **Connection details** reveals the failed step:
+`grant`, `audio library`, `room connection`, or `microphone`. Share that step
+with support to locate the failure. The card never displays the token, LiveKit
+URL, client bundle URL, or raw server error. A retry starts a fresh diagnosis.
+If the grant request received an HTTP error, details also shows its numeric
+status (for example, `HTTP 409`).
 
 A real incoming team invitation plays a repeating browser ringtone when sound is
 enabled and the browser permits audio. The visible **Accept** and **Decline**

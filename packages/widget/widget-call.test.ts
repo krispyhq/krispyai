@@ -13,6 +13,7 @@ type Element = {
   hidden: boolean;
   value: string;
   attributes: Record<string, string>;
+  onerror?: () => void;
   click: () => void;
   change: () => void;
   setAttribute: (name: string, value: string) => void;
@@ -59,6 +60,8 @@ function harness(
   storage = new Map<string, string>(),
   testSessionId = "session",
   ringAudio?: unknown,
+  libraryAvailable = true,
+  grantHttpError?: { status: number; error: string },
 ) {
   const callTitle = element(),
     callNote = element(),
@@ -83,6 +86,7 @@ function harness(
   const document = {
     visibilityState: "visible",
     createElement: (_tag: string) => element(),
+    head: { appendChild: (script: Element) => queueMicrotask(() => script.onerror?.()) },
     addEventListener(
       name: string,
       fn: (event: { isTrusted: boolean; composedPath?: () => object[] }) => void,
@@ -148,7 +152,9 @@ function harness(
     }
   }
   const window = {
-    LivekitClient: { Room: FakeRoom, supportsAudioOutputSelection: () => outputSupported },
+    LivekitClient: libraryAvailable
+      ? { Room: FakeRoom, supportsAudioOutputSelection: () => outputSupported }
+      : null,
     AudioContext: ringAudio,
     addEventListener(name: string, fn: () => void) {
       listeners.set(name, fn);
@@ -157,6 +163,12 @@ function harness(
   const fetch = (_url: string, options: { body: string; keepalive?: boolean }) => {
     const action = JSON.parse(options.body).action as string;
     requests.push({ action, keepalive: options.keepalive });
+    if (action === "grant" && grantHttpError)
+      return Promise.resolve({
+        ok: false,
+        status: grantHttpError.status,
+        json: () => Promise.resolve({ error: grantHttpError.error }),
+      });
     if (action === "grant")
       return grant.promise.then((data) => ({ ok: true, json: () => Promise.resolve(data) }));
     return Promise.resolve({
@@ -583,11 +595,72 @@ describe("visitor audio call controller", () => {
     app.click("Join call");
     app.grant.resolve({ clientUrl: "library", url: "room", token: "token" });
     for (let i = 0; i < 10 && !app.rooms.length; i++) await tick();
-    app.connect.reject(new Error("connection failed"));
+    app.connect.reject(
+      new Error("connection failed with token=private-token at wss://private.invalid"),
+    );
     for (let i = 0; i < 10; i++) await tick();
     expect(app.rooms[0]!.disconnected).toBe(true);
     expect(app.callControls.children.some((item) => item.textContent === "Join call")).toBe(true);
     expect(app.callNote.textContent).toContain("Check your connection");
+    app.click("Connection details");
+    expect(app.callNote.textContent).toContain("Step: room connection");
+    expect(app.callNote.textContent).not.toContain("private-token");
+    expect(app.callNote.textContent).not.toContain("private.invalid");
+  });
+
+  test("grant failure identifies the pre-media step without exposing the server error", async () => {
+    const app = harness();
+    app.renderCall(accepted);
+    app.click("Join call");
+    app.grant.reject(new Error("private grant details"));
+    for (let i = 0; i < 10; i++) await tick();
+    expect(app.rooms).toHaveLength(0);
+    expect(app.callControls.children.some((item) => item.textContent === "Join call")).toBe(true);
+    app.click("Connection details");
+    expect(app.callNote.textContent).toContain("Step: grant");
+    expect(app.callNote.textContent).not.toContain("private grant details");
+  });
+
+  test("grant HTTP failure reveals only its bounded numeric status", async () => {
+    const app = harness(true, new Map(), "session", undefined, true, {
+      status: 409,
+      error: "private grant body with token=secret and https://private.invalid",
+    });
+    app.renderCall(accepted);
+    app.click("Join call");
+    for (let i = 0; i < 10; i++) await tick();
+    app.click("Connection details");
+    expect(app.callNote.textContent).toContain("Step: grant · HTTP 409");
+    expect(app.callNote.textContent).not.toContain("private grant body");
+    expect(app.callNote.textContent).not.toContain("token=secret");
+    expect(app.callNote.textContent).not.toContain("private.invalid");
+  });
+
+  test("invalid grant status is omitted from details", async () => {
+    const app = harness(true, new Map(), "session", undefined, true, {
+      status: 700,
+      error: "private body",
+    });
+    app.renderCall(accepted);
+    app.click("Join call");
+    for (let i = 0; i < 10; i++) await tick();
+    app.click("Connection details");
+    expect(app.callNote.textContent).toContain("Step: grant");
+    expect(app.callNote.textContent).not.toContain("HTTP");
+    expect(app.callNote.textContent).not.toContain("private body");
+  });
+
+  test("audio library failure identifies its step and permits a retry", async () => {
+    const app = harness(true, new Map(), "session", undefined, false);
+    app.renderCall(accepted);
+    app.click("Join call");
+    app.grant.resolve({ clientUrl: "https://private.invalid/lib.js", url: "room", token: "token" });
+    for (let i = 0; i < 10; i++) await tick();
+    expect(app.rooms).toHaveLength(0);
+    app.click("Connection details");
+    expect(app.callNote.textContent).toContain("Step: audio library");
+    expect(app.callNote.textContent).not.toContain("private.invalid");
+    expect(app.callControls.children.some((item) => item.textContent === "Join call")).toBe(true);
   });
 
   test("backgrounding during connect disconnects and ends the server call", async () => {
