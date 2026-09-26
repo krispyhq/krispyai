@@ -25,6 +25,9 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Added
 
+- Preview and production Edge deploys can sync the native-call pilot flag, exact
+  tenant ID, and Core-to-Cloud push trigger from their own Infisical environments.
+
 - A gated tenant call coordinator now shares authority between native operator
   actions and guest call controls while existing 0.4 calls remain SessionDO-owned.
   Signed LiveKit webhooks route by persisted owner and advance verified join/end
