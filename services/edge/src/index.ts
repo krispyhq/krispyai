@@ -23,6 +23,7 @@ import { chatFlow } from "./chat";
 import { SessionDO, type RingMsg } from "./session-do";
 import { TenantCallCoordinatorDO } from "./tenant-call-do";
 import { handleGuestCoordinatedCall, handleInternalCoordinatorCall } from "./native-call-routes";
+import { handleLivekitWebhook } from "./livekit-webhook";
 import { buildPromptLeakScope, buildSystemPrompt } from "./system-prompt";
 import {
   parseOwnerReply,
@@ -243,6 +244,8 @@ async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promis
     if (request.method === "OPTIONS")
       return new Response(null, { status: 204, headers: cors(env) });
     if (path === "/health") return json(env, { status: "ok", service: "edge" });
+    if (request.method === "POST" && path === "/api/livekit/webhook")
+      return handleLivekitWebhook(request, env);
 
     if (request.method === "POST" && path === "/api/chat") return handleChat(request, env, ctx);
     if (request.method === "POST" && path === "/api/call")

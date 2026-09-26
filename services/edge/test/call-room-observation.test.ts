@@ -10,7 +10,7 @@ test("authenticated LiveKit query requires both expected identities ACTIVE", asy
     observeCallRoom(config, id, async (input, init) => {
       requests.push({
         url: String(input),
-        token: String((init?.headers as Record<string, string>).authorization),
+        token: String((init?.headers as Record<string, string> | undefined)?.authorization),
         room: (JSON.parse(String(init?.body)) as { room: string }).room,
       });
       return Response.json({ participants });

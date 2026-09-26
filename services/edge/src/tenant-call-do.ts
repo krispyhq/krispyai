@@ -19,6 +19,19 @@ import type { Env } from "./types";
 
 type CommandBody = { tenantId: string; command: CallCommand };
 type CloudDevice = { operatorId: string; deviceInstanceId: string; platform: "ios" };
+type SignedWebhook = {
+  tenantId: string;
+  sessionId: string;
+  callId: string;
+  eventId: string;
+  eventType: "participant_joined" | "participant_left" | "room_finished";
+  occurredAt: number | null;
+  participantIdentity?: string;
+};
+type SignedJoins = {
+  visitor?: { at: number; eventId: string };
+  operator?: { at: number; eventId: string };
+};
 const OUTBOX_RETRY_MS = 1_000;
 
 /** One SQLite-backed Durable Object serializes every pilot call for a tenant. */
@@ -79,6 +92,34 @@ export class TenantCallCoordinatorDO {
       const state = await tx.get<CoordinatorState>(COORDINATOR_STATE_KEY);
       if (state?.outbox[key])
         await tx.put(COORDINATOR_STATE_KEY, acknowledgeCallOutbox(state, key));
+    });
+  }
+
+  private async applySignedJoins(tenantId: string, callId: string): Promise<void> {
+    const evidence = await this.state.storage.get<SignedJoins>(`signedJoins:${callId}`);
+    if (!evidence?.visitor || !evidence.operator) return;
+    const state = await this.read();
+    const call = state?.calls[callId];
+    if (!call || call.status !== "accepted" || call.mediaConnectedAt || !call.winner) return;
+    const observed = await observeCallRoom(
+      {
+        url: this.env.LIVEKIT_URL,
+        apiKey: this.env.LIVEKIT_API_KEY,
+        apiSecret: this.env.LIVEKIT_API_SECRET,
+      },
+      callId,
+    );
+    // Two delayed signed joins prove each peer became active, while this room
+    // query proves they overlap. Sequential joins alone do not prove a call.
+    if (observed !== "both_active") return;
+    await this.mutate(tenantId, {
+      type: "media_joined",
+      callId,
+      eventId: `signed-joined:${callId}`,
+      now: Date.now(),
+      occurredAt: Math.max(evidence.visitor.at, evidence.operator.at),
+      source: "signed_livekit_event",
+      operator: { tenantId, ...call.winner },
     });
   }
 
@@ -297,6 +338,8 @@ export class TenantCallCoordinatorDO {
     if (before) {
       for (const call of Object.values(before.calls)) {
         if (call.status !== "accepted" || !call.winner) continue;
+        await this.applySignedJoins(before.tenantId, call.callId);
+        const current = (await this.read())?.calls[call.callId] ?? call;
         const observation = await observeCallRoom(
           {
             url: this.env.LIVEKIT_URL,
@@ -307,8 +350,8 @@ export class TenantCallCoordinatorDO {
         );
         if (
           observation === "both_active" &&
-          !call.mediaConnectedAt &&
-          (!call.joinDueAt || Date.now() < call.joinDueAt)
+          !current.mediaConnectedAt &&
+          (!current.joinDueAt || Date.now() < current.joinDueAt)
         ) {
           await this.mutate(before.tenantId, {
             type: "media_joined",
@@ -322,7 +365,7 @@ export class TenantCallCoordinatorDO {
             },
             source: "verified_room_query",
           });
-        } else if (observation === "room_absent" && call.mediaConnectedAt) {
+        } else if (observation === "room_absent" && current.mediaConnectedAt) {
           await this.mutate(before.tenantId, {
             type: "media_ended",
             callId: call.callId,
@@ -349,6 +392,51 @@ export class TenantCallCoordinatorDO {
     if (request.headers.get(DO_INTERNAL_HEADER) !== doInternalSecret(this.env))
       return Response.json({ error: "system_auth_required" }, { status: 403 });
     const path = new URL(request.url).pathname;
+    if (request.method === "POST" && path === "/signed-webhook") {
+      const body = (await request.json().catch(() => null)) as SignedWebhook | null;
+      const state = await this.read();
+      const call = body && state?.tenantId === body.tenantId ? state.calls[body.callId] : null;
+      if (
+        !body ||
+        !call ||
+        call.sessionId !== body.sessionId ||
+        !/^[0-9a-f-]{36}$/i.test(body.eventId)
+      )
+        return Response.json({ error: "call_not_found" }, { status: 404 });
+      if (body.eventType === "participant_joined") {
+        const role =
+          body.participantIdentity === `visitor-${body.callId}`
+            ? "visitor"
+            : body.participantIdentity === `operator-${body.callId}`
+              ? "operator"
+              : null;
+        if (role && body.occurredAt !== null && Number.isSafeInteger(body.occurredAt)) {
+          await this.state.storage.transaction(async (tx) => {
+            const key = `signedJoins:${body.callId}`;
+            const prior = (await tx.get<SignedJoins>(key)) ?? {};
+            const current = prior[role];
+            if (!current || body.occurredAt! < current.at)
+              await tx.put(key, {
+                ...prior,
+                [role]: { at: body.occurredAt, eventId: body.eventId },
+              });
+          });
+          await this.applySignedJoins(body.tenantId, body.callId);
+        }
+      } else if (body.eventType === "room_finished") {
+        await this.mutate(body.tenantId, {
+          type: "media_ended",
+          callId: body.callId,
+          eventId: `livekit:${body.eventId}`,
+          now: Date.now(),
+          source: "signed_room_finished",
+          ...(body.occurredAt !== null ? { occurredAt: body.occurredAt } : {}),
+        });
+      }
+      await this.drainOutbox();
+      await this.scheduleAlarm();
+      return Response.json({ acknowledged: true });
+    }
     if (request.method === "POST" && path === "/command") {
       const body = (await request.json().catch(() => null)) as CommandBody | null;
       if (
@@ -373,6 +461,14 @@ export class TenantCallCoordinatorDO {
       const state = await this.read();
       if (!state) return Response.json({ error: "call_not_found" }, { status: 404 });
       return Response.json({ state });
+    }
+    if (request.method === "GET" && path === "/call-route") {
+      const callId = new URL(request.url).searchParams.get("id");
+      const state = await this.read();
+      const call = callId ? state?.calls[callId] : null;
+      return call
+        ? Response.json({ tenantId: state!.tenantId, sessionId: call.sessionId })
+        : Response.json({ error: "call_not_found" }, { status: 404 });
     }
     if (request.method === "POST" && path === "/offer-validity") {
       const body = (await request.json().catch(() => null)) as

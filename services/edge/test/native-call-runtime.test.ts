@@ -11,6 +11,52 @@ const tenantId = "pilot-tenant";
 const deviceInstanceId = "22222222-2222-4222-8222-222222222222";
 const operatorId = "verified-operator";
 
+function encoded(value: Uint8Array): string {
+  return btoa(String.fromCharCode(...value))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+async function signedWebhook(
+  env: Env,
+  event: object,
+  secret = env.LIVEKIT_API_SECRET!,
+): Promise<Request> {
+  const raw = JSON.stringify(event);
+  const digest = btoa(
+    String.fromCharCode(
+      ...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw))),
+    ),
+  );
+  const header = encoded(new TextEncoder().encode(JSON.stringify({ alg: "HS256", typ: "JWT" })));
+  const payload = encoded(
+    new TextEncoder().encode(
+      JSON.stringify({
+        iss: env.LIVEKIT_API_KEY,
+        sha256: digest,
+        exp: Math.floor(Date.now() / 1000) + 60,
+      }),
+    ),
+  );
+  const unsigned = `${header}.${payload}`;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = encoded(
+    new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(unsigned))),
+  );
+  return new Request("https://edge.example.test/api/livekit/webhook", {
+    method: "POST",
+    headers: { authorization: `Bearer ${unsigned}.${signature}` },
+    body: raw,
+  });
+}
+
 function storage() {
   const values = new Map<string, unknown>();
   let queue = Promise.resolve();
@@ -462,6 +508,119 @@ test("only LiveKit-confirmed two ACTIVE participants mark native media connected
     stored = coordinator.values.get("coordinator:v1") as typeof stored;
     expect(stored.calls[started.callId]?.mediaConnectedAt).toBeGreaterThan(0);
     expect(stored.calls[started.callId]?.mediaStartProvenance).toBe("observed_room_present");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("verified webhook joins and room finish follow coordinator ownership with duplicate and old events", async () => {
+  const f = fixture();
+  const signalRevisions: number[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("ListParticipants"))
+      return Response.json({
+        participants: [
+          { identity: `operator-${callId}`, state: 2 },
+          { identity: `visitor-${callId}`, state: 2 },
+        ],
+      });
+    if (url.endsWith("/status-changed")) {
+      signalRevisions.push((JSON.parse(String(init?.body)) as { revision: number }).revision);
+      return Response.json({ acknowledged: true });
+    }
+    return Response.json({ delivered: true, devices: [] });
+  }) as typeof fetch;
+  let callId = "";
+  const webhook = (event: object, secret?: string) =>
+    signedWebhook(f.env, event, secret).then((request) => worker.fetch(request, f.env));
+  try {
+    await f.register();
+    const started = await f.internal("start", {
+      sessionId,
+      operatorId,
+      deviceInstanceId,
+      actionEventId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    });
+    callId = ((await started.json()) as { callId: string }).callId;
+    const nonce = ((await (await f.guest("status")).json()) as { nonce: string }).nonce;
+    expect((await f.guest("accept", { id: callId, nonce })).status).toBe(200);
+    const coordinator = f.tenants.get(tenantId)!;
+    const stored = () =>
+      (
+        coordinator.values.get("coordinator:v1") as {
+          calls: Record<
+            string,
+            {
+              revision: number;
+              mediaConnectedAt?: number;
+              mediaStartProvenance?: string;
+              mediaEndProvenance?: string;
+              status: string;
+            }
+          >;
+        }
+      ).calls[callId]!;
+    const before = stored().revision;
+    const room = { name: `krispy-${callId}` };
+    const joinedAt = Math.ceil(Date.now() / 1000) + 1;
+    await Bun.sleep(Math.max(0, joinedAt * 1000 - Date.now()));
+    const visitorJoin = {
+      event: "participant_joined",
+      id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      createdAt: joinedAt,
+      room,
+      participant: { identity: `visitor-${callId}` },
+    };
+    const operatorJoin = {
+      event: "participant_joined",
+      id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      createdAt: joinedAt,
+      room,
+      participant: { identity: `operator-${callId}` },
+    };
+    expect((await webhook(visitorJoin)).status).toBe(200);
+    expect(stored().revision).toBe(before);
+    expect((await webhook(operatorJoin)).status).toBe(200);
+    expect(stored().mediaStartProvenance).toBe("signed_event");
+    const connectedRevision = stored().revision;
+    expect((await webhook(operatorJoin)).status).toBe(200);
+    expect(stored().revision).toBe(connectedRevision);
+    expect(
+      (
+        await webhook(
+          { ...operatorJoin, id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" },
+          "wrong-secret",
+        )
+      ).status,
+    ).toBe(401);
+    const signed = await signedWebhook(f.env, operatorJoin);
+    const tampered = new Request(signed.url, {
+      method: "POST",
+      headers: signed.headers,
+      body: JSON.stringify({ ...operatorJoin, event: "room_finished" }),
+    });
+    expect((await worker.fetch(tampered, f.env)).status).toBe(401);
+    const finishAt = Math.ceil(Date.now() / 1000) + 1;
+    await Bun.sleep(Math.max(0, finishAt * 1000 - Date.now()));
+    const finished = {
+      event: "room_finished",
+      id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      createdAt: finishAt,
+      room,
+    };
+    expect((await webhook(finished)).status).toBe(200);
+    expect(stored().status).toBe("ended");
+    expect(stored().mediaEndProvenance).toBe("signed_event");
+    const endedRevision = stored().revision;
+    expect(signalRevisions.at(-1)).toBe(endedRevision);
+    expect((await webhook(finished)).status).toBe(200);
+    expect((await webhook(visitorJoin)).status).toBe(200); // old delivery cannot resurrect media
+    expect(stored().revision).toBe(endedRevision);
+    const legacy = { ...finished, room: { name: "krispy-11111111-1111-4111-8111-111111111111" } };
+    expect((await webhook(legacy)).status).toBe(200);
+    expect(stored().revision).toBe(endedRevision);
   } finally {
     globalThis.fetch = originalFetch;
   }

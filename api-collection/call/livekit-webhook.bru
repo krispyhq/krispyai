@@ -1,0 +1,24 @@
+meta {
+  name: Signed LiveKit webhook
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/livekit/webhook
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{livekitWebhookToken}}
+}
+
+body:json {
+  {"event":"room_finished","id":"REPLACE_WITH_SIGNED_EVENT_ID","createdAt":0,"room":{"name":"krispy-REPLACE_WITH_CALL_ID"}}
+}
+
+docs {
+  LiveKit supplies the exact raw signed body and Authorization JWT. Editing this
+  example body invalidates its sha256 claim; use a real signed test fixture.
+}

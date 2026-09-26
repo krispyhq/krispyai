@@ -269,10 +269,12 @@ The widget can render durable runtime 0.5 call receipts with outcome, occurred t
 Real incoming invitations ring in the visitor browser when audio is permitted; the visible Accept/Decline card still works when autoplay blocks sound.
 Returning visitors with a registered call capability remain reachable while the page is visible and chat is closed; backgrounding closes the call socket.
 
-A tenant-scoped coordinator model for future native calls is staged in the edge
-source with race tests and a disabled identity/storage adapter. It does not
-change the current call routes. Its state, identity, timeout, and retry contract
-is described in the [integration design](./docs/operator-call-coordinator.md).
+A tenant-scoped coordinator is gated to the configured native-call pilot tenant.
+It owns new native and guest calls while existing runtime 0.4 calls retain their
+SessionDO owner through rollback. The Cloud API authenticates operator/device
+identity, and signed LiveKit events verify media state before receipts and
+terminal signals advance. Its state, identity, timeout, and retry contract is
+described in the [integration design](./docs/operator-call-coordinator.md).
 
 Details: [`packages/widget/README.md`](./packages/widget/README.md).
 

@@ -25,6 +25,11 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Added
 
+- A gated tenant call coordinator now shares authority between native operator
+  actions and guest call controls while existing 0.4 calls remain SessionDO-owned.
+  Signed LiveKit webhooks route by persisted owner and advance verified join/end
+  state; Cloud offer and terminal signals remain durable until acknowledged.
+
 - The visitor widget renders durable runtime 0.5 call receipts by call ID and
   revision with outcome, occurred time, and verified connected duration. Times
   observed from room presence or deletion are labeled approximate; reconnect

@@ -54,6 +54,11 @@ ALLOWED_ORIGIN = "*" # lock to your site origin in production
 # target environment. Set the two keys as secrets, and the URLs as vars.
 # LIVEKIT_URL = "wss://your-livekit-host"
 # LIVEKIT_CLIENT_URL = "https://your-trusted-host/livekit-client-v2.22.3.umd.min.js"
+# Native 0.5 pilot. Both gates are required for new calls; leave unset for 0.4.
+# NATIVE_CALLS_ENABLED = "0"
+# CALL_PILOT_TENANT_ID = "your-exact-tenant-id"
+# CALL_PUBLIC_LABEL = "Buttr call" # public label, never visitor PII
+# PUSH_TRIGGER_SECRET is a Worker secret shared with the Cloud offer/signal API.
 
 # ── deploy environments ──────────────────────────────────────────────────────
 # Two isolated Workers, one per env — a deploy targets one with `wrangler deploy

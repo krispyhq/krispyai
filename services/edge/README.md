@@ -33,12 +33,12 @@ fires, just without a mention. See `docs → connect Telegram`.
 
 ## Endpoints
 
-### Coordinator model staged behind the current call routes
+### Gated native and guest call coordinator
 
-`src/call-coordinator-model.ts` defines the future tenant-scoped call authority;
-the live `/api/call` routes still use the existing SessionDO until the full server
-and native runtime 0.5 path is tested. The model keeps an original 60-second
-visitor-request deadline (configurable by the eventual tenant policy), bounds
+`NATIVE_CALLS_ENABLED=1` plus an exact `CALL_PILOT_TENANT_ID` gates new runtime
+0.5 calls into one tenant-scoped `TenantCallCoordinatorDO`. Existing runtime 0.4
+calls keep their SessionDO owner through flag changes and rollback. The model keeps an original 60-second
+visitor-request deadline, bounds
 pending requests, and permits one outstanding offer per operator/device. One
 winning installation claims an invitation; other devices receive an explicit
 lost-race disposition. A 30-second accepted-but-not-joined deadline starts room
@@ -61,11 +61,29 @@ not migrated or claimed by this model. A future timeout/busy fallback may show
 only the site's configured contact form or other approved route, with no invented
 queue time or callback promise.
 
-`src/call-coordinator-adapter.ts` stages validated native action IDs, injected
-verified operator/device identity, transactional tenant state, independently
-verified room closure, and configured public fallback choices. It has no live
-route or binding. See [the integration design](../../docs/operator-call-coordinator.md)
+Cloud calls `/api/internal/call-coordinator/*` with the tenant sync secret and a
+server-resolved operator/device identity; it never forwards a client bearer.
+Guest `/api/call` transitions require the registered session visitor capability,
+tenant/site settings, and private call nonce. The SessionDO persists the call's
+owner/version and projects coordinator status to existing widget sockets. Signed
+LiveKit webhooks at `/api/livekit/webhook` verify the raw-body hash and HMAC JWT,
+then locate the call in the pilot coordinator and recheck its persisted
+SessionDO owner before advancing media state. Two signed joins
+also require a server room query proving both peers active at once. A room finish
+advances the terminal revision and a retryable status outbox notifies Cloud's
+per-device signal stream. The legacy 0.4 webhook-less room path stays SessionDO-owned.
+See [the integration design](../../docs/operator-call-coordinator.md)
 for the runtime gate, outbox, and locked-phone credential requirements.
+
+The pilot Worker must keep `CALL_PILOT_TENANT_ID` set even when
+`NATIVE_CALLS_ENABLED` is rolled back, so signed webhooks and owned call cleanup
+can still locate in-flight calls. Configure the LiveKit server's webhook URL to
+`<edge origin>/api/livekit/webhook` using the same `LIVEKIT_API_KEY` and
+`LIVEKIT_API_SECRET` as its RoomService; the Worker rejects an unsigned or
+altered body. A receipt is exact only when two signed joins and a simultaneous
+room observation prove the connection. Production rollout also requires the
+deployed edge to include typed form projection and operator inbox receipt paths;
+check the target tenant before enabling calls.
 Terminal runtime 0.5 calls produce a typed, content-free receipt with verified
 connection duration. SessionDO stores each call ID outside the 20-message ring
 and returns it in `/api/operator/thread`'s `callReceipts`; guest/operator sockets
