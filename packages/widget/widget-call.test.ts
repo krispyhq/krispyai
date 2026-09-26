@@ -61,6 +61,7 @@ function harness(
   testSessionId = "session",
   ringAudio?: unknown,
   libraryAvailable = true,
+  grantHttpError?: { status: number; error: string },
 ) {
   const callTitle = element(),
     callNote = element(),
@@ -162,6 +163,12 @@ function harness(
   const fetch = (_url: string, options: { body: string; keepalive?: boolean }) => {
     const action = JSON.parse(options.body).action as string;
     requests.push({ action, keepalive: options.keepalive });
+    if (action === "grant" && grantHttpError)
+      return Promise.resolve({
+        ok: false,
+        status: grantHttpError.status,
+        json: () => Promise.resolve({ error: grantHttpError.error }),
+      });
     if (action === "grant")
       return grant.promise.then((data) => ({ ok: true, json: () => Promise.resolve(data) }));
     return Promise.resolve({
@@ -612,6 +619,35 @@ describe("visitor audio call controller", () => {
     app.click("Connection details");
     expect(app.callNote.textContent).toContain("Step: grant");
     expect(app.callNote.textContent).not.toContain("private grant details");
+  });
+
+  test("grant HTTP failure reveals only its bounded numeric status", async () => {
+    const app = harness(true, new Map(), "session", undefined, true, {
+      status: 409,
+      error: "private grant body with token=secret and https://private.invalid",
+    });
+    app.renderCall(accepted);
+    app.click("Join call");
+    for (let i = 0; i < 10; i++) await tick();
+    app.click("Connection details");
+    expect(app.callNote.textContent).toContain("Step: grant · HTTP 409");
+    expect(app.callNote.textContent).not.toContain("private grant body");
+    expect(app.callNote.textContent).not.toContain("token=secret");
+    expect(app.callNote.textContent).not.toContain("private.invalid");
+  });
+
+  test("invalid grant status is omitted from details", async () => {
+    const app = harness(true, new Map(), "session", undefined, true, {
+      status: 700,
+      error: "private body",
+    });
+    app.renderCall(accepted);
+    app.click("Join call");
+    for (let i = 0; i < 10; i++) await tick();
+    app.click("Connection details");
+    expect(app.callNote.textContent).toContain("Step: grant");
+    expect(app.callNote.textContent).not.toContain("HTTP");
+    expect(app.callNote.textContent).not.toContain("private body");
   });
 
   test("audio library failure identifies its step and permits a retry", async () => {

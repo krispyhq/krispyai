@@ -285,6 +285,7 @@ asks the visitor for consent on Join.
 The visitor can open **Connection details** after a failed join to see whether
 the grant, audio library, room connection, or microphone step failed. No call
 credential or endpoint is displayed.
+Grant request failures also show the numeric HTTP status when available.
 
 ## Documentation
 

@@ -1937,7 +1937,12 @@
       ),
     }).then(function (r) {
       return r.json().then(function (data) {
-        if (!r.ok) throw new Error(data.error || "Call request failed");
+        if (!r.ok) {
+          var error = new Error(data.error || "Call request failed");
+          if (Number.isInteger(r.status) && r.status >= 400 && r.status <= 599)
+            error.httpStatus = r.status;
+          throw error;
+        }
         return data;
       });
     });
@@ -2172,7 +2177,13 @@
         callNote.textContent = callFailure.message;
         callButton("Connection details", false, function () {
           callNote.textContent =
-            callFailure.message + " Step: " + callFailure.stage + ". Share this step with support.";
+            callFailure.message +
+            " Step: " +
+            callFailure.stage +
+            (callFailure.stage === "grant" && callFailure.httpStatus
+              ? " · HTTP " + callFailure.httpStatus
+              : "") +
+            ". Share this step with support.";
         });
       }
       if (callRoom) {
@@ -2342,6 +2353,7 @@
         callFailure = {
           stage: callJoinStage || "join",
           message: "Audio could not connect. Check your connection and try again.",
+          httpStatus: error && error.httpStatus,
         };
         throw error;
       })

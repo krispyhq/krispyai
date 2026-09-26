@@ -85,6 +85,8 @@ After a failed join, **Connection details** reveals the failed step:
 `grant`, `audio library`, `room connection`, or `microphone`. Share that step
 with support to locate the failure. The card never displays the token, LiveKit
 URL, client bundle URL, or raw server error. A retry starts a fresh diagnosis.
+If the grant request received an HTTP error, details also shows its numeric
+status (for example, `HTTP 409`).
 
 A real incoming team invitation plays a repeating browser ringtone when sound is
 enabled and the browser permits audio. The visible **Accept** and **Decline**
