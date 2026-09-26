@@ -313,13 +313,17 @@ is accepted only while a visitor socket presenting that capability is connected;
 otherwise the operator receives `visitor_unavailable`. It appears on that socket
 with a private invitation
 nonce. A visitor must explicitly accept before either participant can get a
-room token or the widget asks for microphone access. `status`, `cancel`, `end`,
+room token or the widget asks for microphone access; that acceptance also
+starts connecting automatically. For a visitor-requested call, the widget
+connects when the team accepts. `status`, `cancel`, `end`,
 and `grant` use the same operator endpoint; visitor `status`, `accept`, `decline`,
 `end`, and `grant` use `POST /api/call` with the widget capability. Include the
 returned call ID for every action after `invite`; the visitor includes the
 nonce for `accept`, `decline`, and `end`. `grant` returns a two-minute,
-microphone-only LiveKit token for the single opaque room. Ending calls LiveKit's
-`DeleteRoom` API to disconnect participants. Self-hosted LiveKit cannot revoke a
+microphone-only LiveKit token for the single opaque room. Coordinator-owned
+`/api/call` responses include the same configured CORS headers as legacy calls,
+so the embedded widget can read its grant. Ending calls LiveKit's `DeleteRoom`
+API to disconnect participants. Self-hosted LiveKit cannot revoke a
 previously issued token, so a cached token may reconnect until its short expiry;
 new grants stop immediately when the Durable Object state ends. The invitation
 expires after 60 seconds; an accepted call has a one-hour ceiling. The session

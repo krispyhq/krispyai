@@ -1936,15 +1936,23 @@
         ),
       ),
     }).then(function (r) {
-      return r.json().then(function (data) {
-        if (!r.ok) {
-          var error = new Error(data.error || "Call request failed");
-          if (Number.isInteger(r.status) && r.status >= 400 && r.status <= 599)
-            error.httpStatus = r.status;
-          throw error;
-        }
-        return data;
-      });
+      // A proxy or Worker exception may return HTML. Keep the numeric status
+      // while never placing its response body in the visitor's call card.
+      return r
+        .json()
+        .catch(function () {
+          return null;
+        })
+        .then(function (data) {
+          if (!r.ok) {
+            var error = new Error((data && data.error) || "Call request failed");
+            if (Number.isInteger(r.status) && r.status >= 400 && r.status <= 599)
+              error.httpStatus = r.status;
+            throw error;
+          }
+          if (!data || typeof data !== "object") throw new Error("Call response unavailable");
+          return data;
+        });
     });
   }
   function stopCallMedia() {
@@ -2058,6 +2066,13 @@
     if (callSettingsOpen) refreshCallDevices();
   });
   function renderCall(next, nonce) {
+    var visitorRequestAccepted =
+      next &&
+      next.status === "accepted" &&
+      next.requestedBy === "visitor" &&
+      callState &&
+      callState.id === next.id &&
+      callState.status === "ringing";
     if (
       next &&
       next.status === "accepted" &&
@@ -2101,7 +2116,8 @@
       ) {
         callEl.classList.add("on");
         callTitle.textContent = "Speak with a team member";
-        callNote.textContent = "Request an audio call. Your microphone stays off until you join.";
+        callNote.textContent =
+          "Request an audio call. We’ll connect you when the team accepts; your browser may ask for microphone access.";
         callButton("Request a call", true, function () {
           requestVisitorCall();
         });
@@ -2170,7 +2186,7 @@
             ". Calls work while this page stays in the foreground."
           : "Join when ready. Calls end when this page goes into the background.";
       if (!callRoom && !callJoinPromise)
-        callButton("Join call", true, function () {
+        callButton(callFailure ? "Try connecting again" : "Join call", true, function () {
           joinCall(next.id).catch(showCallError);
         });
       if (callFailure && !callRoom && !callJoinPromise) {
@@ -2206,6 +2222,7 @@
           })
           .catch(showCallError);
       });
+      if (visitorRequestAccepted) joinCall(next.id).catch(showCallError);
     }
   }
   function showCallError(error) {
@@ -2213,9 +2230,9 @@
     var name = error && error.name;
     if (name === "NotAllowedError" || name === "PermissionDeniedError")
       callNote.textContent =
-        "Microphone access is blocked. Allow it for this site, then choose Join call again.";
+        "Microphone access is blocked. Allow it for this site, then try connecting again.";
     else if (name === "NotFoundError" || name === "DevicesNotFoundError")
-      callNote.textContent = "No microphone was found. Connect one, then choose Join call again.";
+      callNote.textContent = "No microphone was found. Connect one, then try connecting again.";
     else if (name === "NotReadableError" || name === "TrackStartError")
       callNote.textContent =
         "Your microphone could not start. Close other apps using it, then try again.";

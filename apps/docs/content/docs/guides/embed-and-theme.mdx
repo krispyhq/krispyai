@@ -177,13 +177,16 @@ in its inline style, which is what integrators had to do before the class existe
   chat still works over plain `POST` if the socket is down.
 - **audio calls** — when enabled, a team member can invite a visitor; a visitor can also
   request a call after human handoff if the tenant allows it. A request alerts the operator
-  app and waits for a team member to accept; the visitor explicitly joins afterward.
+  app and waits for a team member to accept; the visitor connects automatically
+  on acceptance. Accepting an incoming invitation also starts connecting without
+  another tap.
   The idle call suggestion can be dismissed for the current chat session, including
   across page reloads; incoming invites and active calls still appear normally.
-  An invited visitor accepts, then joins before the microphone turns on.
+  The browser may request microphone permission as the accepted call connects.
   After a failed join, Connection details shows the failed step (grant, audio
   library, room connection, or microphone) without revealing credentials or URLs.
-  Grant failures also show a numeric HTTP status when the server returned one.
+  Grant failures also show a numeric HTTP status when the server returned one,
+  including non-JSON errors; a failed connection offers a clearly labeled retry.
   A real incoming invitation rings when browser audio is allowed and notifications
   are unmuted; Accept and Decline remain visible when autoplay blocks sound.
   Returning visitors with a previously registered call capability keep their
