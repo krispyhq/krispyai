@@ -215,6 +215,26 @@ bun run test          # edge unit tests + CLI smoke tests
 bun run check         # typecheck + lint + test in one shot
 ```
 
+### Agent worktrees
+
+New agent tasks use:
+
+```sh
+WT0_OWNER=<session-id> node scripts/agent-worktree.mjs start <task-id> <branch>
+```
+
+It creates a CoW WT0 checkout outside this repository,
+prepares dependencies, and returns a path only after a complete readiness check.
+After review and PR completion, run this from the main checkout for a scoped
+cleanup **dry run**:
+
+```sh
+node scripts/agent-worktree.mjs assess <absolute-worktree-path>
+```
+
+The reviewed `.wt0-generated` file lists only disposable docs build output;
+existing worktrees are not adopted or removed. See [AGENTS.md](./AGENTS.md#82-agent-worktrees--wt0).
+
 ## Manage your kbase — the `krispy` CLI
 
 Your bot's knowledge base is its **system prompt**. Write it in a file, then push it into the Worker's KV — no hand-written `wrangler kv` calls:

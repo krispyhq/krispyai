@@ -1,0 +1,4 @@
+# Reviewed build output for new WT0-managed agent checkouts.
+# Keep local Wrangler state, credentials, uploads, and user data out of this list.
+apps/docs/.next
+apps/docs/out

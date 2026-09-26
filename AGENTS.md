@@ -117,6 +117,30 @@ A skill or MCP is **executable code running with your agent's permissions, plus 
 
 Full law + our curated, scan-gated recommended list (adapt / link-only / reject tiers): [`docs/agent-skills.md`](./docs/agent-skills.md). Scanner: [`scripts/scan-skill.sh`](./scripts/scan-skill.sh).
 
+### 8.2 Agent worktrees — WT0
+
+For a **new** agent task, use the project entry point, not raw `git worktree add`:
+
+```sh
+WT0_OWNER=<agent-or-session-id> node scripts/agent-worktree.mjs start <task-id> <branch>
+```
+
+It fetches `origin/master`, creates a managed CoW checkout outside this repo with a
+20G free-space floor and an idempotency key, prepares dependencies, and requires
+doctor's complete thin-runtime promise before returning `ready: true`. Pass the
+returned absolute `worktree` path to the agent. A failed checkout stays in place
+for repair; retry the same task ID and branch. Keep a long task's lease current with
+`wt0 heartbeat <worktree>`. The installed WT0 0.1.19 has no `--require-ready` flag;
+the script checks `ready`, `dependency_ready`, and `promise.verdict=holds` until a
+released WT0 provides `automation_ready`.
+
+After the task's PR, tests, and acceptance are assessed, leave that checkout and
+its agent process, then run `node scripts/agent-worktree.mjs assess <worktree>` from
+the main checkout. This runs a branch-and-owner-scoped **GC dry run only** and
+reports blockers; it never applies cleanup or adopts old worktrees. The reviewed
+`.wt0-generated` list permits only known build output. Never prune, force-remove,
+or include unmanaged checkouts based on an inventory report.
+
 ## 9. Before you finish
 
 - `bun run typecheck` passes (edge + CLI).

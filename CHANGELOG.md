@@ -12,6 +12,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Changed
 
+- New agent tasks now use a WT0-backed creation and dependency-preparation gate,
+  with a branch-scoped task-end cleanup assessment that never removes a worktree.
 - Failed visitor audio joins now offer a safe Connection details step for support
   and a numeric grant HTTP status when available, while keeping the retry
   message and call credentials private.
