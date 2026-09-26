@@ -10,6 +10,10 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+- Agent completion assessment now accepts WT0's eligible path strings. The
+  earlier wrapper expected objects and rejected clean checkouts even when WT0
+  proposed them. New agent checkouts are marked ephemeral for scoped GC review.
+
 ### Changed
 
 - New agent tasks now use a WT0-backed creation and dependency-preparation gate,

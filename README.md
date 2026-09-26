@@ -223,7 +223,7 @@ New agent tasks use:
 WT0_OWNER=<session-id> node scripts/agent-worktree.mjs start <task-id> <branch>
 ```
 
-It creates a CoW WT0 checkout outside this repository,
+It creates an ephemeral CoW WT0 checkout outside this repository,
 prepares dependencies, and returns a path only after a complete readiness check.
 After review and PR completion, run this from the main checkout for a scoped
 cleanup **dry run**:

@@ -89,12 +89,12 @@ void test("completion only interprets a scoped WT0 dry run", () => {
     ),
     { cleanupEligible: false, reason: "dirty" },
   );
-  assert.deepEqual(
-    cleanupAssessment({ mode: "dry-run", reaped: [{ worktree: path }], skipped: [] }, path),
-    { cleanupEligible: true, reason: null },
-  );
+  assert.deepEqual(cleanupAssessment({ mode: "dry-run", reaped: [path], skipped: [] }, path), {
+    cleanupEligible: true,
+    reason: null,
+  });
   assert.throws(
-    () => cleanupAssessment({ mode: "apply", reaped: [{ worktree: path }], skipped: [] }, path),
+    () => cleanupAssessment({ mode: "apply", reaped: [path], skipped: [] }, path),
     /dry-run/,
   );
   assert.throws(
