@@ -10,6 +10,12 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+### Fixed
+
+- Visitor handoff forms now occupy full-width rows, with Instagram links in an
+  evenly sized responsive group. This prevents mixed-width, misaligned choices
+  in narrow and right-to-left chat panels.
+
 ## [0.3.0] — 2026-09-27
 
 - Pinned new agent worktrees to WT0 0.1.20 and removed the older readiness fallback.
