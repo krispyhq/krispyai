@@ -710,9 +710,13 @@
     ".cap a{border:0!important;border-radius:12px!important;background:var(--k-muted)!important;color:var(--k-espresso)!important;font-weight:650!important}" +
     ".handoffchoices{align-self:stretch;padding:12px;background:var(--k-card);border-radius:18px;box-shadow:0 8px 22px rgba(36,33,46,.07);display:flex;flex-direction:column;gap:8px}" +
     ".handoffchoices .choice-title{font-size:13px;font-weight:720;color:var(--k-espresso)}" +
-    ".handoffchoices .choice-actions{display:flex;flex-wrap:wrap;gap:7px}" +
+    ".handoffchoices .choice-actions{display:flex;flex-direction:column;gap:10px;min-width:0}" +
+    ".handoffchoices .choice-forms{display:grid;grid-template-columns:minmax(0,1fr);gap:7px}" +
+    ".handoffchoices .choice-connectors{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,132px),1fr));gap:8px}" +
     ".handoffchoices .choice-actions button,.handoffchoices .choice-actions .cta{min-height:44px;padding:8px 11px;border:0;border-radius:12px;background:var(--k-muted);color:var(--k-espresso);font:600 13px var(--k-font);cursor:pointer;box-shadow:none}" +
-    ".handoffchoices .choice-actions .ctaitem{flex:1 1 auto}" +
+    ".handoffchoices .choice-forms button{width:100%;text-align:start}" +
+    ".handoffchoices .choice-connectors .ctaitem{min-width:0;justify-content:flex-end}" +
+    ".handoffchoices .choice-connectors .cta{width:100%;min-width:0;text-align:center}" +
     ".handoffchoices .choice-actions .cta-instagram{background:linear-gradient(90deg,#833AB4,#E1306C,#F77737);color:#fff}" +
     ".handoffchoices .choice-actions button:focus-visible{outline:3px solid var(--k-primary);outline-offset:2px}" +
     ".pop{max-width:278px;margin:0 0 11px auto;padding:13px 34px 13px 15px;background:rgba(255,255,255,.96);border:0;border-radius:18px;box-shadow:0 18px 48px rgba(36,33,46,.14);font-size:13px;line-height:1.45}" +
@@ -2696,12 +2700,14 @@
     card.appendChild(title);
     var actions = document.createElement("div");
     actions.className = "choice-actions";
+    var formActions = document.createElement("div");
+    formActions.className = "choice-forms";
     if (canRequestCall) {
       var call = document.createElement("button");
       call.type = "button";
       call.textContent = "Request a call";
       call.addEventListener("click", requestVisitorCall);
-      actions.appendChild(call);
+      formActions.appendChild(call);
     }
     availableForms.forEach(function (form) {
       var button = document.createElement("button");
@@ -2712,11 +2718,15 @@
         removeHandoffChoices();
         showForm(form);
       });
-      actions.appendChild(button);
+      formActions.appendChild(button);
     });
+    if (formActions.children.length) actions.appendChild(formActions);
+    var connectorActions = document.createElement("div");
+    connectorActions.className = "choice-connectors";
     availableCtas.forEach(function (cta) {
-      renderCta(cta, actions);
+      renderCta(cta, connectorActions);
     });
+    if (connectorActions.children.length) actions.appendChild(connectorActions);
     card.appendChild(actions);
     handoffChoices = card;
     handoffChoiceKey = key;

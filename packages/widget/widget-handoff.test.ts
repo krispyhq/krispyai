@@ -103,7 +103,7 @@ function harness() {
   };
 }
 function buttons(card: FakeNode | null) {
-  return card?.children[1]?.children ?? [];
+  return card?.children[1]?.children.flatMap((group) => group.children) ?? [];
 }
 
 describe("pending handoff choices", () => {
@@ -119,6 +119,10 @@ describe("pending handoff choices", () => {
   test("only configured routes render, and a form choice opens the existing form", () => {
     const app = harness();
     app.refresh();
+    expect(app.card()?.children[1]?.children.map((group) => group.className)).toEqual([
+      "choice-forms",
+      "choice-connectors",
+    ]);
     expect(buttons(app.card()).map((item) => item.textContent)).toEqual(["Leave details", "DM us"]);
     expect(buttons(app.card())[1]?.href).toBe("https://instagram.com/example");
     buttons(app.card())[0]?.click();
