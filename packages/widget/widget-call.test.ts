@@ -14,11 +14,22 @@ type Element = {
   value: string;
   attributes: Record<string, string>;
   onerror?: () => void;
+  innerHTML?: string;
+  src?: string;
+  title?: string;
+  isConnected?: boolean;
+  style?: { display: string };
+  focus: () => void;
+  insertBefore: (child: Element, before: Element) => void;
   click: () => void;
   change: () => void;
   setAttribute: (name: string, value: string) => void;
   addEventListener: (name: string, fn: () => void) => void;
-  classList: { add: (name: string) => void; remove: (name: string) => void };
+  classList: {
+    add: (name: string) => void;
+    remove: (name: string) => void;
+    toggle: (name: string, force?: boolean) => void;
+  };
   replaceChildren: () => void;
   appendChild: (child: Element) => void;
 };
@@ -31,18 +42,26 @@ function element(): Element {
     value: "",
     attributes: {},
     click: () => listeners.get("click")?.(),
+    focus: () => {},
+    isConnected: true,
+    style: { display: "" },
     change: () => listeners.get("change")?.(),
     setAttribute(name, value) {
       this.attributes[name] = value;
     },
     addEventListener: (name, fn) => listeners.set(name, fn),
     children: [],
-    classList: { add() {}, remove() {} },
+    classList: { add() {}, remove() {}, toggle() {} },
     replaceChildren() {
       this.children = [];
     },
     appendChild(child) {
       this.children.push(child);
+    },
+    insertBefore(child, before) {
+      this.children = this.children.filter((item) => item !== child);
+      const index = this.children.indexOf(before);
+      this.children.splice(index < 0 ? this.children.length : index, 0, child);
     },
   };
 }
@@ -70,6 +89,30 @@ function harness(
     callExpand = element(),
     callDevices = element(),
     callAudio = element();
+  const callScreen = element(),
+    callScreenName = element(),
+    callScreenStatus = element(),
+    callScreenNote = element(),
+    callScreenTray = element();
+  const callOpen = element(),
+    callBack = element(),
+    callPortrait = element(),
+    callHeading = element();
+  callHeading.textContent = "Team";
+  const avatarEl = element(),
+    launcherIcon = element(),
+    launcher = element(),
+    popEl = element(),
+    panel = element();
+  avatarEl.src = "team.png";
+  launcherIcon.src = "buttr.png";
+  const selectors: Record<string, Element> = {
+    ".kcall-open": callOpen,
+    ".kcall-back": callBack,
+    ".kcall-portrait": callPortrait,
+    ".ttl": callHeading,
+  };
+  const $ = (selector: string) => selectors[selector];
   const requests: { action: string; keepalive?: boolean }[] = [];
   const grant = deferred<{ clientUrl: string; url: string; token: string }>();
   const connect = deferred<void>();
@@ -85,6 +128,7 @@ function harness(
   const host = {};
   const document = {
     visibilityState: "visible",
+    activeElement: element(),
     createElement: (_tag: string) => element(),
     head: { appendChild: (script: Element) => queueMicrotask(() => script.onerror?.()) },
     addEventListener(
@@ -128,6 +172,7 @@ function harness(
     handlers = new Map<string, (...args: unknown[]) => void>();
     disconnected = false;
     canPlaybackAudio = true;
+    activeDevices: Record<string, string> = { audioinput: "mic-1", audiooutput: "speaker-1" };
     startAudioCalls = 0;
     constructor() {
       rooms.push(this);
@@ -152,10 +197,11 @@ function harness(
       return Promise.resolve();
     }
     getActiveDevice(kind: string) {
-      return kind === "audioinput" ? "mic-1" : "speaker-1";
+      return this.activeDevices[kind];
     }
     switchActiveDevice(kind: string, id: string) {
       deviceChanges.push({ kind, id });
+      this.activeDevices[kind] = id;
       return Promise.resolve(true);
     }
   }
@@ -204,6 +250,17 @@ function harness(
     "callControls",
     "callDevices",
     "callAudio",
+    "callScreen",
+    "callScreenName",
+    "callScreenStatus",
+    "callScreenNote",
+    "callScreenTray",
+    "avatarEl",
+    "launcherIcon",
+    "launcher",
+    "popEl",
+    "panel",
+    "$",
     "document",
     "window",
     "fetch",
@@ -232,6 +289,17 @@ function harness(
     callControls,
     callDevices,
     callAudio,
+    callScreen,
+    callScreenName,
+    callScreenStatus,
+    callScreenNote,
+    callScreenTray,
+    avatarEl,
+    launcherIcon,
+    launcher,
+    popEl,
+    panel,
+    $,
     document,
     window,
     fetch,
@@ -251,6 +319,11 @@ function harness(
     callExpand,
     callDevices,
     callAudio,
+    callScreen,
+    callScreenStatus,
+    callScreenTray,
+    callOpen,
+    callBack,
     click,
     grant,
     connect,
@@ -274,6 +347,45 @@ const tick = async () => {
 };
 
 describe("visitor audio call controller", () => {
+  test("expanded call view keeps audio controls and returns to chat without ending", async () => {
+    const app = harness();
+    app.renderCall({
+      id: "call-1",
+      status: "ringing",
+      requestedBy: "visitor",
+      expiresAt: Date.now() + 60000,
+    });
+    app.callOpen.click();
+    expect(app.callScreen.hidden).toBe(false);
+    expect(app.callScreenStatus.textContent).toBe("Calling…");
+    app.callBack.click();
+    expect(app.callScreen.hidden).toBe(true);
+    expect(app.requests.filter((request) => request.action === "end")).toHaveLength(0);
+    app.renderCall(accepted);
+    const joining = app.joinCall("call-1");
+    app.grant.resolve({ clientUrl: "test", url: "test", token: "test" });
+    await tick();
+    app.connect.resolve();
+    await joining;
+    app.rooms[0]!.remoteParticipants.set("operator", {});
+    app.renderCall(accepted);
+    app.callOpen.click();
+    expect(app.callScreenStatus.textContent).toBe("Connected");
+    const mute = app.callScreenTray.children.find(
+      (button) => button.attributes["aria-label"] === "Mute microphone",
+    );
+    expect(mute).toBeDefined();
+    mute!.click();
+    await tick();
+    expect(app.micCalls).toContain(false);
+    const endCall = app.callScreenTray.children.find(
+      (button) => button.attributes["aria-label"] === "End call",
+    );
+    endCall!.click();
+    await tick();
+    expect(app.callScreen.hidden).toBe(true);
+    expect(app.requests.some((request) => request.action === "end")).toBe(true);
+  });
   test("a visitor-requested call connects when the team accepts without a second tap", async () => {
     const app = harness();
     app.renderCall({

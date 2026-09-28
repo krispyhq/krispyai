@@ -123,7 +123,11 @@ Older locally saved chat bubbles without timestamps retain their own order;
 historical receipts appear before that uncertain block, rather than assigning
 those bubbles invented page-load times.
 
-During a call, choose **Audio settings** on the call card to expand device
+A requested call opens a full-screen audio view with the team identity, call
+status, microphone control, audio settings, and End call. **Return to chat**
+collapses it to the compact call card without ending the call; **Open call view**
+expands it again. There are no camera or video controls in an audio call.
+During a call, choose **Audio settings** on the call card or full-screen view to expand device
 controls. The microphone menu lists already permitted inputs and changes the
 active LiveKit track; opening settings does not request microphone permission.
 The speaker menu appears only in browsers that support selecting an audio

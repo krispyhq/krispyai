@@ -12,6 +12,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Added
 
+- Expandable full-screen guest audio calls with identity, live status, mute, supported
+  audio device selection, End call, and a return to the compact chat card.
 - Private, conversation-scoped image and video attachments for hosted visitor and
   Buttr operator chats, with signature checks, bounded sizes, authenticated reads,
   video byte ranges, and retry-safe transcript records. Hosted R2 buckets keep

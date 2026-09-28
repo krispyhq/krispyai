@@ -520,6 +520,31 @@
     ".panel.kdrop{outline:2px dashed var(--k-primary);outline-offset:-6px}" +
     ".kcall{display:none;margin:8px 12px;padding:13px;border-radius:16px;background:var(--k-card);border:1px solid var(--k-border);box-shadow:0 8px 20px rgba(36,33,46,.08);color:var(--k-espresso)}" +
     ".kcall.on{display:block}.kcall-expand{display:block;width:100%;text-align:start;border:0;background:none;color:inherit;padding:0;font:inherit;cursor:pointer}.kcall-expand:not(:disabled):after{content:'Audio settings';display:block;font-size:12px;font-weight:600;margin-top:7px}.kcall-expand[aria-expanded=true]:after{content:'Hide audio settings'}.kcall-expand:disabled{cursor:default}.kcall-expand:focus-visible,.kcall-devices select:focus-visible{outline:2px solid var(--k-primary);outline-offset:3px}.kcall-title{display:block;font-size:14px;font-weight:700}.kcall-note{display:block;font-size:12px;opacity:.75;margin-top:3px}.kcall-devices{border-top:1px solid var(--k-border);margin-top:12px;padding-top:12px}.kcall-devices[hidden]{display:none}.kcall-devices label{display:block;font-size:12px;font-weight:600;margin-top:8px}.kcall-devices select{display:block;width:100%;min-height:44px;margin-top:5px;border:1px solid var(--k-border);border-radius:10px;background:white;color:var(--k-espresso);font:inherit;font-size:13px}.kcall-devices p{font-size:12px;opacity:.75;margin:0}.kcall-controls{display:flex;gap:8px;margin-top:10px}.kcall-controls button{flex:1;min-height:44px;border:1px solid var(--k-border);border-radius:11px;background:white;color:var(--k-espresso);font:inherit;font-size:13px;cursor:pointer}.kcall-controls .primary{background:var(--k-primary);border-color:var(--k-primary);color:var(--k-primary-ink)}" +
+    // Audio call view sits above the compact chat card; the browser owns actual audio routing.
+    ".kcall-screen{display:none;position:fixed;inset:0;z-index:4;box-sizing:border-box;" +
+    "width:100vw;height:var(--kvvh,100dvh);overflow:auto;background:radial-gradient(circle at 50% 38%,#525255 0%,#444447 52%,#242427 100%);color:#fff;" +
+    "padding:calc(20px + env(safe-area-inset-top,0)) 24px calc(24px + env(safe-area-inset-bottom,0));" +
+    "flex-direction:column;align-items:center;text-align:center;animation:kcall-enter .25s ease-out}" +
+    ".kcall-screen.on{display:flex}.kcall-screen[hidden]{display:none}" +
+    "@keyframes kcall-enter{from{opacity:0}to{opacity:1}}" +
+    ".kcall-back{align-self:flex-start;width:48px;height:48px;border:0;background:transparent;color:#fff;cursor:pointer;display:grid;place-items:center;border-radius:24px}" +
+    ".kcall-back:hover,.kcall-screen button:not(:disabled):hover{background-color:rgba(255,255,255,.12)}" +
+    ".kcall-back svg{width:28px;height:28px}.kcall-person{margin:auto 0;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;transform:translateY(-5vh)}" +
+    ".kcall-portrait{width:clamp(104px,27vw,190px);height:clamp(104px,27vw,190px);border-radius:50%;object-fit:cover;background:#1970a3}" +
+    ".kcall-person h2{margin:19px 0 2px;font-size:clamp(26px,5vw,36px);line-height:1.15;font-weight:700;max-width:80vw;overflow-wrap:anywhere}" +
+    ".kcall-status{margin:8px 0 0;color:#c5c5c7;font-size:clamp(18px,3vw,22px)}" +
+    ".kcall-screen-note{margin:8px 0 0;color:#dedee0;font-size:13px;max-width:300px;line-height:1.4}" +
+    ".kcall-tray{width:min(100%,440px);display:flex;justify-content:center;gap:clamp(10px,3vw,26px);align-items:center;padding:14px;border-radius:999px;background:rgba(28,28,30,.62);backdrop-filter:blur(14px)}" +
+    ".kcall-action{min-width:56px;min-height:56px;border:0;border-radius:50%;background:transparent;color:white;display:grid;place-items:center;cursor:pointer}" +
+    ".kcall-action svg{width:27px;height:27px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}" +
+    ".kcall-action[aria-pressed=true]{background:rgba(255,255,255,.2)}.kcall-action:disabled{opacity:.45;cursor:default}" +
+    ".kcall-end{background:#f50035;color:#fff}.kcall-end:hover{background:#dc0030!important}" +
+    ".kcall-screen .kcall-devices{width:min(100%,440px);max-height:35vh;overflow:auto;margin:0 0 14px;padding:12px 16px;text-align:start;border:0;border-radius:18px;background:#2e2e31;color:#fff}" +
+    ".kcall-screen .kcall-devices select{background:#45454a;color:#fff;border:1px solid #777}" +
+    ".kcall-screen button:focus-visible,.kcall-screen select:focus-visible,.kcall-open:focus-visible{outline:3px solid #fff;outline-offset:3px}" +
+    ".kcall-open{display:none;margin-top:10px;width:100%;min-height:44px;border:0;border-radius:11px;background:var(--k-espresso);color:white;font:600 13px var(--k-font);cursor:pointer}" +
+    ".kcall.active .kcall-open{display:block}" +
+    "@media (prefers-reduced-motion:reduce){.kcall-screen{animation:none}}" +
     // ── Composer (.ft) ──
     ".ft{" +
     "display:flex;border-top:1px solid var(--k-border);" +
@@ -646,7 +671,7 @@
     ";--k-radius:20px;--k-origin-x:calc(100% - 34px);" +
     "pointer-events:none;color:var(--k-espresso);font-synthesis:none" +
     "}" +
-    ".panel,.btn,.pop{pointer-events:auto}" +
+    ".panel,.btn,.pop,.kcall-screen{pointer-events:auto}" +
     ".panel{" +
     "display:flex;visibility:hidden;opacity:0;pointer-events:none;" +
     "width:388px;max-width:calc(100vw - 32px);" +
@@ -802,7 +827,7 @@
     "</button>" +
     "</div>" +
     '<div class="log"></div>' +
-    '<div class="kcall" role="status" aria-live="polite"><button type="button" class="kcall-expand" aria-label="Call audio settings" aria-expanded="false"><span class="kcall-title"></span><span class="kcall-note"></span></button><div class="kcall-devices" hidden></div><div class="kcall-controls"></div><div class="kcall-audio"></div></div>' +
+    '<div class="kcall" role="status" aria-live="polite"><button type="button" class="kcall-expand" aria-label="Call audio settings" aria-expanded="false"><span class="kcall-title"></span><span class="kcall-note"></span></button><div class="kcall-devices" hidden></div><div class="kcall-controls"></div><button type="button" class="kcall-open">Open call view</button><div class="kcall-audio"></div></div>' +
     // Composer: text input + paper-plane send button
     // Pending-attachment tray — empty and display:none until something is pasted.
     '<div class="att"><img class="attthumb" alt=""><span class="attvideo" aria-hidden="true">▶</span>' +
@@ -820,6 +845,11 @@
     "</button>" +
     "</form>" +
     "</div>" +
+    // Full-screen audio call view, separate from the chat panel's visibility.
+    '<section class="kcall-screen" role="dialog" aria-label="Audio call" aria-modal="true" hidden>' +
+    '<button type="button" class="kcall-back" aria-label="Return to chat"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M8 12l8 8 8-8" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' +
+    '<div class="kcall-person"><img class="kcall-portrait" alt=""><h2 class="kcall-name"></h2><p class="kcall-status" role="status" aria-live="polite"></p><p class="kcall-screen-note"></p></div>' +
+    '<div class="kcall-tray"></div></section>' +
     // Popup teaser card above the launcher (hidden until theme.popupText schedules it)
     '<div class="pop">' +
     '<button type="button" class="popx" aria-label="Dismiss">×</button>' +
@@ -851,7 +881,12 @@
     callNote = $(".kcall-note"),
     callDevices = $(".kcall-devices"),
     callControls = $(".kcall-controls"),
-    callAudio = $(".kcall-audio");
+    callAudio = $(".kcall-audio"),
+    callScreen = $(".kcall-screen"),
+    callScreenName = $(".kcall-name"),
+    callScreenStatus = $(".kcall-status"),
+    callScreenNote = $(".kcall-screen-note"),
+    callScreenTray = $(".kcall-tray");
   var popEl = $(".pop"),
     popTxtEl = $(".popt");
   $(".ttl").textContent = cfg.title;
@@ -1841,6 +1876,7 @@
     }, 60); // transitionend never fires on a display-toggle
   }
   function closePanel() {
+    setCallScreenOpen(false);
     panel.classList.remove("open");
     panel.setAttribute("aria-hidden", "true");
     launcher.setAttribute("aria-expanded", "false");
@@ -2091,6 +2127,167 @@
         });
     });
   }
+  var callScreenOpen = false;
+  var callScreenReturnFocus = null;
+  function setCallScreenOpen(open) {
+    if (!open && !callScreenOpen) return;
+    callScreenOpen =
+      !!open && !!callState && ["ringing", "accepted"].indexOf(callState.status) >= 0;
+    callScreen.hidden = !callScreenOpen;
+    callScreen.classList.toggle("on", callScreenOpen);
+    panel.inert = callScreenOpen;
+    launcher.inert = callScreenOpen;
+    popEl.inert = callScreenOpen;
+    if (callScreenOpen) {
+      callScreenReturnFocus = document.activeElement;
+      if (callSettingsOpen) callScreen.insertBefore(callDevices, callScreenTray);
+      renderCallScreen();
+      $(".kcall-back").focus();
+    } else {
+      callEl.insertBefore(callDevices, callControls);
+      if (callScreenReturnFocus && callScreenReturnFocus.isConnected) callScreenReturnFocus.focus();
+      callScreenReturnFocus = null;
+    }
+  }
+  $(".kcall-open").addEventListener("click", function () {
+    setCallScreenOpen(true);
+  });
+  $(".kcall-back").addEventListener("click", function () {
+    setCallScreenOpen(false);
+  });
+  callScreen.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") setCallScreenOpen(false);
+    if (event.key !== "Tab") return;
+    var focusable = Array.prototype.filter.call(
+      callScreen.querySelectorAll("button:not(:disabled),select:not(:disabled)"),
+      function (control) {
+        return !control.hidden && control.offsetParent !== null;
+      },
+    );
+    if (!focusable.length) return;
+    var first = focusable[0],
+      last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+  function callScreenAction(label, icon, action, className, pressed, disabled) {
+    var button = document.createElement("button");
+    button.type = "button";
+    button.className = "kcall-action" + (className ? " " + className : "");
+    button.setAttribute("aria-label", label);
+    button.title = label;
+    if (pressed != null) button.setAttribute("aria-pressed", String(pressed));
+    button.disabled = !!disabled;
+    button.innerHTML = icon;
+    button.addEventListener("click", action);
+    callScreenTray.appendChild(button);
+  }
+  var CALL_ICON_MIC =
+    '<svg viewBox="0 0 32 32" aria-hidden="true"><rect x="12" y="4" width="8" height="17" rx="4"/><path d="M8 15a8 8 0 0 0 16 0M16 23v5m-5 0h10"/></svg>';
+  var CALL_ICON_MUTED =
+    '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M12 12v5a4 4 0 0 0 6.5 3.1M20 13V8a4 4 0 0 0-7-2.5M8 15a8 8 0 0 0 13 6.2M24 15a8 8 0 0 1-1.2 4.2M16 23v5m-5 0h10M5 5l22 22"/></svg>';
+  var CALL_ICON_AUDIO =
+    '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 12h5l7-6v20l-7-6H5zM22 11a7 7 0 0 1 0 10M25 7a13 13 0 0 1 0 18"/></svg>';
+  var CALL_ICON_END =
+    '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 20c6-6 16-6 22 0l-2.5 5-5-2-.5-3a16 16 0 0 0-6 0l-.5 3-5 2z" fill="currentColor" stroke="none"/></svg>';
+  function clickCompactCallButton(label) {
+    Array.prototype.forEach.call(callControls.children, function (button) {
+      if (button.textContent === label) button.click();
+    });
+  }
+  function renderCallScreen() {
+    if (!callScreenOpen || !callState) return;
+    callScreenName.textContent = $(".ttl").textContent || cfg.title;
+    var portrait = $(".kcall-portrait");
+    portrait.src = avatarEl.style.display === "none" ? launcherIcon.src : avatarEl.src;
+    callScreenStatus.textContent =
+      callState.status === "ringing"
+        ? callState.requestedBy === "visitor"
+          ? "Calling…"
+          : "Incoming call…"
+        : callReconnecting
+          ? "Reconnecting…"
+          : callJoinPromise
+            ? "Connecting…"
+            : callRoom && callRoom.remoteParticipants.size > 0
+              ? "Connected"
+              : "Connecting…";
+    callScreenNote.textContent = callNote.textContent;
+    var activeAction = Array.prototype.indexOf.call(
+      callScreenTray.children,
+      document.activeElement,
+    );
+    callScreenTray.replaceChildren();
+    if (callState.status === "accepted") {
+      if (callRoom)
+        callScreenAction(
+          callMicEnabled ? "Mute microphone" : "Unmute microphone",
+          callMicEnabled ? CALL_ICON_MIC : CALL_ICON_MUTED,
+          function () {
+            setCallMicrophone(!callMicEnabled).catch(showCallError);
+          },
+          "",
+          !callMicEnabled,
+          callMicPending,
+        );
+      else if (!callJoinPromise)
+        callScreenAction("Join call", CALL_ICON_MIC, function () {
+          clickCompactCallButton(callFailure ? "Try connecting again" : "Join call");
+        });
+      if (callRoom)
+        callScreenAction(
+          "Audio settings",
+          CALL_ICON_AUDIO,
+          function () {
+            callExpand.click();
+            if (callSettingsOpen) callScreen.insertBefore(callDevices, callScreenTray);
+            else callEl.insertBefore(callDevices, callControls);
+          },
+          "",
+          callSettingsOpen,
+        );
+      if (callRoom && callRoom.canPlaybackAudio === false)
+        callScreenAction("Play call audio", CALL_ICON_AUDIO, function () {
+          clickCompactCallButton("Play call audio");
+        });
+      callScreenAction(
+        "End call",
+        CALL_ICON_END,
+        function () {
+          clickCompactCallButton("End call");
+        },
+        "kcall-end",
+      );
+    } else if (callState.requestedBy === "visitor") {
+      callScreenAction(
+        "Cancel request",
+        CALL_ICON_END,
+        function () {
+          clickCompactCallButton("Cancel request");
+        },
+        "kcall-end",
+      );
+    } else {
+      callScreenAction(
+        "Decline call",
+        CALL_ICON_END,
+        function () {
+          clickCompactCallButton("Decline");
+        },
+        "kcall-end",
+      );
+      callScreenAction("Accept call", CALL_ICON_MIC, function () {
+        clickCompactCallButton("Accept");
+      });
+    }
+    if (activeAction >= 0 && callScreenTray.children[activeAction])
+      callScreenTray.children[activeAction].focus();
+  }
   function stopCallMedia() {
     callMediaEpoch++;
     callJoinPromise = null;
@@ -2160,7 +2357,11 @@
               .switchActiveDevice(kind, select.value)
               .then(function (changed) {
                 if (changed === false) throw new Error("device unavailable");
-                if (room === callRoom) status.textContent = "Audio device changed.";
+                if (room === callRoom) {
+                  if (room.getActiveDevice(kind) !== select.value)
+                    throw new Error("device change not confirmed");
+                  status.textContent = "Audio device changed.";
+                }
               })
               .catch(function () {
                 if (room === callRoom) {
@@ -2262,9 +2463,12 @@
           callEl.classList.remove("on");
         });
       } else callEl.classList.remove("on");
+      callEl.classList.remove("active");
+      setCallScreenOpen(false);
       return;
     }
     callEl.classList.add("on");
+    callEl.classList.add("active");
     if (next.status === "ringing") {
       if (next.requestedBy === "visitor") {
         callTitle.textContent = "Call requested";
@@ -2384,6 +2588,7 @@
       });
       if (visitorRequestAccepted) joinCall(next.id).catch(showCallError);
     }
+    renderCallScreen();
   }
   function showCallError(error) {
     if (document.visibilityState !== "visible") return;
@@ -2405,6 +2610,7 @@
       callFailure.message = callNote.textContent;
       renderCall(callState);
     }
+    if (callScreenOpen) callScreenNote.textContent = callNote.textContent;
   }
   function loadLivekit(clientUrl) {
     if (window.LivekitClient && window.LivekitClient.Room)
@@ -2795,6 +3001,7 @@
     callRequest("invite")
       .then(function (d) {
         renderCall(d.call, d.nonce);
+        setCallScreenOpen(true);
       })
       .catch(function (error) {
         callCanRequest = true;

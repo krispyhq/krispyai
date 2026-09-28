@@ -196,9 +196,11 @@ in its inline style, which is what integrators had to do before the class existe
   backgrounding or leaving the page closes it. The server still validates the
   capability before an operator can invite them.
   The call card distinguishes waiting for the team member, connected, and reconnecting.
+  A requested call opens a full-screen audio view with the team identity and call status.
+  **Return to chat** collapses it without ending the call; **Open call view** restores it.
   If remote audio playback is blocked, **Play call audio** resumes it from a tap.
-  Mute/Unmute and End call remain available during the call. Tap the call card to expand
-  audio settings: permitted microphones can be switched without a new permission prompt;
+  Mute/Unmute and End call remain available during the call. Open audio settings on
+  the card or full-screen view: permitted microphones can be switched without a new permission prompt;
   speaker selection appears only when the browser supports it and has multiple outputs.
   When the runtime 0.5 coordinator emits a durable receipt, the chat transcript
   shows its outcome, occurred time, and verified connected duration without
