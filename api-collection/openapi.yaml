@@ -481,6 +481,138 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /api/media/capabilities:
+    get:
+      tags: [public]
+      summary: Check whether the Worker has a private media bucket
+      operationId: mediaCapabilities
+      security: []
+      responses:
+        "200":
+          description: Public limits; availability reflects only the R2 binding.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [available, maxImageBytes, maxVideoBytes]
+                properties:
+                  available: { type: boolean }
+                  maxImageBytes: { type: integer, const: 10485760 }
+                  maxVideoBytes: { type: integer, const: 31457280 }
+
+  /api/media/visitor:
+    post:
+      tags: [public]
+      summary: Store a visitor image or video privately and append it to the chat
+      operationId: visitorMediaUpload
+      description: >
+        The random visitorSecret must match the capability bound to this tenant,
+        site, and session. MIME and file signatures are checked. One uploadId is
+        idempotent for retries. Media creates a pending human inquiry and may push
+        the Buttr operator. R2 storage is optional; without it this route returns 503.
+      security: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [tenantId, sessionId, visitorSecret, uploadId, file]
+              properties:
+                tenantId: { type: string, maxLength: 200 }
+                siteId: { type: string }
+                sessionId: { type: string, maxLength: 200 }
+                visitorSecret: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
+                uploadId: { type: string, format: uuid }
+                caption: { type: string, maxLength: 2000 }
+                file: { type: string, format: binary }
+      responses:
+        "200": { description: "Stored and recorded; returns ok, recorded, media, and message." }
+        "400": { description: "Invalid session, id, caption, or multipart body." }
+        "402": { description: "Tenant subscription required." }
+        "403": { description: "Visitor capability or site mismatch." }
+        "409": { description: "Upload id conflicts with another file." }
+        "413": { description: "Image exceeds 10 MiB or video exceeds 30 MiB." }
+        "415": { description: "Unsupported or spoofed media type." }
+        "429": { description: "Visitor upload rate limit reached." }
+        "503": { description: "Private media is unavailable or the message could not be recorded." }
+
+  /api/operator/media:
+    post:
+      tags: [public]
+      summary: Store an operator image or video in an existing visitor thread
+      operationId: operatorMediaUpload
+      security:
+        - operatorBearer: []
+        - tenantSyncSecret: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [tenantId, sessionId, uploadId, file]
+              properties:
+                tenantId: { type: string, maxLength: 200 }
+                sessionId: { type: string, maxLength: 200 }
+                uploadId: { type: string, format: uuid }
+                caption: { type: string, maxLength: 2000 }
+                file: { type: string, format: binary }
+      responses:
+        "200": { description: "Stored, recorded, and broadcast to the visitor." }
+        "400": { description: "Invalid upload input." }
+        "401": { description: "Missing or expired operator authentication." }
+        "403": { description: "The operator does not belong to this tenant." }
+        "409": { description: "Session absent or upload id conflicts." }
+        "413": { description: "File too large." }
+        "415": { description: "Unsupported or spoofed media type." }
+        "503": { description: "Private media unavailable or recording failed." }
+
+  /api/media/{mediaId}:
+    get:
+      tags: [public]
+      summary: Read private image or video bytes for one conversation
+      operationId: mediaRead
+      description: >
+        Requires the visitor's x-visitor-secret header or an operator bearer or
+        tenant sync secret for the exact tenant and session. Supports one byte
+        range for video playback. Objects are not publicly hosted and expire
+        after the configured bucket retention period.
+      security:
+        - visitorMediaSecret: []
+        - operatorBearer: []
+        - tenantSyncSecret: []
+      parameters:
+        - { name: mediaId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: t, in: query, required: true, schema: { type: string } }
+        - { name: s, in: query, required: true, schema: { type: string } }
+        - { name: Range, in: header, required: false, schema: { type: string } }
+      responses:
+        "200": { description: "Private file bytes." }
+        "206": { description: "Requested single byte range." }
+        "400": { description: "Invalid media or session id." }
+        "401": { description: "Missing operator authentication." }
+        "403": { description: "Visitor or operator lacks this conversation." }
+        "404": { description: "Object missing or expired." }
+        "416": { description: "Invalid byte range." }
+        "503": { description: "Private media storage is unavailable." }
+    head:
+      tags: [public]
+      summary: Check private media metadata with the same authorization as GET
+      operationId: mediaHead
+      security:
+        - visitorMediaSecret: []
+        - operatorBearer: []
+        - tenantSyncSecret: []
+      parameters:
+        - { name: mediaId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: t, in: query, required: true, schema: { type: string } }
+        - { name: s, in: query, required: true, schema: { type: string } }
+      responses:
+        "200": { description: "Metadata only, no body." }
+        "403": { description: "Conversation authorization denied." }
+        "404": { description: "Object missing or expired." }
+
   /api/widget/config:
     get:
       tags: [public]
@@ -504,11 +636,16 @@ paths:
                 properties:
                   capabilities:
                     type: object
-                    required: [attachments]
+                    required: [attachments, media, maxImageBytes, maxVideoBytes]
                     properties:
                       attachments:
                         type: boolean
-                        description: "Whether screenshot paste/drop has a configured Telegram delivery channel."
+                        description: "Whether a Telegram screenshot route or private media route is available."
+                      media:
+                        type: boolean
+                        description: "Whether this tenant can send private image/video attachments to Buttr."
+                      maxImageBytes: { type: integer, const: 10485760 }
+                      maxVideoBytes: { type: integer, const: 31457280 }
                   theme: { $ref: "#/components/schemas/WidgetTheme" }
                   ctas:
                     type: array
@@ -1152,6 +1289,11 @@ components:
       description: Tenant id (self-host default = `self`).
 
   securitySchemes:
+    visitorMediaSecret:
+      type: apiKey
+      in: header
+      name: x-visitor-secret
+      description: The 43-character random capability bound to this visitor session.
     operatorBearer:
       type: http
       scheme: bearer

@@ -33,6 +33,14 @@ import {
   sendPhotoToTopic,
 } from "./telegram";
 import { authorizeOperator } from "./operator-auth";
+import {
+  IMAGE_MAX_BYTES,
+  MEDIA_ID,
+  VIDEO_MAX_BYTES,
+  mediaObjectKey,
+  parseMediaRange,
+  validateMedia,
+} from "./media";
 import { handleOperatorReplyDrafts } from "./reply-drafts";
 import { callRtcAvailable } from "./call-token";
 import { stampSeen, readSeen } from "./liveness";
@@ -68,6 +76,7 @@ import {
   DO_INTERNAL_HEADER,
   doInternalSecret,
   checkLeadRate,
+  checkMediaUploadRate,
   type EntitlementSnapshot,
 } from "./store";
 
@@ -177,8 +186,8 @@ function cors(env: Env): Record<string, string> {
     // With a list, the first entry stands in until finalizeCors() sees the
     // request — a valid header at every call site, never a joined "a,b".
     "access-control-allow-origin": list[0] || "*",
-    "access-control-allow-methods": "GET,POST,OPTIONS",
-    "access-control-allow-headers": "content-type,authorization",
+    "access-control-allow-methods": "GET,HEAD,POST,OPTIONS",
+    "access-control-allow-headers": "content-type,authorization,x-visitor-secret",
   };
 }
 
@@ -244,6 +253,12 @@ async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promis
     if (request.method === "OPTIONS")
       return new Response(null, { status: 204, headers: cors(env) });
     if (path === "/health") return json(env, { status: "ok", service: "edge" });
+    if (request.method === "GET" && path === "/api/media/capabilities")
+      return json(env, {
+        available: !!env.MEDIA,
+        maxImageBytes: IMAGE_MAX_BYTES,
+        maxVideoBytes: VIDEO_MAX_BYTES,
+      });
     if (request.method === "POST" && path === "/api/livekit/webhook")
       return handleLivekitWebhook(request, env);
 
@@ -263,6 +278,13 @@ async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promis
     if (request.method === "POST" && path === "/api/lead") return handleLead(request, env);
     if (request.method === "POST" && path === "/api/attachment")
       return handleAttachment(request, env);
+    if (request.method === "POST" && path === "/api/media/visitor")
+      return handleMediaUpload(request, env, "visitor");
+    if (request.method === "POST" && path === "/api/operator/media")
+      return handleMediaUpload(request, env, "operator");
+    const mediaRead = path.match(/^\/api\/media\/([0-9a-f-]{36})$/i);
+    if ((request.method === "GET" || request.method === "HEAD") && mediaRead)
+      return handleMediaRead(request, env, mediaRead[1]!);
     if (request.method === "POST" && path === "/api/telegram/webhook")
       return handleWebhook(request, env);
     if (request.method === "POST" && path === "/api/operator/reply")
@@ -966,6 +988,183 @@ async function handleAttachment(request: Request, env: Env): Promise<Response> {
     return json(env, { error: "delivery_failed" }, 502);
   }
   return json(env, { ok: true });
+}
+
+/** Private, durable media for the Buttr operator channel. Telegram's legacy photo
+ * endpoint remains separate for self-hosted installations without R2. */
+async function handleMediaUpload(
+  request: Request,
+  env: Env,
+  actor: "visitor" | "operator",
+): Promise<Response> {
+  if (!env.MEDIA) return json(env, { error: "media_unavailable" }, 503);
+  if (
+    actor === "operator" &&
+    !request.headers.has("authorization") &&
+    !request.headers.has("x-tenant-sync-secret")
+  )
+    return json(env, { error: "authorization required" }, 401);
+  const declaredBytes = Number(request.headers.get("content-length") || 0);
+  if (declaredBytes > VIDEO_MAX_BYTES + 1_000_000)
+    return json(env, { error: "too_large", maxBytes: VIDEO_MAX_BYTES }, 413);
+  const form = await request.formData().catch(() => null);
+  if (!form) return json(env, { error: "multipart_required" }, 400);
+  const tenantId = String(form.get("tenantId") ?? "");
+  const sessionId = String(form.get("sessionId") ?? "");
+  const uploadId = String(form.get("uploadId") ?? "");
+  const visitorSecret = String(form.get("visitorSecret") ?? "");
+  const caption = String(form.get("caption") ?? "").trim();
+  const siteId = siteOr400(env, String(form.get("siteId") ?? "") || undefined);
+  const file = form.get("file");
+  if (siteId instanceof Response) return siteId;
+  if (
+    !tenantId ||
+    tenantId.length > 200 ||
+    !sessionId ||
+    sessionId.length > 200 ||
+    !MEDIA_ID.test(uploadId)
+  )
+    return json(env, { error: "invalid_session_or_upload_id" }, 400);
+  if (caption.length > 2000 || !(file instanceof File))
+    return json(env, { error: "invalid_media" }, 400);
+  if (actor === "operator") {
+    const denied = await authorizeOperator(request, env, tenantId);
+    if (denied) return json(env, { error: denied.error }, denied.status);
+  } else {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(visitorSecret))
+      return json(env, { error: "visitor_auth_required" }, 403);
+    const ent = await entitled(env, tenantId);
+    if (!ent.entitled) return json(env, { error: "subscription_required" }, 402);
+    if (!(await checkMediaUploadRate(env, tenantId, request.headers.get("cf-connecting-ip"))))
+      return json(env, { error: "rate_limited" }, 429);
+  }
+  // The DO binds the visitor's random capability to this exact conversation.
+  // Operators need an existing session; a bearer alone cannot create a ghost chat.
+  const scoped = await doFetch(env, tenantId, sessionId, "https://do/media/authorize", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      actor,
+      tenantId,
+      sessionId,
+      // The visitor names the site at session creation. Operator uploads use
+      // the site's value already stored in the conversation DO; an omitted
+      // site must not be misread as the default site for multi-site tenants.
+      siteId: actor === "visitor" ? (siteId ?? "default") : form.get("siteId") ? siteId : undefined,
+      visitorSecret: actor === "visitor" ? visitorSecret : undefined,
+      create: actor === "visitor",
+    }),
+  });
+  if (!scoped.ok) return json(env, { error: "media_session_denied" }, scoped.status);
+  const validation = await validateMedia(file);
+  if (!validation.ok)
+    return json(
+      env,
+      { error: validation.error, maxBytes: validation.maxBytes },
+      validation.error === "too_large" ? 413 : 415,
+    );
+  const media = {
+    id: uploadId,
+    kind: validation.kind,
+    contentType: validation.contentType,
+    name: validation.name,
+    size: file.size,
+  } as const;
+  const key = mediaObjectKey(tenantId, sessionId, uploadId);
+  try {
+    const saved = await env.MEDIA.put(key, file.stream(), {
+      onlyIf: new Headers({ "If-None-Match": "*" }),
+      httpMetadata: { contentType: media.contentType },
+      customMetadata: { kind: media.kind, name: media.name, contentType: media.contentType, actor },
+    });
+    if (!saved) {
+      const existing = await env.MEDIA.head(key);
+      if (
+        !existing ||
+        existing.size !== media.size ||
+        existing.customMetadata?.contentType !== media.contentType ||
+        existing.customMetadata?.actor !== actor
+      )
+        return json(env, { error: "upload_id_conflict" }, 409);
+    }
+  } catch (error) {
+    console.error("media storage failed", error);
+    return json(env, { error: "media_storage_failed" }, 502);
+  }
+  const appended = await doFetch(env, tenantId, sessionId, "https://do/media/append", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      actor,
+      media,
+      caption,
+      visitorSecret: actor === "visitor" ? visitorSecret : undefined,
+    }),
+  }).catch(() => null);
+  if (!appended?.ok) {
+    // The DO may have committed before the response failed. Keep the private
+    // object so a retry with the same uploadId can restore the receipt safely.
+    return json(env, { error: "media_record_failed" }, 503);
+  }
+  const receipt = (await appended.json()) as { created?: boolean; message?: RingMsg };
+  try {
+    await indexConversationSession(env, tenantId, sessionId);
+  } catch {
+    return json(env, { error: "media_index_failed", recorded: true }, 503);
+  }
+  if (actor === "visitor" && receipt.created)
+    await pushToApp(env, tenantId, sessionId, `Visitor sent a ${media.kind}`);
+  return json(env, { ok: true, recorded: true, media, message: receipt.message });
+}
+
+/** Media bytes are private: a visitor proves possession of the session capability,
+ * or a Buttr operator proves tenant membership with their bearer. */
+async function handleMediaRead(request: Request, env: Env, mediaId: string): Promise<Response> {
+  if (!env.MEDIA) return json(env, { error: "media_unavailable" }, 503);
+  if (!MEDIA_ID.test(mediaId)) return json(env, { error: "invalid_media_id" }, 400);
+  const url = new URL(request.url);
+  const tenantId = url.searchParams.get("t") || "";
+  const sessionId = url.searchParams.get("s") || "";
+  if (!tenantId || tenantId.length > 200 || !sessionId || sessionId.length > 200)
+    return json(env, { error: "invalid_session" }, 400);
+  const visitorSecret = request.headers.get("x-visitor-secret");
+  if (visitorSecret) {
+    const scoped = await doFetch(env, tenantId, sessionId, "https://do/media/authorize", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ actor: "visitor", tenantId, sessionId, visitorSecret }),
+    });
+    if (!scoped.ok) return json(env, { error: "media_session_denied" }, scoped.status);
+  } else {
+    const denied = await authorizeOperator(request, env, tenantId);
+    if (denied) return json(env, { error: denied.error }, denied.status);
+  }
+  const key = mediaObjectKey(tenantId, sessionId, mediaId);
+  const head = await env.MEDIA.head(key);
+  if (!head) return json(env, { error: "media_not_found" }, 404);
+  const range = parseMediaRange(request.headers.get("range"), head.size);
+  if (range === "invalid")
+    return new Response(null, {
+      status: 416,
+      headers: { "Content-Range": `bytes */${head.size}`, "Cache-Control": "private, no-store" },
+    });
+  const headers = new Headers({
+    "Content-Type": head.customMetadata?.contentType || "application/octet-stream",
+    "Content-Disposition": "inline",
+    "Content-Length": String(range ? range.length : head.size),
+    "Accept-Ranges": "bytes",
+    "Cache-Control": "private, no-store",
+    "X-Content-Type-Options": "nosniff",
+  });
+  if (range)
+    headers.set(
+      "Content-Range",
+      `bytes ${range.offset}-${range.offset + range.length - 1}/${head.size}`,
+    );
+  if (request.method === "HEAD") return new Response(null, { status: range ? 206 : 200, headers });
+  const object = await env.MEDIA.get(key, range ? { range } : undefined);
+  if (!object) return json(env, { error: "media_not_found" }, 404);
+  return new Response(object.body, { status: range ? 206 : 200, headers });
 }
 
 /** The visitor-facing CTA connectors (whatsapp/instagram) for a form — email/telegram
@@ -1835,9 +2034,13 @@ async function handleWidgetConfig(request: Request, env: Env): Promise<Response>
   // avoids stale config without creating an unbounded set of cache-buster URLs.
   const capabilities = {
     attachments:
-      t === DEFAULT_TENANT
+      !!env.MEDIA ||
+      (t === DEFAULT_TENANT
         ? !!env.TELEGRAM_BOT_TOKEN && !!env.TELEGRAM_CHAT_ID
-        : !!cfg?.botToken && !!cfg.chatId,
+        : !!cfg?.botToken && !!cfg.chatId),
+    media: !!env.MEDIA,
+    maxImageBytes: IMAGE_MAX_BYTES,
+    maxVideoBytes: VIDEO_MAX_BYTES,
   };
   return Response.json(publicWidgetConfig(cfg, capabilities), {
     headers: { ...cors(env), "Cache-Control": "public, max-age=0, must-revalidate" },

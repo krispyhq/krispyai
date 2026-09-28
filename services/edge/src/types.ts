@@ -196,6 +196,8 @@ export interface Env {
   /** Tenant-scoped, gated 0.5 call owner; SessionDO remains owner of legacy calls. */
   CALL_COORDINATOR?: DurableObjectNamespace;
   KRISPY_KV: KVNamespace;
+  /** Private visitor/operator media. Separate R2 buckets per deploy environment. */
+  MEDIA?: R2Bucket;
 
   // --- single-tenant "self" config (secrets) ---
   TELEGRAM_BOT_TOKEN?: string;
@@ -302,6 +304,16 @@ export interface SessionMessage {
   ts: number;
   action?: OperatorAction;
   lead?: LeadSubmission;
+  media?: SessionMedia;
+}
+
+/** Private object reference; bytes and credentials never enter the transcript. */
+export interface SessionMedia {
+  id: string;
+  kind: "image" | "video";
+  contentType: string;
+  name: string;
+  size: number;
 }
 
 /** Form fields retained by the tenant-scoped session, separate from the short chat ring. */
@@ -329,6 +341,7 @@ export type ServerEvent =
   | { type: "operator"; handoffState: "operator"; text: string; ts: number }
   | { type: "action"; handoffState: "operator"; text: string; ts: number; action: OperatorAction }
   | { type: "lead"; message: SessionMessage }
+  | { type: "media"; message: SessionMessage }
   | { type: "call_receipt"; receipt: import("./call-coordinator-model").CallTimelineReceipt }
   | { type: "handoff"; handoffState: "pending" | "operator" }
   /** The AI took the session back (operator resolved it, or went silent past the

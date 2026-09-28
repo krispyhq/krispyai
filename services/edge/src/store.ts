@@ -554,6 +554,44 @@ export async function checkLeadRate(env: Env, t: string, sessionId: string): Pro
   return true;
 }
 
+// Media bytes cost storage and egress. Bound anonymous uploads across new
+// sessions, not just within a session; never put a raw visitor IP in KV.
+export const MEDIA_UPLOADS_PER_IP_DAY = 20;
+export const MEDIA_UPLOADS_PER_TENANT_DAY = 200;
+export async function checkMediaUploadRate(
+  env: Env,
+  tenantId: string,
+  visitorIp: string | null,
+): Promise<boolean> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(visitorIp || "unknown"),
+  );
+  const ipHash = [...new Uint8Array(digest)]
+    .slice(0, 16)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  const day = Math.floor(Date.now() / 86_400_000);
+  const ipKey = `mediarate:ip:${ipHash}:${day}`;
+  const tenantKey = `mediarate:tenant:${tenantId}:${day}`;
+  const [ipCount, tenantCount] = await Promise.all([
+    env.KRISPY_KV.get(ipKey),
+    env.KRISPY_KV.get(tenantKey),
+  ]);
+  if (
+    Number(ipCount || 0) >= MEDIA_UPLOADS_PER_IP_DAY ||
+    Number(tenantCount || 0) >= MEDIA_UPLOADS_PER_TENANT_DAY
+  )
+    return false;
+  await Promise.all([
+    env.KRISPY_KV.put(ipKey, String(Number(ipCount || 0) + 1), { expirationTtl: 86_400 }),
+    env.KRISPY_KV.put(tenantKey, String(Number(tenantCount || 0) + 1), {
+      expirationTtl: 86_400,
+    }),
+  ]);
+  return true;
+}
+
 // ── plan gate (seam) ─────────────────────────────────────────────────────────
 export interface Plan {
   aiPerMonth: number;

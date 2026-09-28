@@ -135,20 +135,24 @@ When the saved transcript ends in an AI reply, drafting asks for a fresh operato
 response to the latest visitor request. The Delulus pilot requests structured JSON
 from Gemini for this action only; normal visitor chat keeps its existing output mode.
 
-| method | path                             | purpose                                                                                                  |
-| ------ | -------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| POST   | `/api/chat`                      | `{sessionId, message, tenantId?, history?}` → `{reply, handoff, handoffState, handedOff, degraded?}`     |
-| POST   | `/api/contact`                   | `[!HANDOFF]` contact-capture → owner's topic                                                             |
-| POST   | `/api/operator/actions`          | list configured forms and Instagram CTAs for an authenticated operator's session                         |
-| POST   | `/api/operator/send-action`      | send one configured form or Instagram card into that session                                             |
-| POST   | `/api/operator/reply-drafts`     | generate up to three editable, tenant-grounded operator replies; never sends them                        |
-| POST   | `/api/telegram/webhook`          | owner reply → push to visitor via DO                                                                     |
-| POST   | `/api/billing/entitlement`       | billing → gate: mirror an entitlement snapshot into KV _(secret-guarded)_                                |
-| GET    | `/api/tenant/config?t=<tenant>`  | read a tenant's config `{botToken, chatId, systemPrompt?, model?}`, 404 if none _(secret-guarded)_       |
-| POST   | `/api/tenant/config`             | `{tenantId, config}` merge into the tenant's KV config — the `krispy` CLI writes here _(secret-guarded)_ |
-| GET    | `/api/session/:id/ws?t=<tenant>` | visitor's live channel (WebSocket → DO)                                                                  |
-| GET    | `/api/usage?t=<tenant>`          | metering + plan readout (`usage` also carries approx `tokens`)                                           |
-| GET    | `/health`                        | liveness                                                                                                 |
+| method   | path                             | purpose                                                                                                  |
+| -------- | -------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| POST     | `/api/chat`                      | `{sessionId, message, tenantId?, history?}` → `{reply, handoff, handoffState, handedOff, degraded?}`     |
+| POST     | `/api/contact`                   | `[!HANDOFF]` contact-capture → owner's topic                                                             |
+| POST     | `/api/operator/actions`          | list configured forms and Instagram CTAs for an authenticated operator's session                         |
+| POST     | `/api/operator/send-action`      | send one configured form or Instagram card into that session                                             |
+| POST     | `/api/operator/reply-drafts`     | generate up to three editable, tenant-grounded operator replies; never sends them                        |
+| GET      | `/api/media/capabilities`        | private R2 availability and image/video limits                                                           |
+| POST     | `/api/media/visitor`             | session-capability-bound image/video upload; appends a human inquiry                                     |
+| POST     | `/api/operator/media`            | bearer or tenant-sync authenticated image/video upload to an existing thread                             |
+| GET/HEAD | `/api/media/:id?t=…&s=…`         | private conversation-scoped bytes/metadata; GET supports a single video byte range                       |
+| POST     | `/api/telegram/webhook`          | owner reply → push to visitor via DO                                                                     |
+| POST     | `/api/billing/entitlement`       | billing → gate: mirror an entitlement snapshot into KV _(secret-guarded)_                                |
+| GET      | `/api/tenant/config?t=<tenant>`  | read a tenant's config `{botToken, chatId, systemPrompt?, model?}`, 404 if none _(secret-guarded)_       |
+| POST     | `/api/tenant/config`             | `{tenantId, config}` merge into the tenant's KV config — the `krispy` CLI writes here _(secret-guarded)_ |
+| GET      | `/api/session/:id/ws?t=<tenant>` | visitor's live channel (WebSocket → DO)                                                                  |
+| GET      | `/api/usage?t=<tenant>`          | metering + plan readout (`usage` also carries approx `tokens`)                                           |
+| GET      | `/health`                        | liveness                                                                                                 |
 
 ### Cost knobs — the "turn tax"
 
@@ -197,8 +201,12 @@ tenant's optional Telegram creds + prompt/model over `/api/tenant/config`. Both 
 without the secret they return **401** and never leak config. POST **merges** (unset
 fields are preserved), writing the exact KV shape `getTenant()` reads (key
 `tenant:<tenantId>`). A Cloud tenant's prompt/theme/forms work without Telegram; Buttr
-handles operator handoff. Screenshot forwarding remains Telegram-backed, so the public
-widget config reports that capability as unavailable for app-only tenants.
+handles operator handoff. A Cloud deployment can optionally bind a private R2 bucket as
+`MEDIA`: image/video uploads are size- and signature-checked, recorded in the DO, and
+viewable only by a visitor capability or authenticated operator for that conversation.
+Without R2, self-hosted screenshot forwarding stays Telegram-backed; an app-only tenant
+without either channel sees no attachment control. Krispy's hosted `media/` objects expire
+after 180 days; self-hosts set their own bucket lifecycle. No public R2 URL is used.
 
 Secrets are separate on purpose: `TENANT_SYNC_SECRET` guards the config sync (the
 `krispy` CLI uses it); `BILLING_SYNC_SECRET` guards the optional billing→gate push

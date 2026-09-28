@@ -10,6 +10,13 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+### Added
+
+- Private, conversation-scoped image and video attachments for hosted visitor and
+  Buttr operator chats, with signature checks, bounded sizes, authenticated reads,
+  video byte ranges, and retry-safe transcript records. Hosted R2 buckets keep
+  attachments for 180 days. Self-hosted Telegram screenshot delivery remains available.
+
 ## [0.3.1] — 2026-09-27
 
 ### Fixed

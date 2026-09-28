@@ -33,6 +33,7 @@ import type {
   HandoffState,
   LeadSubmission,
   OperatorAction,
+  SessionMedia,
   ServerEvent,
   SessionMessage,
 } from "./types";
@@ -56,6 +57,7 @@ import {
   type CallAuthority,
 } from "./call-authority";
 import type { CoordinatedCall } from "./call-coordinator-model";
+import { IMAGE_MAX_BYTES, MEDIA_ID, VIDEO_MAX_BYTES } from "./media";
 
 interface Sendable {
   send(data: string): void;
@@ -438,6 +440,109 @@ export class SessionDO {
 
     // Everything past the WS upgrade is the internal Worker→DO surface — gated.
     if (!this.internalAuthed(request)) return new Response("forbidden", { status: 403 });
+
+    if (request.method === "POST" && url.pathname.endsWith("/media/authorize")) {
+      const body = (await request.json().catch(() => null)) as {
+        actor?: "visitor" | "operator";
+        tenantId?: string;
+        sessionId?: string;
+        siteId?: string;
+        visitorSecret?: string;
+        create?: boolean;
+      } | null;
+      if (!body?.actor || !body.tenantId || !body.sessionId)
+        return Response.json({ error: "invalid_session" }, { status: 400 });
+      const [storedTenant, storedSession, storedSite, registered] = await Promise.all([
+        this.state.storage.get<string>("tenantId"),
+        this.state.storage.get<string>("sessionId"),
+        this.state.storage.get<string>("siteId"),
+        this.state.storage.get<string>("callVisitorSecret"),
+      ]);
+      if (
+        (storedTenant && storedTenant !== body.tenantId) ||
+        (storedSession && storedSession !== body.sessionId) ||
+        (body.siteId && storedSite && storedSite !== body.siteId)
+      )
+        return Response.json({ error: "session_mismatch" }, { status: 403 });
+      if (body.actor === "operator") {
+        if (!storedTenant || !storedSession)
+          return Response.json({ error: "no_conversation" }, { status: 409 });
+      } else {
+        if (!/^[A-Za-z0-9_-]{43}$/.test(body.visitorSecret || ""))
+          return Response.json({ error: "visitor_auth_required" }, { status: 403 });
+        if (registered && registered !== body.visitorSecret)
+          return Response.json({ error: "visitor_auth_required" }, { status: 403 });
+        if (!registered && !body.create)
+          return Response.json({ error: "no_conversation" }, { status: 409 });
+        if (!registered) await this.state.storage.put("callVisitorSecret", body.visitorSecret);
+        if (!storedTenant) await this.state.storage.put("tenantId", body.tenantId);
+        if (!storedSession) await this.state.storage.put("sessionId", body.sessionId);
+        if (!storedSite) await this.state.storage.put("siteId", body.siteId || "default");
+      }
+      return Response.json({ ok: true, siteId: storedSite || body.siteId || "default" });
+    }
+
+    if (request.method === "POST" && url.pathname.endsWith("/media/append")) {
+      const body = (await request.json().catch(() => null)) as {
+        actor?: "visitor" | "operator";
+        media?: SessionMedia;
+        caption?: string;
+        visitorSecret?: string;
+      } | null;
+      const media = body?.media;
+      if (
+        !body?.actor ||
+        !media ||
+        !MEDIA_ID.test(media.id) ||
+        (media.kind !== "image" && media.kind !== "video") ||
+        typeof media.contentType !== "string" ||
+        typeof media.name !== "string" ||
+        !Number.isSafeInteger(media.size) ||
+        media.size <= 0 ||
+        media.size > (media.kind === "image" ? IMAGE_MAX_BYTES : VIDEO_MAX_BYTES) ||
+        typeof body.caption !== "string" ||
+        body.caption.length > 2000
+      )
+        return Response.json({ error: "invalid_media" }, { status: 400 });
+      if (
+        body.actor === "visitor" &&
+        (await this.state.storage.get<string>("callVisitorSecret")) !== body.visitorSecret
+      )
+        return Response.json({ error: "visitor_auth_required" }, { status: 403 });
+      const message: SessionMessage = {
+        role: body.actor,
+        text: body.caption.trim() || `Sent a ${media.kind}`,
+        ts: Date.now(),
+        media,
+      };
+      const result = await this.state.storage.transaction(async (tx) => {
+        const existing = await tx.get<SessionMessage>(`media:record:${media.id}`);
+        if (existing) return { created: false, message: existing };
+        const log = (await tx.get<RingMsg[]>("log")) ?? [];
+        log.push(message);
+        while (log.length > RING_MAX) log.shift();
+        await tx.put("log", log);
+        await tx.put(`media:record:${media.id}`, message);
+        return { created: true, message };
+      });
+      if (!result.created) return Response.json({ ok: true, ...result });
+      if (body.actor === "visitor") {
+        await this.setHandoffState("pending");
+        await this.markHumanInquiry();
+        if (await this.resolved()) await this.state.storage.put("resolved", false);
+        await this.state.storage.put("handoffDueAt", Date.now() + this.silenceMs());
+        await this.scheduleAlarm();
+        broadcast(this.state.getWebSockets("operator"), { type: "media", message });
+        broadcast(this.state.getWebSockets(), { type: "handoff", handoffState: "pending" });
+      } else {
+        await this.setHandoffState("operator");
+        await this.markHumanInquiry();
+        await this.state.storage.put("handoffDueAt", 0);
+        await this.scheduleAlarm();
+        broadcast(this.state.getWebSockets(), { type: "media", message });
+      }
+      return Response.json({ ok: true, ...result });
+    }
 
     if (request.method === "GET" && url.pathname.endsWith("/call/authority")) {
       const actor = request.headers.get("x-call-actor");

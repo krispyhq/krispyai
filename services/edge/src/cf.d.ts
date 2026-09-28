@@ -15,6 +15,30 @@ declare global {
     }): Promise<{ keys: { name: string }[]; list_complete: boolean; cursor?: string }>;
   }
 
+  interface R2StoredObject {
+    body: ReadableStream<Uint8Array>;
+    size: number;
+    range?: { offset: number; length: number };
+    customMetadata?: Record<string, string>;
+  }
+  interface R2Bucket {
+    head(key: string): Promise<Omit<R2StoredObject, "body"> | null>;
+    get(
+      key: string,
+      options?: { range?: { offset: number; length: number } },
+    ): Promise<R2StoredObject | null>;
+    put(
+      key: string,
+      body: ReadableStream<Uint8Array> | ArrayBuffer,
+      options?: {
+        onlyIf?: Headers;
+        httpMetadata?: { contentType?: string };
+        customMetadata?: Record<string, string>;
+      },
+    ): Promise<unknown>;
+    delete(key: string): Promise<void>;
+  }
+
   interface DurableObjectId {
     readonly name?: string;
   }

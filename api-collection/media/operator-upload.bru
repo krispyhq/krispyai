@@ -1,0 +1,29 @@
+meta {
+  name: Media - operator upload
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/operator/media
+  body: multipartForm
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{operatorToken}}
+}
+
+body:multipart-form {
+  tenantId: self
+  sessionId: {{sessionId}}
+  uploadId: {{uploadId}}
+  caption: Here is a short clip
+  file: @file(path/to/example.mp4)
+}
+
+docs {
+  Replace the local file path and use a fresh UUID. Operator bearer auth is
+  checked against the tenant's Cloud API identity; the server-only
+  x-tenant-sync-secret is an alternative. The conversation must already exist.
+}

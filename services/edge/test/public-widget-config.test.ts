@@ -284,6 +284,16 @@ test("widget config reports only attachment support the current tenant can deliv
     env,
   );
 
-  expect((await appOnly.json()).capabilities).toEqual({ attachments: false });
-  expect((await self.json()).capabilities).toEqual({ attachments: true });
+  expect((await appOnly.json()).capabilities).toEqual({
+    attachments: false,
+    media: false,
+    maxImageBytes: 10 * 1024 * 1024,
+    maxVideoBytes: 30 * 1024 * 1024,
+  });
+  expect((await self.json()).capabilities).toEqual({
+    attachments: true,
+    media: false,
+    maxImageBytes: 10 * 1024 * 1024,
+    maxVideoBytes: 30 * 1024 * 1024,
+  });
 });

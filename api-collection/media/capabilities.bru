@@ -1,0 +1,24 @@
+meta {
+  name: Media - capabilities
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/media/capabilities
+  auth: none
+}
+
+tests {
+  test("returns media limits", function() {
+    expect(res.status).to.equal(200);
+    expect(res.getBody()).to.have.property("available");
+    expect(res.getBody()).to.have.property("maxImageBytes");
+    expect(res.getBody()).to.have.property("maxVideoBytes");
+  });
+}
+
+docs {
+  Public, secret-free capability check. `available` reflects the private R2 binding.
+  The limits are 10 MiB for images and 30 MiB for short videos.
+}

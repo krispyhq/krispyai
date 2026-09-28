@@ -191,8 +191,10 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook" \
 Honest about the Telegram step: BotFather, the supergroup-with-Topics, and admin rights are a real five minutes of clicking — there's no way around a token if you want replies on your phone. Full walkthrough and architecture notes: [`services/edge/README.md`](./services/edge/README.md).
 
 Hosted Cloud can use the Buttr owner app without Telegram. In that mode the tenant's prompt,
-theme, forms, and human handoff still work; Telegram topic mirroring and screenshot forwarding
-stay off, and the widget suppresses the unavailable attachment path.
+theme, forms, and human handoff still work. When the optional private R2 binding is present,
+visitors and Buttr operators can exchange images and short videos in that conversation;
+both sides read the bytes only with their own session credentials. Hosted attachments expire
+after 180 days. Without R2 or Telegram, the widget suppresses attachment controls.
 
 The owner app's operator bearer is checked against the cloud API's server-resolved tenant,
 so verified teammates can share the owner's handoff inbox. Legacy `/me` responses without

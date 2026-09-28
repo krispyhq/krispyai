@@ -18,9 +18,30 @@ one Cloudflare Worker hosts all of these plus the `SessionDO`. CORS allow-origin
 | `POST` | `/api/contact`                   | `{ sessionId, tenantId?, name?, contact?, message? }` → `{ ok: true }` — legacy contact-capture shim (maps onto the lead fan-out)                                                                                                            |
 | `POST` | `/api/lead`                      | Configured forms send `{ tenantId?, sessionId, siteId?, formId, values, history, submissionId, visitorSecret }`. A matching visitor capability records labeled fields in the session before `{ ok: true, recorded: true, emailStatus: "sent" | "none" | "delayed" }`; email delay does not discard the operator record. Older clients without both new fields retain legacy email delivery. |
 | `GET`  | `/api/session/:id/ws?t=<tenant>` | WebSocket upgrade → `SessionDO`. `426` if not an upgrade. the visitor's live channel                                                                                                                                                         |
-| `GET`  | `/api/widget/config?t=<tenant>`  | → `{ capabilities: { attachments }, theme, ctas, forms, script, popups }` — the **public, secret-free** widget projection (whitelist only; no `persona` or form delivery routing)                                                            |
+| `GET`  | `/api/widget/config?t=<tenant>`  | → `{ capabilities: { attachments, media, maxImageBytes, maxVideoBytes }, theme, ctas, forms, script, popups }` — the **public, secret-free** widget projection (whitelist only; no `persona` or form delivery routing)                       |
 | `GET`  | `/api/usage?t=<tenant>`          | → `{ tenantId, usage: { ai, handoff, tokens }, plan, entitled, status, limits, withinLimits }`                                                                                                                                               |
 | `GET`  | `/health`                        | → `{ status: "ok", service: "edge" }`                                                                                                                                                                                                        |
+
+### Private image and video attachments
+
+`GET /api/media/capabilities` reports whether this Worker has a private R2 bucket and
+the 10 MiB image / 30 MiB video limits. Hosted Cloud widgets use
+`POST /api/media/visitor` with multipart `tenantId`, `sessionId`, the session-bound
+`visitorSecret`, a retry-stable UUID `uploadId`, optional `siteId` and `caption`, and
+`file`. Buttr operators use `POST /api/operator/media` with their bearer (or the
+server-only tenant sync secret) and the same tenant/session/id/caption/file fields.
+The operator route requires an existing conversation. Both routes verify the file
+signature rather than trusting its MIME label, persist one transcript message per
+upload ID, and broadcast it to the other side. Visitor media enters the human
+inquiry path. R2 is optional for self-hosts; without it these routes return 503.
+
+`GET` or `HEAD /api/media/:mediaId?t=<tenant>&s=<session>` streams private bytes or
+metadata. The visitor sends `x-visitor-secret`; the operator sends a bearer or the
+server-only tenant sync secret. Access is checked against that conversation before
+reading storage. GET accepts a single byte `Range` for videos and sends `206`.
+These are authenticated reads, not public R2 links. Hosted Krispy attachment objects
+under `media/` expire after 180 days; an expired file yields 404. Incomplete multipart
+uploads are aborted after seven days by the bucket's default rule.
 
 ### `POST /api/chat` gate
 
@@ -155,7 +176,8 @@ without enough evidence stays active rather than being archived speculatively.
 Known business questions stay with the AI. An explicit human request enters `pending` immediately
 without requiring a name, email, phone, or order reference. Only a business-configured form can
 collect details. Screenshot paste/drop is advertised only when `capabilities.attachments` is true;
-the current attachment transport remains Telegram-backed.
+Cloud installations use the private media route so images and videos appear in Buttr
+and the website chat. Self-hosts without an R2 binding retain the Telegram photo route.
 
 `history` is client-supplied context and may include the current visitor message as its final
 `user` entry (the browser widget sends it that way). When an empty session is handed off, the

@@ -1,0 +1,21 @@
+meta {
+  name: Media - private read
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/media/{{mediaId}}?t=self&s={{sessionId}}
+  auth: none
+}
+
+headers {
+  x-visitor-secret: {{visitorSecret}}
+}
+
+docs {
+  The visitor capability authorizes only its own conversation. Operators use
+  `Authorization: Bearer {{operatorToken}}` instead. No public bucket URL exists.
+  GET supports one Range header for video playback; HEAD returns metadata only.
+  A missing or expired attachment returns 404.
+}

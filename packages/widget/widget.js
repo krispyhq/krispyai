@@ -178,6 +178,21 @@
       /* quota/private mode — chat still works, just not persistent */
     }
   }
+  function persistMedia(message) {
+    savedMsgs.push({
+      c: "media",
+      m: message.media,
+      t: message.text,
+      r: message.role,
+      ts: message.ts,
+    });
+    if (savedMsgs.length > 60) savedMsgs = savedMsgs.slice(-60);
+    try {
+      localStorage.setItem(MSG_KEY, JSON.stringify(savedMsgs));
+    } catch {
+      /* the live conversation still works when storage is blocked */
+    }
+  }
   // Rebuild the AI context from the restored transcript (me→user, bot/op→assistant).
   for (var hi = Math.max(0, savedMsgs.length - 10); hi < savedMsgs.length; hi++) {
     var hm = savedMsgs[hi];
@@ -491,6 +506,8 @@
     ".att.on{display:flex}" +
     ".att .attthumb{width:40px;height:40px;object-fit:cover;border-radius:6px;" +
     "border:1px solid var(--k-border);flex:0 0 auto}" +
+    ".att .attvideo{display:none;width:40px;height:40px;align-items:center;justify-content:center;border-radius:8px;background:var(--k-muted);color:var(--k-espresso);font-size:20px;flex:0 0 auto}" +
+    ".att.video .attthumb{display:none}.att.video .attvideo{display:flex}" +
     ".att .attname{flex:1;min-width:0;font-size:12px;color:var(--k-muted-fg);" +
     "white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
     ".att .attx{background:none;border:0;cursor:pointer;color:var(--k-muted-fg);" +
@@ -498,6 +515,7 @@
     ".att .attx:hover{background:var(--k-muted);color:var(--k-espresso)}" +
     // A sent screenshot, in the visitor's own bubble.
     ".msg .shot{display:block;max-width:100%;border-radius:8px;margin:2px 0}" +
+    ".msg.kmedia{max-width:min(84%,290px);padding:7px;overflow:hidden}.msg.kmedia img,.msg.kmedia video{display:block;width:100%;max-height:280px;object-fit:contain;border-radius:12px;background:#191623}.msg.kmedia .kmedia-caption{padding:6px 7px 2px;font-size:13px;line-height:1.4}.msg.kmedia .kmedia-error{padding:12px;font-size:12px;color:var(--k-muted-fg)}" +
     // Drop target — the whole panel, so a dragged file has a big landing zone.
     ".panel.kdrop{outline:2px dashed var(--k-primary);outline-offset:-6px}" +
     ".kcall{display:none;margin:8px 12px;padding:13px;border-radius:16px;background:var(--k-card);border:1px solid var(--k-border);box-shadow:0 8px 20px rgba(36,33,46,.08);color:var(--k-espresso)}" +
@@ -701,6 +719,7 @@
     "}" +
     ".ft button:hover{background:var(--k-primary);box-shadow:0 9px 22px rgba(36,33,46,.14);filter:saturate(1.04);transform:translateY(-2px) scale(1.03)}" +
     ".ft button:active{transform:scale(.94)}" +
+    ".ft .media-pick{flex:0 0 40px;background:var(--k-muted);color:var(--k-espresso);font-size:22px;line-height:1}.ft .media-pick[hidden]{display:none}" +
     ".cap{max-width:92%;padding:14px;background:var(--k-card);border:0;border-radius:18px;box-shadow:0 10px 28px rgba(36,33,46,.08);gap:9px}" +
     ".cap>div:first-child{color:var(--k-espresso)!important;font-size:14px!important;font-weight:720!important;letter-spacing:-.01em}" +
     ".cap input,.cap textarea,.cap select{width:100%;padding:10px 11px;border:0;border-radius:12px;background:var(--k-muted);color:var(--k-espresso);outline:none}" +
@@ -786,11 +805,13 @@
     '<div class="kcall" role="status" aria-live="polite"><button type="button" class="kcall-expand" aria-label="Call audio settings" aria-expanded="false"><span class="kcall-title"></span><span class="kcall-note"></span></button><div class="kcall-devices" hidden></div><div class="kcall-controls"></div><div class="kcall-audio"></div></div>' +
     // Composer: text input + paper-plane send button
     // Pending-attachment tray — empty and display:none until something is pasted.
-    '<div class="att"><img class="attthumb" alt="">' +
+    '<div class="att"><img class="attthumb" alt=""><span class="attvideo" aria-hidden="true">▶</span>' +
     '<span class="attname"></span>' +
     '<button type="button" class="attx" aria-label="Remove attachment">&times;</button>' +
     "</div>" +
     '<form class="ft">' +
+    '<input class="media-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>' +
+    '<button type="button" class="media-pick" aria-label="Attach image or video" hidden>+</button>' +
     '<textarea class="in" rows="1" placeholder="Type a message…" autocomplete="off"></textarea>' +
     '<button type="submit" aria-label="Send message">' +
     '<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">' +
@@ -822,7 +843,7 @@
     log = $(".log"),
     input = $(".in"),
     sendForm = $(".ft"),
-    sendBtn = sendForm.querySelector("button");
+    sendBtn = sendForm.querySelector('button[type="submit"]');
   var avatarEl = $(".av");
   var callEl = $(".kcall"),
     callExpand = $(".kcall-expand"),
@@ -875,6 +896,9 @@
   var ctaArmed = false; // CTAs arm once, on the first visitor message
   var repliedOnce = false; // first AI reply arms the afterReplyMs form fallback
   var attachmentsEnabled = true; // old edges omit capabilities; preserve their behavior
+  var cloudMediaEnabled = false;
+  var maxImageBytes = 5 * 1024 * 1024;
+  var maxVideoBytes = 0;
   var ctaRow = null; // lazily-created CTA-row card inside .log
   var handoffChoices = null; // one contextual choice card while a teammate is pending
   var handoffChoiceKey = "";
@@ -1026,6 +1050,17 @@
   function applyBoot(c) {
     if (!c) return;
     if (c.capabilities && c.capabilities.attachments === false) attachmentsEnabled = false;
+    cloudMediaEnabled = !!(c.capabilities && c.capabilities.media === true);
+    if (cloudMediaEnabled) {
+      maxImageBytes = Number(c.capabilities.maxImageBytes) || maxImageBytes;
+      maxVideoBytes = Number(c.capabilities.maxVideoBytes) || 30 * 1024 * 1024;
+    }
+    var mediaPick = $(".media-pick");
+    var mediaInput = $(".media-input");
+    mediaPick.hidden = !attachmentsEnabled;
+    mediaInput.accept = cloudMediaEnabled
+      ? "image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime,video/webm"
+      : "image/png,image/jpeg,image/webp,image/gif";
     if (Array.isArray(c.ctas)) ctas = c.ctas;
     if (Array.isArray(c.forms)) forms = c.forms;
     if (c.script) {
@@ -1419,6 +1454,104 @@
     return d;
   }
 
+  var mediaObjectUrls = new Set();
+  window.addEventListener("pagehide", function () {
+    mediaObjectUrls.forEach(function (url) {
+      URL.revokeObjectURL(url);
+    });
+    mediaObjectUrls.clear();
+  });
+
+  function addMediaBubble(message, localUrl) {
+    var media = message && message.media;
+    if (
+      !media ||
+      !/^[0-9a-f-]{36}$/i.test(media.id || "") ||
+      (media.kind !== "image" && media.kind !== "video")
+    )
+      return null;
+    if (
+      Array.from(log.children).some(function (node) {
+        return node.dataset.krispyMedia === media.id;
+      })
+    )
+      return null;
+    var d = document.createElement("div");
+    d.className = "msg kmedia " + (message.role === "visitor" ? "me" : "op");
+    d.dataset.krispyMedia = media.id;
+    d.dataset.krispyAt = String(message.ts || Date.now());
+    d.dataset.krispyText = String(message.text || "");
+    var preview = document.createElement(media.kind === "video" ? "video" : "img");
+    if (media.kind === "video") {
+      preview.controls = true;
+      preview.playsInline = true;
+      preview.preload = "metadata";
+    } else preview.alt = media.name || "Shared image";
+    d.appendChild(preview);
+    var caption = document.createElement("div");
+    caption.className = "kmedia-caption";
+    caption.textContent = String(message.text || (media.kind === "video" ? "Video" : "Image"));
+    d.appendChild(caption);
+    log.appendChild(d);
+    log.scrollTop = log.scrollHeight;
+    if (!restoring) persistMedia(message);
+    if (localUrl) {
+      mediaObjectUrls.add(localUrl);
+      preview.src = localUrl;
+      return d;
+    }
+    function load() {
+      if (!visitorSecret) return;
+      var url =
+        cfg.api +
+        "/api/media/" +
+        encodeURIComponent(media.id) +
+        "?t=" +
+        encodeURIComponent(cfg.tenant) +
+        "&s=" +
+        encodeURIComponent(sessionId);
+      fetch(url, { headers: { "x-visitor-secret": visitorSecret } })
+        .then(function (response) {
+          if (!response.ok) throw new Error(String(response.status));
+          return response.blob();
+        })
+        .then(function (blob) {
+          if (d.isConnected) {
+            var objectUrl = URL.createObjectURL(blob);
+            mediaObjectUrls.add(objectUrl);
+            preview.src = objectUrl;
+          }
+        })
+        .catch(function (failure) {
+          var error = document.createElement("div");
+          error.className = "kmedia-error";
+          error.textContent =
+            String(failure && failure.message) === "404"
+              ? "This attachment has expired or is unavailable."
+              : "Couldn't load this attachment. Try again later.";
+          d.insertBefore(error, caption);
+        });
+    }
+    if (media.kind === "video") {
+      var play = document.createElement("button");
+      play.type = "button";
+      play.textContent = "Load video";
+      play.addEventListener("click", function () {
+        play.remove();
+        load();
+      });
+      d.insertBefore(play, preview);
+    } else if ("IntersectionObserver" in window) {
+      var observer = new IntersectionObserver(function (entries) {
+        if (!entries[0].isIntersecting) return;
+        observer.disconnect();
+        load();
+      });
+      observer.observe(d);
+    } else load();
+    return d;
+  }
+
   // Call receipts are durable server records, replayed separately from the
   // bounded chat ring. Revisions update one card per call instead of duplicating
   // it when the socket reconnects. Never infer duration from invitation time.
@@ -1543,6 +1676,10 @@
         renderOperatorAction(message.action, message.ts);
         return;
       }
+      if (message.media) {
+        addMediaBubble(message);
+        return;
+      }
       var cls = message.role === "visitor" ? "me" : message.role === "operator" ? "op" : "bot";
       var text = String(message.text || "");
       var key = cls + "\u0000" + text;
@@ -1555,7 +1692,9 @@
       if (message.action) return;
       history.push({
         role: message.role === "visitor" ? "user" : "assistant",
-        content: String(message.text || ""),
+        content: message.media
+          ? String(message.text || "") + " (shared " + message.media.kind + ")"
+          : String(message.text || ""),
       });
     });
   }
@@ -1650,6 +1789,8 @@
         for (var ri = 0; ri < savedMsgs.length; ri++) {
           var rm = savedMsgs[ri];
           if (rm && rm.c === "action" && rm.a) renderOperatorAction(rm.a, rm.ts);
+          else if (rm && rm.c === "media" && rm.m)
+            addMediaBubble({ media: rm.m, text: rm.t, role: rm.r, ts: rm.ts });
           else if (rm && rm.c && rm.t != null) add(rm.c, rm.t, rm.ts);
         }
         restoring = false;
@@ -2534,6 +2675,11 @@
           markHuman();
           renderOperatorAction(ev.action, ev.ts);
           notifyInbound();
+        } else if (ev.type === "media") {
+          if (ev.message && ev.message.media) {
+            addMediaBubble(ev.message);
+            if (ev.message.role === "operator") notifyInbound();
+          }
         } else if (ev.type === "handoff") {
           noteHandoffOffer(handoffState, ev.handoffState || "pending");
           handoffState = ev.handoffState || "pending";
@@ -3148,30 +3294,34 @@
     else sendForm.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
   });
 
-  // ── pasted screenshots ──────────────────────────────────────────────────────
-  // Support is the one conversation where a picture IS the message: a broken
-  // layout, an error dialog, a line on a statement. Ctrl/Cmd+V and drag-and-drop
-  // both land here.
-  //
-  // The image goes to the operator's Telegram topic (POST /api/attachment), which
-  // is where the person who can act on it already is. It is NOT stored by Krispy —
-  // see the handler for why that is a choice and not an omission — so the visitor
-  // sees their own screenshot from a local object URL for the life of the page.
+  // ── visitor media ───────────────────────────────────────────────────────────
+  // Cloud tenants use private R2-backed image/video messages that appear in
+  // Buttr. Self-hosted Telegram installations retain their old photo path.
   var attEl = $(".att"),
     attThumb = $(".attthumb"),
-    attName = $(".attname");
-  var pending = null; // { blob, url, name }
+    attName = $(".attname"),
+    mediaInput = $(".media-input"),
+    mediaPick = $(".media-pick");
+  var pending = null; // { blob, url, name, kind }
   var ATT_MAX_EDGE = 1600; // longest edge after downscaling
-  var ATT_MAX_BYTES = 5 * 1024 * 1024; // must match the Worker's own cap
 
-  function clearPending() {
-    if (pending && pending.url) URL.revokeObjectURL(pending.url);
+  function clearPending(keepUrl) {
+    if (!keepUrl && pending && pending.url) URL.revokeObjectURL(pending.url);
     pending = null;
-    attEl.classList.remove("on");
+    attEl.classList.remove("on", "video");
     attThumb.removeAttribute("src");
     attName.textContent = "";
   }
-  $(".attx").addEventListener("click", clearPending);
+  $(".attx").addEventListener("click", function () {
+    clearPending(false);
+  });
+  mediaPick.addEventListener("click", function () {
+    mediaInput.click();
+  });
+  mediaInput.addEventListener("change", function () {
+    if (mediaInput.files && mediaInput.files[0]) attach(mediaInput.files[0]);
+    mediaInput.value = "";
+  });
 
   /**
    * Shrink before sending. A modern screenshot is 4-8MB of PNG and none of that
@@ -3217,18 +3367,32 @@
 
   function attach(file) {
     if (!attachmentsEnabled) return;
-    if (!file || file.type.indexOf("image/") !== 0) return;
+    if (!file) return;
+    var kind = file.type.indexOf("image/") === 0 ? "image" : "video";
+    if (kind === "video" && (!cloudMediaEnabled || file.type.indexOf("video/") !== 0)) return;
+    if (kind === "image" && file.type.indexOf("image/") !== 0) return;
     // `void`: deliberately fire-and-forget. shrink() resolves on every path
     // (including its own failures, which fall back to the untouched file), so
     // there is no rejection to handle and nothing for the caller to await.
-    void shrink(file).then(function (blob) {
-      if (blob.size > ATT_MAX_BYTES) {
-        add("sys", "That image is too large to send. Try a screenshot of just the problem area.");
+    void (kind === "image" ? shrink(file) : Promise.resolve(file)).then(function (blob) {
+      var maxBytes = kind === "image" ? maxImageBytes : maxVideoBytes;
+      if (blob.size > maxBytes) {
+        add("sys", "That " + kind + " is too large to send. Try a smaller file.");
         return;
       }
-      clearPending();
-      pending = { blob: blob, url: URL.createObjectURL(blob), name: file.name || "screenshot" };
-      attThumb.src = pending.url;
+      clearPending(false);
+      pending = {
+        blob: blob,
+        url: URL.createObjectURL(blob),
+        name:
+          blob.type === "image/jpeg" && file.type !== "image/jpeg"
+            ? (file.name || "image").replace(/\.[^.]+$/, "") + ".jpg"
+            : file.name || kind,
+        kind: kind,
+        uploadId: crypto.randomUUID ? crypto.randomUUID() : null,
+      };
+      if (kind === "video") attEl.classList.add("video");
+      else attThumb.src = pending.url;
       attName.textContent = pending.name;
       attEl.classList.add("on");
       input.focus();
@@ -3244,7 +3408,11 @@
     var file = dt.files && dt.files[0];
     if (!file && dt.items) {
       for (var i = 0; i < dt.items.length; i++)
-        if (dt.items[i].kind === "file" && dt.items[i].type.indexOf("image/") === 0) {
+        if (
+          dt.items[i].kind === "file" &&
+          (dt.items[i].type.indexOf("image/") === 0 ||
+            (cloudMediaEnabled && dt.items[i].type.indexOf("video/") === 0))
+        ) {
           file = dt.items[i].getAsFile();
           break;
         }
@@ -3286,8 +3454,72 @@
     log.scrollTop = log.scrollHeight;
   }
 
+  var mediaUploadInFlight = false;
   function uploadPending(caption) {
     var att = pending;
+    if (!att) return Promise.resolve();
+    if (cloudMediaEnabled) {
+      if (!visitorSecret || !crypto.randomUUID) {
+        add("sys", "Couldn't start a secure upload in this browser.");
+        return Promise.resolve();
+      }
+      mediaUploadInFlight = true;
+      sendBtn.disabled = true;
+      mediaPick.disabled = true;
+      attName.textContent = "Sending " + att.kind + "…";
+      var cloudForm = new FormData();
+      cloudForm.set("tenantId", cfg.tenant);
+      cloudForm.set("sessionId", sessionId);
+      cloudForm.set("visitorSecret", visitorSecret);
+      cloudForm.set("uploadId", att.uploadId);
+      if (cfg.site) cloudForm.set("siteId", cfg.site);
+      cloudForm.set("caption", caption);
+      cloudForm.set("file", att.blob, att.name);
+      return fetch(cfg.api + "/api/media/visitor", { method: "POST", body: cloudForm })
+        .then(function (response) {
+          return response.json().then(function (result) {
+            if (!response.ok) throw new Error(result.error || String(response.status));
+            return result;
+          });
+        })
+        .then(function (result) {
+          clearPending(true);
+          addMediaBubble(
+            result.message || {
+              role: "visitor",
+              text: caption || "Sent a " + att.kind,
+              ts: Date.now(),
+              media: result.media,
+            },
+            att.url,
+          );
+          history.push({
+            role: "user",
+            content: (caption || "Sent a " + att.kind) + " (shared " + att.kind + ")",
+          });
+          handoffState = "pending";
+          handedOff = true;
+          markWaiting();
+          refreshHandoffChoices();
+          if (visitorSecret && !callVisitorConnected) {
+            callVisitorConnected = true;
+            if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+          }
+        })
+        .catch(function () {
+          attName.textContent = att.name;
+          if (caption && !input.value) {
+            input.value = caption;
+            autosize();
+          }
+          add("sys", "That " + att.kind + " didn't go through. Tap send to try again.");
+        })
+        .finally(function () {
+          mediaUploadInFlight = false;
+          sendBtn.disabled = false;
+          mediaPick.disabled = false;
+        });
+    }
     pending = null; // detach first: the tray clears immediately, the upload is in flight
     attEl.classList.remove("on");
     attThumb.removeAttribute("src");
@@ -3310,6 +3542,7 @@
 
   sendForm.addEventListener("submit", function (e) {
     e.preventDefault();
+    if (mediaUploadInFlight) return;
     var text = input.value.trim();
     var hasShot = !!pending;
     if (!text && !hasShot) return;
@@ -3317,6 +3550,10 @@
     // Back to one line, on the same transition that grew it.
     autosize();
     if (hasShot) {
+      if (cloudMediaEnabled) {
+        void uploadPending(text);
+        return;
+      }
       // `void`: the upload runs alongside the message rather than blocking it.
       // uploadPending() owns its own failure — it tells the visitor in the log —
       // so awaiting it here would only delay the text for no gain.

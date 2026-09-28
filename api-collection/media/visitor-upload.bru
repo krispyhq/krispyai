@@ -1,0 +1,28 @@
+meta {
+  name: Media - visitor upload
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/media/visitor
+  body: multipartForm
+  auth: none
+}
+
+body:multipart-form {
+  tenantId: self
+  sessionId: {{sessionId}}
+  visitorSecret: {{visitorSecret}}
+  uploadId: {{uploadId}}
+  caption: Here is the screenshot
+  file: @file(path/to/example.jpg)
+}
+
+docs {
+  Replace the local example path, and supply a fresh UUID in `uploadId`. Reuse
+  that same UUID when retrying the same file. The 43-character visitorSecret is
+  bound to this tenant, site, and session; for a non-default site add `siteId`.
+  MIME and file signatures are validated. Media is private and retained 180 days
+  in hosted Krispy buckets; the self-host's bucket policy controls retention.
+}
