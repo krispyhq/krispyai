@@ -291,7 +291,7 @@ export class TenantCallCoordinatorDO {
         tenantId: state.tenantId,
         callId: call.callId,
         deviceInstanceId: event.deviceInstanceId,
-        stopId: event.key,
+        actionEventId: event.key,
         revision: event.revision,
       });
       return response.ok;

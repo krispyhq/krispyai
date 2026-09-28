@@ -12,6 +12,7 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Fixed
 
+- Edge: stop-offer outbox requests use the Cloud API's `actionEventId` field, allowing device cleanup events to be acknowledged.
 - Edge: successful private media reads include CORS headers so guest browsers can load operator-sent attachments.
 - Widget: sent image and video bubbles no longer collapse to a thin strip when their content is taller than the visible chat log.
 

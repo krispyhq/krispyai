@@ -266,6 +266,13 @@ test("two native offers survive unrelated revisions; first winner invalidates th
     callId: string;
     expiresAt: number;
   }> = [];
+  const stopped: Array<{
+    tenantId: string;
+    callId: string;
+    deviceInstanceId: string;
+    actionEventId: string;
+    revision: number;
+  }> = [];
   const invalidations: Array<{ revision: number; deviceInstanceIds: string[] }> = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -294,7 +301,23 @@ test("two native offers survive unrelated revisions; first winner invalidates th
       delivered.push(payload);
       return Response.json({ delivered: true });
     }
-    if (url.endsWith("/stop-offer")) return Response.json({ stopped: true });
+    if (url.endsWith("/stop-offer")) {
+      const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      // Match the Cloud API StopRequest contract. A mismatched field name must
+      // fail like the production endpoint so the outbox remains retryable.
+      expect(payload).toEqual(
+        expect.objectContaining({
+          tenantId,
+          callId: expect.any(String),
+          deviceInstanceId: expect.any(String),
+          actionEventId: expect.any(String),
+          revision: expect.any(Number),
+        }),
+      );
+      expect(payload).not.toHaveProperty("stopId");
+      stopped.push(payload as (typeof stopped)[number]);
+      return Response.json({ stopped: true });
+    }
     return Response.json({ error: "unexpected" }, { status: 500 });
   }) as typeof fetch;
   try {
@@ -323,6 +346,14 @@ test("two native offers survive unrelated revisions; first winner invalidates th
       action: "accept",
     });
     expect(accepted.status).toBe(200);
+    expect(stopped).toHaveLength(1);
+    expect(stopped[0]).toEqual({
+      tenantId,
+      callId,
+      deviceInstanceId: otherDevice,
+      actionEventId: `${callId}:${stopped[0]!.revision}:stop_offer:${otherDevice}`,
+      revision: stopped[0]!.revision,
+    });
     expect(invalidations.at(-1)?.deviceInstanceIds).toEqual([deviceInstanceId, otherDevice]);
     const loser = await f.internal("offer-validity", {
       callId,
