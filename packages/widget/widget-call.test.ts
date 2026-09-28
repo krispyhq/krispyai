@@ -20,11 +20,14 @@ type Element = {
   isConnected?: boolean;
   style?: { display: string };
   focus: () => void;
+  offsetParent?: object;
+  querySelectorAll: (selector: string) => Element[];
+  keydown: (event: { key: string; shiftKey: boolean; preventDefault: () => void }) => void;
   insertBefore: (child: Element, before: Element) => void;
   click: () => void;
   change: () => void;
   setAttribute: (name: string, value: string) => void;
-  addEventListener: (name: string, fn: () => void) => void;
+  addEventListener: (name: string, fn: (event: unknown) => void) => void;
   classList: {
     add: (name: string) => void;
     remove: (name: string) => void;
@@ -34,18 +37,21 @@ type Element = {
   appendChild: (child: Element) => void;
 };
 function element(): Element {
-  const listeners = new Map<string, () => void>();
+  const listeners = new Map<string, (event: unknown) => void>();
   return {
     textContent: "",
     disabled: false,
     hidden: false,
     value: "",
     attributes: {},
-    click: () => listeners.get("click")?.(),
+    click: () => listeners.get("click")?.(undefined),
+    keydown: (event) => listeners.get("keydown")?.(event),
     focus: () => {},
+    offsetParent: {},
+    querySelectorAll: () => [],
     isConnected: true,
     style: { display: "" },
-    change: () => listeners.get("change")?.(),
+    change: () => listeners.get("change")?.(undefined),
     setAttribute(name, value) {
       this.attributes[name] = value;
     },
@@ -125,11 +131,26 @@ function harness(
     string,
     (event: { isTrusted: boolean; composedPath?: () => object[] }) => void
   >();
-  const host = {};
+  const host = element();
+  const root: { activeElement: Element | null } = { activeElement: null };
+  function trackedElement() {
+    const control = element();
+    control.focus = () => {
+      root.activeElement = control;
+    };
+    return control;
+  }
+  callOpen.focus = () => {
+    root.activeElement = callOpen;
+  };
+  callBack.focus = () => {
+    root.activeElement = callBack;
+  };
+  callScreen.querySelectorAll = () => [callBack, ...callScreenTray.children];
   const document = {
     visibilityState: "visible",
-    activeElement: element(),
-    createElement: (_tag: string) => element(),
+    activeElement: host,
+    createElement: (_tag: string) => trackedElement(),
     head: { appendChild: (script: Element) => queueMicrotask(() => script.onerror?.()) },
     addEventListener(
       name: string,
@@ -261,6 +282,7 @@ function harness(
     "popEl",
     "panel",
     "$",
+    "root",
     "document",
     "window",
     "fetch",
@@ -300,6 +322,7 @@ function harness(
     popEl,
     panel,
     $,
+    root,
     document,
     window,
     fetch,
@@ -324,6 +347,7 @@ function harness(
     callScreenTray,
     callOpen,
     callBack,
+    root,
     click,
     grant,
     connect,
@@ -355,10 +379,26 @@ describe("visitor audio call controller", () => {
       requestedBy: "visitor",
       expiresAt: Date.now() + 60000,
     });
+    app.callOpen.focus();
     app.callOpen.click();
+    expect(app.document.activeElement).not.toBe(app.callBack);
+    expect(app.root.activeElement).toBe(app.callBack);
     expect(app.callScreen.hidden).toBe(false);
     expect(app.callScreenStatus.textContent).toBe("Calling…");
+    const lastAction = app.callScreenTray.children.at(-1)!;
+    lastAction.focus();
+    let tabWrapped = false;
+    app.callScreen.keydown({
+      key: "Tab",
+      shiftKey: false,
+      preventDefault: () => {
+        tabWrapped = true;
+      },
+    });
+    expect(tabWrapped).toBe(true);
+    expect(app.root.activeElement).toBe(app.callBack);
     app.callBack.click();
+    expect(app.root.activeElement).toBe(app.callOpen);
     expect(app.callScreen.hidden).toBe(true);
     expect(app.requests.filter((request) => request.action === "end")).toHaveLength(0);
     app.renderCall(accepted);

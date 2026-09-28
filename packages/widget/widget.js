@@ -2139,7 +2139,7 @@
     launcher.inert = callScreenOpen;
     popEl.inert = callScreenOpen;
     if (callScreenOpen) {
-      callScreenReturnFocus = document.activeElement;
+      callScreenReturnFocus = root.activeElement;
       if (callSettingsOpen) callScreen.insertBefore(callDevices, callScreenTray);
       renderCallScreen();
       $(".kcall-back").focus();
@@ -2167,10 +2167,10 @@
     if (!focusable.length) return;
     var first = focusable[0],
       last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
+    if (event.shiftKey && root.activeElement === first) {
       event.preventDefault();
       last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
+    } else if (!event.shiftKey && root.activeElement === last) {
       event.preventDefault();
       first.focus();
     }
@@ -2218,10 +2218,7 @@
               ? "Connected"
               : "Connecting…";
     callScreenNote.textContent = callNote.textContent;
-    var activeAction = Array.prototype.indexOf.call(
-      callScreenTray.children,
-      document.activeElement,
-    );
+    var activeAction = Array.prototype.indexOf.call(callScreenTray.children, root.activeElement);
     callScreenTray.replaceChildren();
     if (callState.status === "accepted") {
       if (callRoom)
