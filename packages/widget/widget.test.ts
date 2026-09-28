@@ -102,6 +102,12 @@ describe("widget visual contract", () => {
     expect(source).toContain("@media (pointer:coarse){.hd .mute,.hd .x{width:44px;height:44px}}");
   });
 
+  test("media bubbles keep their full height inside the scrollable message log", () => {
+    expect(source).toContain(
+      ".msg.kmedia{flex-shrink:0;max-width:min(84%,290px);padding:7px;overflow:hidden}",
+    );
+  });
+
   test("boot config revalidates without creating one-off cache-buster URLs", () => {
     const start = source.indexOf('"/api/widget/config?t="');
     const end = source.indexOf(".then(function (r)", start);

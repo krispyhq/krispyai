@@ -10,6 +10,10 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+### Fixed
+
+- Widget: sent image and video bubbles no longer collapse to a thin strip when their content is taller than the visible chat log.
+
 ### Added
 
 - Expandable full-screen guest audio calls with identity, live status, mute, supported

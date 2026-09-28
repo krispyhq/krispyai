@@ -515,7 +515,7 @@
     ".att .attx:hover{background:var(--k-muted);color:var(--k-espresso)}" +
     // A sent screenshot, in the visitor's own bubble.
     ".msg .shot{display:block;max-width:100%;border-radius:8px;margin:2px 0}" +
-    ".msg.kmedia{max-width:min(84%,290px);padding:7px;overflow:hidden}.msg.kmedia img,.msg.kmedia video{display:block;width:100%;max-height:280px;object-fit:contain;border-radius:12px;background:#191623}.msg.kmedia .kmedia-caption{padding:6px 7px 2px;font-size:13px;line-height:1.4}.msg.kmedia .kmedia-error{padding:12px;font-size:12px;color:var(--k-muted-fg)}" +
+    ".msg.kmedia{flex-shrink:0;max-width:min(84%,290px);padding:7px;overflow:hidden}.msg.kmedia img,.msg.kmedia video{display:block;width:100%;max-height:280px;object-fit:contain;border-radius:12px;background:#191623}.msg.kmedia .kmedia-caption{padding:6px 7px 2px;font-size:13px;line-height:1.4}.msg.kmedia .kmedia-error{padding:12px;font-size:12px;color:var(--k-muted-fg)}" +
     // Drop target — the whole panel, so a dragged file has a big landing zone.
     ".panel.kdrop{outline:2px dashed var(--k-primary);outline-offset:-6px}" +
     ".kcall{display:none;margin:8px 12px;padding:13px;border-radius:16px;background:var(--k-card);border:1px solid var(--k-border);box-shadow:0 8px 20px rgba(36,33,46,.08);color:var(--k-espresso)}" +
