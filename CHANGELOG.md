@@ -12,6 +12,7 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Fixed
 
+- Edge: successful private media reads include CORS headers so guest browsers can load operator-sent attachments.
 - Widget: sent image and video bubbles no longer collapse to a thin strip when their content is taller than the visible chat log.
 
 ### Added

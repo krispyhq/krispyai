@@ -103,10 +103,22 @@ test("visitor image is private, durable, idempotent, and range-readable", async 
   expect((await h.request(path, { headers: { "x-visitor-secret": "x".repeat(43) } })).status).toBe(
     403,
   );
+  const guestHead = await h.request(path, {
+    method: "HEAD",
+    headers: { "x-visitor-secret": secret, Origin: "https://guest.example.test" },
+  });
+  expect(guestHead.status).toBe(200);
+  expect(guestHead.headers.get("access-control-allow-origin")).toBe("*");
+  expect(guestHead.headers.get("content-length")).toBe("4");
   const media = await h.request(path, {
-    headers: { "x-visitor-secret": secret, Range: "bytes=1-2" },
+    headers: {
+      "x-visitor-secret": secret,
+      Range: "bytes=1-2",
+      Origin: "https://guest.example.test",
+    },
   });
   expect(media.status).toBe(206);
+  expect(media.headers.get("access-control-allow-origin")).toBe("*");
   expect(media.headers.get("Content-Range")).toBe("bytes 1-2/4");
   expect([...new Uint8Array(await media.arrayBuffer())]).toEqual([0xd8, 0xff]);
   const operator = await h.request(path, {

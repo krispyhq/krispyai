@@ -1149,6 +1149,7 @@ async function handleMediaRead(request: Request, env: Env, mediaId: string): Pro
       headers: { "Content-Range": `bytes */${head.size}`, "Cache-Control": "private, no-store" },
     });
   const headers = new Headers({
+    ...cors(env),
     "Content-Type": head.customMetadata?.contentType || "application/octet-stream",
     "Content-Disposition": "inline",
     "Content-Length": String(range ? range.length : head.size),
