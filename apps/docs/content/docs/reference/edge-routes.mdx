@@ -113,7 +113,7 @@ peers active simultaneously before connection time is recorded. A signed
 or older events cannot reopen a terminal call. Unverified late joins retain an
 approximate duration rather than claiming exact simultaneous media.
 
-Cloud-only `POST /api/internal/call-coordinator/{availability,start,action,status,grant,revoke-device,offer-validity}`
+Cloud-only `POST /api/internal/call-coordinator/{availability,start,action,status,grant,revoke-device,device-cleanup-status,offer-validity}`
 requires `x-tenant-sync-secret`. Cloud supplies server-resolved `tenantId`,
 `operatorId`, and `deviceInstanceId`; the Worker never trusts a browser bearer
 for this surface. `availability` returns `{canInvite,reason}`. `start` and
@@ -121,6 +121,8 @@ for this surface. `availability` returns `{canInvite,reason}`. `start` and
 returns the accepted winner's room token. `revoke-device` returns
 `202 {cleanupConfirmed:false}` until old offers and media are closed, then
 `200 {cleanupConfirmed:true}` for the same `rebind:<jobId>` action ID.
+`device-cleanup-status` is read-only and returns per-device offer and active-call
+counts plus pending offer-outbox counts, without exposing call or device IDs.
 `offer-validity` checks the exact per-device offer, not a global revision.
 
 ### Operator bearer authorization

@@ -268,7 +268,7 @@ async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promis
     if (request.method === "POST" && path === "/api/call/presence")
       return handleCallPresence(request, env);
     const nativeInternal = path.match(
-      /^\/api\/internal\/call-coordinator\/(availability|start|action|status|grant|revoke-device|offer-validity)$/,
+      /^\/api\/internal\/call-coordinator\/(availability|start|action|status|grant|revoke-device|device-cleanup-status|offer-validity)$/,
     );
     if (request.method === "POST" && nativeInternal)
       return handleInternalCoordinatorCall(request, env, nativeInternal[1]!);

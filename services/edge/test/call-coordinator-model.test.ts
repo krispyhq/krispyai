@@ -3,6 +3,7 @@ import {
   acknowledgeCallOutbox,
   applyCallCommand,
   createCoordinatorState,
+  deviceCleanupStatus,
   expireCoordinatedCalls,
   operatorMayReceiveGrant,
   offerStillValid,
@@ -11,6 +12,7 @@ import {
   waitingCalls,
   type CallCommand,
   type CoordinatorState,
+  type CoordinatedCall,
   type VerifiedCallOperator,
 } from "../src/call-coordinator-model";
 
@@ -56,6 +58,93 @@ function accept(
 ) {
   return run(state, { type: "accept_operator", callId, eventId, now, operator: who });
 }
+
+test("device cleanup status counts only matching offers, active calls, and offer outbox entries", () => {
+  const deviceInstanceId = "target-phone";
+  const otherDeviceInstanceId = "other-phone";
+  const state = createCoordinatorState("tenant", { maxPending: 4 });
+  const call = (
+    callId: string,
+    status: CoordinatedCall["status"],
+    device: string,
+  ): CoordinatedCall => ({
+    callId,
+    sessionId: `private-session-${callId}`,
+    requestedBy: "operator",
+    status,
+    createdAt: 1,
+    expiresAt: 100,
+    revision: 1,
+    ...(status === "ringing"
+      ? { outgoingBy: { operatorId: "operator", deviceInstanceId: device } }
+      : { winner: { operatorId: "operator", deviceInstanceId: device } }),
+  });
+  state.calls = {
+    ringing: call("ringing-call", "ringing", deviceInstanceId),
+    accepted: call("accepted-call", "accepted", deviceInstanceId),
+    ending: call("ending-call", "ending", deviceInstanceId),
+    unrelated: call("other-call", "accepted", otherDeviceInstanceId),
+  };
+  state.offers[deviceInstanceId] = {
+    callId: "offered-call",
+    operatorId: "operator",
+    deviceInstanceId,
+  };
+  state.outbox = {
+    offer: {
+      key: "private-offer-key",
+      kind: "offer",
+      callId: "offered-call",
+      revision: 1,
+      deviceInstanceId,
+    },
+    stop: {
+      key: "private-stop-key",
+      kind: "stop_offer",
+      callId: "offered-call",
+      revision: 2,
+      deviceInstanceId,
+    },
+    status: {
+      key: "private-status-key",
+      kind: "status",
+      callId: "accepted-call",
+      revision: 1,
+      deviceInstanceId,
+    },
+    otherOffer: {
+      key: "other-offer-key",
+      kind: "offer",
+      callId: "other-call",
+      revision: 1,
+      deviceInstanceId: otherDeviceInstanceId,
+    },
+  };
+  const before = JSON.stringify(state);
+
+  expect(deviceCleanupStatus(state, deviceInstanceId)).toEqual({
+    cleanupConfirmed: false,
+    offers: { pending: true, count: 1 },
+    activeCallsByStatus: { ringing: 1, accepted: 1, ending: 1 },
+    pendingOfferOutbox: {
+      pending: true,
+      count: 2,
+      byKind: { offer: 1, stop_offer: 1 },
+    },
+  });
+  expect(deviceCleanupStatus(state, "clean-phone")).toEqual({
+    cleanupConfirmed: true,
+    offers: { pending: false, count: 0 },
+    activeCallsByStatus: { ringing: 0, accepted: 0, ending: 0 },
+    pendingOfferOutbox: {
+      pending: false,
+      count: 0,
+      byKind: { offer: 0, stop_offer: 0 },
+    },
+  });
+  expect(deviceCleanupStatus(null, deviceInstanceId).cleanupConfirmed).toBe(true);
+  expect(JSON.stringify(state)).toBe(before);
+});
 
 test("two simultaneous visitor requests reserve separate operators and bound the queue", () => {
   let state = createCoordinatorState("tenant", { maxPending: 2 });

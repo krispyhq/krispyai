@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import worker from "../src/index";
 import { SessionDO } from "../src/session-do";
 import { TenantCallCoordinatorDO } from "../src/tenant-call-do";
+import { COORDINATOR_STATE_KEY } from "../src/call-coordinator-adapter";
+import { createCoordinatorState, type CoordinatedCall } from "../src/call-coordinator-model";
 import { DO_INTERNAL_HEADER, doInternalSecret } from "../src/store";
 import type { Env } from "../src/types";
 
@@ -434,6 +436,105 @@ test("rebind cleanup stays 202 until the accepted room is proven closed", async 
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("device cleanup status is secret-guarded, read-only, and exposes counts only", async () => {
+  const f = fixture();
+  const path = "/api/internal/call-coordinator/device-cleanup-status";
+  expect((await f.post(path, { tenantId, deviceInstanceId }, false)).status).toBe(403);
+  expect((await f.internal("device-cleanup-status", { deviceInstanceId: "" })).status).toBe(400);
+
+  const empty = await f.internal("device-cleanup-status", { deviceInstanceId });
+  expect(empty.status).toBe(200);
+  expect((await empty.json()) as object).toEqual({
+    cleanupConfirmed: true,
+    offers: { pending: false, count: 0 },
+    activeCallsByStatus: { ringing: 0, accepted: 0, ending: 0 },
+    pendingOfferOutbox: {
+      pending: false,
+      count: 0,
+      byKind: { offer: 0, stop_offer: 0 },
+    },
+  });
+
+  const state = createCoordinatorState(tenantId, { maxPending: 4 });
+  const call = (
+    id: string,
+    status: CoordinatedCall["status"],
+    device: string,
+  ): CoordinatedCall => ({
+    callId: id,
+    sessionId: `private-${id}`,
+    requestedBy: "operator",
+    status,
+    createdAt: 1,
+    expiresAt: 100,
+    revision: 1,
+    ...(status === "ringing"
+      ? { outgoingBy: { operatorId, deviceInstanceId: device } }
+      : { winner: { operatorId, deviceInstanceId: device } }),
+  });
+  state.calls = {
+    ringing: call("11111111-1111-4111-8111-111111111111", "ringing", deviceInstanceId),
+    accepted: call("22222222-2222-4222-8222-222222222222", "accepted", deviceInstanceId),
+    ending: call("33333333-3333-4333-8333-333333333333", "ending", deviceInstanceId),
+    unrelated: call("44444444-4444-4444-8444-444444444444", "accepted", "other-device"),
+  };
+  state.offers[deviceInstanceId] = {
+    callId: "55555555-5555-4555-8555-555555555555",
+    operatorId,
+    deviceInstanceId,
+  };
+  state.outbox = {
+    offer: {
+      key: "private-offer-key",
+      kind: "offer",
+      callId: "55555555-5555-4555-8555-555555555555",
+      revision: 1,
+      deviceInstanceId,
+    },
+    stop: {
+      key: "private-stop-key",
+      kind: "stop_offer",
+      callId: "55555555-5555-4555-8555-555555555555",
+      revision: 2,
+      deviceInstanceId,
+    },
+    status: {
+      key: "private-status-key",
+      kind: "status",
+      callId: "22222222-2222-4222-8222-222222222222",
+      revision: 1,
+      deviceInstanceId,
+    },
+  };
+  const coordinator = f.tenants.get(tenantId)!;
+  coordinator.values.set(COORDINATOR_STATE_KEY, state);
+  const before = JSON.stringify(state);
+  const response = await f.internal("device-cleanup-status", { deviceInstanceId });
+  const body = await response.json();
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(body).toEqual({
+    cleanupConfirmed: false,
+    offers: { pending: true, count: 1 },
+    activeCallsByStatus: { ringing: 1, accepted: 1, ending: 1 },
+    pendingOfferOutbox: {
+      pending: true,
+      count: 2,
+      byKind: { offer: 1, stop_offer: 1 },
+    },
+  });
+  const serialized = JSON.stringify(body);
+  for (const sensitive of [
+    tenantId,
+    deviceInstanceId,
+    operatorId,
+    sessionId,
+    "11111111-1111-4111-8111-111111111111",
+  ])
+    expect(serialized).not.toContain(sensitive);
+  expect(JSON.stringify(state)).toBe(before);
 });
 
 test("status invalidation remains durable until Cloud ack, even after flag-off rollback", async () => {

@@ -325,6 +325,61 @@ paths:
       responses:
         "200": { description: "{ cleanupConfirmed: true } only after verified closure." }
         "202": { description: "{ cleanupConfirmed: false }; retry the same actionEventId." }
+  /api/internal/call-coordinator/device-cleanup-status:
+    post:
+      tags: [secret-guarded]
+      summary: Cloud reads per-device cleanup counts without changing coordinator state
+      operationId: nativeCallDeviceCleanupStatus
+      security: [{ tenantSyncSecret: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenantId, deviceInstanceId]
+              properties:
+                tenantId: { type: string }
+                deviceInstanceId: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Offers, active calls, and pending offer outbox counts only; no identifiers or credentials.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [cleanupConfirmed, offers, activeCallsByStatus, pendingOfferOutbox]
+                properties:
+                  cleanupConfirmed: { type: boolean }
+                  offers:
+                    type: object
+                    required: [pending, count]
+                    properties:
+                      pending: { type: boolean }
+                      count: { type: integer, minimum: 0 }
+                  activeCallsByStatus:
+                    type: object
+                    required: [ringing, accepted, ending]
+                    properties:
+                      ringing: { type: integer, minimum: 0 }
+                      accepted: { type: integer, minimum: 0 }
+                      ending: { type: integer, minimum: 0 }
+                  pendingOfferOutbox:
+                    type: object
+                    required: [pending, count, byKind]
+                    properties:
+                      pending: { type: boolean }
+                      count: { type: integer, minimum: 0 }
+                      byKind:
+                        type: object
+                        required: [offer, stop_offer]
+                        properties:
+                          offer: { type: integer, minimum: 0 }
+                          stop_offer: { type: integer, minimum: 0 }
+        "400": { description: Invalid tenant or device identifier. }
+        "403": { description: Missing or invalid tenant sync secret. }
+        "502": { description: Coordinator state was invalid or mismatched. }
+        "503": { description: Coordinator state is unavailable; do not treat as confirmed. }
   /api/internal/call-coordinator/offer-validity:
     post:
       tags: [secret-guarded]

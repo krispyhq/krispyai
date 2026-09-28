@@ -163,6 +163,57 @@ export interface CoordinatorState {
   outbox: Record<string, CallOutboxEvent>;
 }
 
+export interface DeviceCleanupStatus {
+  cleanupConfirmed: boolean;
+  offers: { pending: boolean; count: number };
+  activeCallsByStatus: { ringing: number; accepted: number; ending: number };
+  pendingOfferOutbox: {
+    pending: boolean;
+    count: number;
+    byKind: { offer: number; stop_offer: number };
+  };
+}
+
+/** Read-only device cleanup projection shared by diagnostics and cleanup confirmation. */
+export function deviceCleanupStatus(
+  state: CoordinatorState | null,
+  deviceInstanceId: string,
+): DeviceCleanupStatus {
+  const offers = state
+    ? Object.values(state.offers).filter((offer) => offer.deviceInstanceId === deviceInstanceId)
+    : [];
+  const activeCallsByStatus = { ringing: 0, accepted: 0, ending: 0 };
+  if (state) {
+    for (const call of Object.values(state.calls)) {
+      const belongsToDevice =
+        call.winner?.deviceInstanceId === deviceInstanceId ||
+        call.outgoingBy?.deviceInstanceId === deviceInstanceId;
+      if (belongsToDevice && Object.hasOwn(activeCallsByStatus, call.status))
+        activeCallsByStatus[call.status as keyof typeof activeCallsByStatus]++;
+    }
+  }
+  const pendingOfferOutbox = { offer: 0, stop_offer: 0 };
+  if (state) {
+    for (const event of Object.values(state.outbox)) {
+      if (event.deviceInstanceId === deviceInstanceId && event.kind in pendingOfferOutbox)
+        pendingOfferOutbox[event.kind as keyof typeof pendingOfferOutbox]++;
+    }
+  }
+  const pendingOfferOutboxCount = pendingOfferOutbox.offer + pendingOfferOutbox.stop_offer;
+  const activeCallCount =
+    activeCallsByStatus.ringing + activeCallsByStatus.accepted + activeCallsByStatus.ending;
+  return {
+    cleanupConfirmed: offers.length === 0 && activeCallCount === 0 && pendingOfferOutboxCount === 0,
+    offers: { pending: offers.length > 0, count: offers.length },
+    activeCallsByStatus,
+    pendingOfferOutbox: {
+      pending: pendingOfferOutboxCount > 0,
+      count: pendingOfferOutboxCount,
+      byKind: pendingOfferOutbox,
+    },
+  };
+}
+
 export type CallCommand =
   | { type: "invite_visitor"; callId: string; sessionId: string; eventId: string; now: number }
   | {

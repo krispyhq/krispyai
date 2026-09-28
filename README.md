@@ -302,6 +302,8 @@ SessionDO owner through rollback. The Cloud API authenticates operator/device
 identity, and signed LiveKit events verify media state before receipts and
 terminal signals advance. Its state, identity, timeout, and retry contract is
 described in the [integration design](./docs/operator-call-coordinator.md).
+The authenticated `device-cleanup-status` route exposes only per-device cleanup
+counts for diagnostics; it does not mutate coordinator state.
 
 Details: [`packages/widget/README.md`](./packages/widget/README.md).
 

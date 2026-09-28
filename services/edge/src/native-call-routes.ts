@@ -1,6 +1,7 @@
 import { callRtcAvailable, issueCoordinatedCallToken } from "./call-token";
 import {
   operatorMayReceiveGrant,
+  deviceCleanupStatus,
   type CallCommand,
   type CallReceipt,
   type CoordinatedCall,
@@ -195,9 +196,15 @@ export async function handleInternalCoordinatorCall(
   if (!trusted(request, env))
     return Response.json({ error: "system_auth_required" }, { status: 403 });
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-  if (!body || !validId(body.tenantId) || !env.CALL_COORDINATOR)
+  if (!body || !validId(body.tenantId))
     return Response.json({ error: "invalid_request" }, { status: 400 });
   const tenantId = body.tenantId as string;
+  if (path === "device-cleanup-status") {
+    if (!validId(body.deviceInstanceId))
+      return Response.json({ error: "invalid_request" }, { status: 400 });
+    return readDeviceCleanupStatus(env, tenantId, body.deviceInstanceId as string);
+  }
+  if (!env.CALL_COORDINATOR) return Response.json({ error: "invalid_request" }, { status: 400 });
   if (path === "offer-validity") {
     const response = await coordinatorStub(env, tenantId)!.fetch("https://do/offer-validity", {
       method: "POST",
@@ -216,21 +223,13 @@ export async function handleInternalCoordinatorCall(
       now: Date.now(),
     });
     const state = await coordinatorState(env, tenantId);
-    const device = body.deviceInstanceId as string;
-    const pending =
-      !!state &&
-      (!!state.offers[device] ||
-        Object.values(state.calls).some(
-          (call) =>
-            ["ringing", "accepted", "ending"].includes(call.status) &&
-            (call.winner?.deviceInstanceId === device ||
-              call.outgoingBy?.deviceInstanceId === device),
-        ) ||
-        Object.values(state.outbox).some(
-          (event) =>
-            event.deviceInstanceId === device && ["offer", "stop_offer"].includes(event.kind),
-        ));
-    return Response.json({ cleanupConfirmed: !pending }, { status: pending ? 202 : 200 });
+    const cleanup = deviceCleanupStatus(state, body.deviceInstanceId as string);
+    return Response.json(
+      { cleanupConfirmed: cleanup.cleanupConfirmed },
+      {
+        status: cleanup.cleanupConfirmed ? 200 : 202,
+      },
+    );
   }
   if (!validId(body.sessionId) || !validId(body.operatorId) || !validId(body.deviceInstanceId))
     return Response.json({ error: "invalid_request" }, { status: 400 });
@@ -380,6 +379,36 @@ export async function handleInternalCoordinatorCall(
       : Response.json({ error: "call_unavailable" }, { status: 503 });
   }
   return Response.json({ error: "not_found" }, { status: 404 });
+}
+
+async function readDeviceCleanupStatus(
+  env: Env,
+  tenantId: string,
+  deviceInstanceId: string,
+): Promise<Response> {
+  const stub = coordinatorStub(env, tenantId);
+  if (!stub) return Response.json({ error: "coordinator_unavailable" }, { status: 503 });
+  let response: Response;
+  try {
+    response = await stub.fetch("https://do/state", { headers: internalHeaders(env) });
+  } catch {
+    return Response.json({ error: "coordinator_unavailable" }, { status: 503 });
+  }
+  if (response.status === 404)
+    return Response.json(deviceCleanupStatus(null, deviceInstanceId), {
+      headers: { "cache-control": "no-store" },
+    });
+  if (!response.ok) return Response.json({ error: "coordinator_unavailable" }, { status: 503 });
+  const body = (await response.json().catch(() => null)) as { state?: CoordinatorState } | null;
+  if (!body?.state || body.state.tenantId !== tenantId)
+    return Response.json({ error: "coordinator_state_unavailable" }, { status: 502 });
+  try {
+    return Response.json(deviceCleanupStatus(body.state, deviceInstanceId), {
+      headers: { "cache-control": "no-store" },
+    });
+  } catch {
+    return Response.json({ error: "coordinator_state_unavailable" }, { status: 502 });
+  }
 }
 
 /** Session capability and nonce are checked before every 0.5 guest mutation. */

@@ -16,6 +16,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Added
 
+- An authenticated read-only coordinator cleanup status route that reports
+  per-device offer, active-call, and pending outbox counts without identifiers.
 - Expandable full-screen guest audio calls with identity, live status, mute, supported
   audio device selection, End call, and a return to the compact chat card.
 - Private, conversation-scoped image and video attachments for hosted visitor and
