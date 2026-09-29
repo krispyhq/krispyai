@@ -194,7 +194,8 @@ Hosted Cloud can use the Buttr owner app without Telegram. In that mode the tena
 theme, forms, and human handoff still work. When the optional private R2 binding is present,
 visitors and Buttr operators can exchange images and short videos in that conversation;
 both sides read the bytes only with their own session credentials. Hosted attachments expire
-after 180 days. Without R2 or Telegram, the widget suppresses attachment controls.
+after 180 days. Visitors can tap an image to view it full screen and save it from the
+viewer. Without R2 or Telegram, the widget suppresses attachment controls.
 
 The owner app's operator bearer is checked against the cloud API's server-resolved tenant,
 so verified teammates can share the owner's handoff inbox. Legacy `/me` responses without

@@ -41,7 +41,10 @@ server-only tenant sync secret. Access is checked against that conversation befo
 reading storage. GET accepts a single byte `Range` for videos and sends `206`.
 These are authenticated reads, not public R2 links. Hosted Krispy attachment objects
 under `media/` expire after 180 days; an expired file yields 404. Incomplete multipart
-uploads are aborted after seven days by the bucket's default rule.
+uploads are aborted after seven days by the bucket's default rule. In the guest chat,
+tapping a loaded image opens a full-screen viewer. **Save image** uses the already
+authenticated local blob: iOS shows its share sheet (including Save Image), and
+other browsers download the file. An expired image cannot be reopened after reload.
 
 ### `POST /api/chat` gate
 

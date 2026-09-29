@@ -516,6 +516,8 @@
     // A sent screenshot, in the visitor's own bubble.
     ".msg .shot{display:block;max-width:100%;border-radius:8px;margin:2px 0}" +
     ".msg.kmedia{flex-shrink:0;max-width:min(84%,290px);padding:7px;overflow:hidden}.msg.kmedia img,.msg.kmedia video{display:block;width:100%;max-height:280px;object-fit:contain;border-radius:12px;background:#191623}.msg.kmedia .kmedia-caption{padding:6px 7px 2px;font-size:13px;line-height:1.4}.msg.kmedia .kmedia-error{padding:12px;font-size:12px;color:var(--k-muted-fg)}" +
+    ".kmedia-open{display:block;width:100%;padding:0;border:0;border-radius:12px;background:transparent;cursor:zoom-in}.kmedia-open:focus-visible,.kmedia-viewer button:focus-visible{outline:3px solid var(--k-primary);outline-offset:3px}" +
+    ".kmedia-viewer{position:fixed;inset:0;z-index:3;box-sizing:border-box;width:100vw;height:var(--kvvh,100dvh);padding:calc(16px + env(safe-area-inset-top,0px)) 16px calc(16px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:16px;background:rgba(24,20,31,.97);color:#fff;font-family:var(--k-font)}.kmedia-viewer[hidden]{display:none}.kmedia-viewer-bar{display:flex;align-items:center;justify-content:space-between;gap:12px}.kmedia-viewer-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}.kmedia-viewer button{min-height:44px;padding:0 16px;border:1px solid rgba(255,255,255,.3);border-radius:14px;background:rgba(255,255,255,.12);color:#fff;font:inherit;cursor:pointer}.kmedia-viewer img{display:block;flex:1;min-height:0;width:100%;object-fit:contain}" +
     // Drop target — the whole panel, so a dragged file has a big landing zone.
     ".panel.kdrop{outline:2px dashed var(--k-primary);outline-offset:-6px}" +
     ".kcall{display:none;margin:8px 12px;padding:13px;border-radius:16px;background:var(--k-card);border:1px solid var(--k-border);box-shadow:0 8px 20px rgba(36,33,46,.08);color:var(--k-espresso)}" +
@@ -845,6 +847,10 @@
     "</button>" +
     "</form>" +
     "</div>" +
+    '<section class="kmedia-viewer" role="dialog" aria-label="Image preview" aria-modal="true" tabindex="-1" hidden>' +
+    '<div class="kmedia-viewer-bar"><button type="button" class="kmedia-viewer-close" aria-label="Close image preview">Close</button>' +
+    '<span class="kmedia-viewer-name" dir="auto"></span><button type="button" class="kmedia-viewer-save">Save image</button></div>' +
+    '<img class="kmedia-viewer-image" alt=""></section>' +
     // Full-screen audio call view, separate from the chat panel's visibility.
     '<section class="kcall-screen" role="dialog" aria-label="Audio call" aria-modal="true" hidden>' +
     '<button type="button" class="kcall-back" aria-label="Return to chat"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M8 12l8 8 8-8" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' +
@@ -1490,14 +1496,106 @@
   }
 
   var mediaObjectUrls = new Set();
+  var mediaViewer = $(".kmedia-viewer");
+  var mediaViewerImage = $(".kmedia-viewer-image");
+  var mediaViewerName = $(".kmedia-viewer-name");
+  var mediaViewerSave = $(".kmedia-viewer-save");
+  var mediaViewerReturnFocus = null;
+  var mediaViewerFileName = "krispy-image.jpg";
+  var mediaViewerBlob = null;
+
+  function closeMediaViewer() {
+    if (mediaViewer.hidden) return;
+    mediaViewer.hidden = true;
+    mediaViewerImage.removeAttribute("src");
+    mediaViewerBlob = null;
+    if (mediaViewerReturnFocus && mediaViewerReturnFocus.isConnected)
+      mediaViewerReturnFocus.focus();
+    mediaViewerReturnFocus = null;
+  }
+
+  function openMediaViewer(preview, name, trigger, blob) {
+    if (!preview.complete || !preview.naturalWidth || !preview.src) return;
+    mediaViewerReturnFocus = trigger;
+    mediaViewerFileName = String(name || "krispy-image.jpg")
+      .replace(/[\\/]/g, "-")
+      .split("")
+      .map(function (char) {
+        var code = char.charCodeAt(0);
+        return code < 32 || code === 127 ? "-" : char;
+      })
+      .join("")
+      .slice(0, 120);
+    mediaViewerName.textContent = mediaViewerFileName;
+    mediaViewerBlob = blob;
+    mediaViewerImage.src = preview.src; // already-authorized local blob URL, never an R2 link
+    mediaViewerImage.alt = preview.alt;
+    mediaViewer.hidden = false;
+    mediaViewer.focus();
+  }
+
+  $(".kmedia-viewer-close").addEventListener("click", closeMediaViewer);
+  mediaViewer.addEventListener("click", function (event) {
+    if (event.target === mediaViewer) closeMediaViewer();
+  });
+  window.addEventListener("keydown", function (event) {
+    if (mediaViewer.hidden) return;
+    if (event.key === "Escape") closeMediaViewer();
+    if (event.key === "Tab") {
+      var close = $(".kmedia-viewer-close");
+      var onSave = root.activeElement === mediaViewerSave;
+      var onClose = root.activeElement === close;
+      if ((onSave && !event.shiftKey) || (onClose && event.shiftKey)) {
+        event.preventDefault();
+        (onSave ? close : mediaViewerSave).focus();
+      } else if (root.activeElement === mediaViewer && event.shiftKey) {
+        event.preventDefault();
+        mediaViewerSave.focus();
+      }
+    }
+  });
+  mediaViewerSave.addEventListener("click", function () {
+    if (mediaViewer.hidden || !mediaViewerImage.src || !mediaViewerBlob) return;
+    var src = mediaViewerImage.src;
+    var name = mediaViewerFileName;
+    function download() {
+      var link = document.createElement("a");
+      link.href = src;
+      link.download = name;
+      root.appendChild(link);
+      link.click();
+      link.remove();
+    }
+    // Use the already-fetched private blob. Web Share must start within this
+    // tap's user activation on iOS; an extra fetch here would lose that gesture.
+    if (navigator.share && navigator.canShare && typeof File !== "undefined") {
+      var file = new File([mediaViewerBlob], name, {
+        type: mediaViewerBlob.type || "image/jpeg",
+      });
+      if (navigator.canShare({ files: [file] })) {
+        mediaViewerSave.disabled = true;
+        navigator
+          .share({ files: [file], title: name })
+          .catch(function (error) {
+            if (!error || error.name !== "AbortError") download();
+          })
+          .finally(function () {
+            mediaViewerSave.disabled = false;
+          });
+        return;
+      }
+    }
+    download();
+  });
   window.addEventListener("pagehide", function () {
+    closeMediaViewer();
     mediaObjectUrls.forEach(function (url) {
       URL.revokeObjectURL(url);
     });
     mediaObjectUrls.clear();
   });
 
-  function addMediaBubble(message, localUrl) {
+  function addMediaBubble(message, localUrl, localBlob) {
     var media = message && message.media;
     if (
       !media ||
@@ -1517,12 +1615,23 @@
     d.dataset.krispyAt = String(message.ts || Date.now());
     d.dataset.krispyText = String(message.text || "");
     var preview = document.createElement(media.kind === "video" ? "video" : "img");
+    var mediaBlob = localBlob || null;
     if (media.kind === "video") {
       preview.controls = true;
       preview.playsInline = true;
       preview.preload = "metadata";
     } else preview.alt = media.name || "Shared image";
-    d.appendChild(preview);
+    if (media.kind === "image") {
+      var openButton = document.createElement("button");
+      openButton.type = "button";
+      openButton.className = "kmedia-open";
+      openButton.setAttribute("aria-label", "Open image full screen");
+      openButton.addEventListener("click", function () {
+        openMediaViewer(preview, media.name, openButton, mediaBlob);
+      });
+      openButton.appendChild(preview);
+      d.appendChild(openButton);
+    } else d.appendChild(preview);
     var caption = document.createElement("div");
     caption.className = "kmedia-caption";
     caption.textContent = String(message.text || (media.kind === "video" ? "Video" : "Image"));
@@ -1552,6 +1661,7 @@
         })
         .then(function (blob) {
           if (d.isConnected) {
+            mediaBlob = blob;
             var objectUrl = URL.createObjectURL(blob);
             mediaObjectUrls.add(objectUrl);
             preview.src = objectUrl;
@@ -3696,6 +3806,7 @@
               media: result.media,
             },
             att.url,
+            att.blob,
           );
           history.push({
             role: "user",

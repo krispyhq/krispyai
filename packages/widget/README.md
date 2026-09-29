@@ -73,6 +73,12 @@ All opt-in. Leave `data-launcher` off and the built-in launcher renders exactly 
 Screenshot paste/drop is enabled only when the public boot config reports a Telegram-backed
 attachment channel. App-only tenants do not present an upload path that would fail at send time.
 
+Hosted Cloud chats with private media enabled show image and video messages in the
+conversation. Tap an image for a full-screen view, then choose **Save image**. On iPhone
+this opens the native share sheet, including Save Image; desktop browsers download
+the file. The viewer uses the authenticated image already loaded in the chat, so it
+does not create a public attachment URL. Hosted attachments expire after 180 days.
+
 ## Audio call join errors
 
 Accepting an invitation starts the visitor's audio connection immediately. If
