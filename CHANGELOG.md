@@ -10,6 +10,15 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+### Added
+
+- Optional `GEMINI_FILE_SEARCH_STORE` for the Gemini pilot: chat turns also
+  retrieve from a Gemini File Search store, so the knowledge base can move out of
+  `kbSources` instead of riding in every prompt. Documents uploaded with a `url`
+  custom-metadata entry are linked under the replies they ground, using the
+  stored URL rather than model output. The Workers AI fallback cannot read the
+  store.
+
 ## [0.4.1] — 2026-09-30
 
 ### Fixed

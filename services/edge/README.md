@@ -243,7 +243,19 @@ malformed identity fields fail closed.
   The key stays server-side. If it is missing or Google fails, that Delulus turn
   falls back to the existing Cloudflare 70B model; human handoff still applies
   if both providers fail. No tenant is
-  switched by merely deploying the adapter. The bracketed `[!HANDOFF]` marker
+  switched by merely deploying the adapter. Setting the optional
+  `GEMINI_FILE_SEARCH_STORE` (`fileSearchStores/…`) makes that pilot's chat turns
+  also retrieve from a Gemini File Search store through the native
+  `generateContent` API; structured operator drafts keep the OpenAI-compatible
+  path. The store adds to the prompt and does not replace `kbSources`: move the
+  knowledge into the store and shrink or empty `kbSources` to stop sending it on
+  every turn. The 70B fallback cannot read the store, so with `kbSources` empty a
+  turn that falls back has no business facts; keep the essentials in `kbSources`,
+  or instruct the bot to hand off when it has none. A stored document uploaded
+  with a `url` custom-metadata entry is appended as a Markdown link (its display
+  name, at most two per reply) under the answers it grounds. Those appended links
+  take their URL from the store, never from model output, and are left off when
+  the reply hands off or raises a form. The bracketed `[!HANDOFF]` marker
   remains canonical; a bare terminal
   `!HANDOFF` is accepted only as a compatibility variant when sentence-standalone.
   The explicitly selected `@cf/meta/llama-3.1-8b-instruct-fast` candidate uses temperature

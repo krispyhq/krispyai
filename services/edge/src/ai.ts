@@ -1,5 +1,6 @@
 // AI-provider adapter. Workers AI remains the default; a tenant can opt into
 // Google's Gemini API with a server-only key without changing the chat flow.
+import { parseForm, parseHandoff } from "./system-prompt";
 import type { Env } from "./types";
 
 export type ChatRole = "system" | "user" | "assistant";
@@ -80,6 +81,9 @@ export function geminiAiRunner(
   fetcher: AiFetch = fetch,
   jsonSchema?: JsonSchemaOutput,
 ): AiRunner {
+  // Structured output keeps the OpenAI-compatible path: it has no retrieval step.
+  const store = env.GEMINI_FILE_SEARCH_STORE?.trim();
+  if (store && !jsonSchema) return geminiFileSearchRunner(env, store, fetcher);
   return async (messages) => {
     const key = env.GEMINI_API_KEY?.trim();
     if (!key) throw new Error("Gemini API key is not configured");
@@ -121,6 +125,151 @@ export function geminiAiRunner(
           }
         : undefined;
     return { text, usage };
+  };
+}
+
+const GEMINI_GENERATE_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+/** Source links appended to one reply. More than this reads as a link dump. */
+const MAX_SOURCE_LINKS = 2;
+const MAX_LINK_LABEL_CHARS = 120;
+
+type GroundingChunk = {
+  retrievedContext?: {
+    title?: unknown;
+    customMetadata?: Array<{ key?: unknown; stringValue?: unknown }>;
+  };
+};
+
+function safeHttpUrl(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 2_000) return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+    if (url.username || url.password) return undefined;
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+/** Markdown links for the documents Gemini grounded the reply on. A document is
+ * linkable when it was uploaded with a `url` custom-metadata entry; the link text
+ * is its display name. These appended links take their URL from the store, never
+ * from model output, so they only point where the operator published. */
+export function sourceLinks(chunks: GroundingChunk[], used?: Set<number>): string[] {
+  const links = new Map<string, string>();
+  chunks.forEach((chunk, index) => {
+    if (used && !used.has(index)) return;
+    const context = chunk.retrievedContext;
+    // Legal in a URL, but a parenthesis would close the Markdown link early and a
+    // bracket could spell a control marker ([!HANDOFF]) the chat flow acts on.
+    const url = safeHttpUrl(
+      context?.customMetadata?.find((entry) => entry.key === "url")?.stringValue,
+    )?.replace(/[()[\]]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+    if (!url || links.has(url)) return;
+    // The label is one short line with no brackets (they would end it early) and
+    // no leading "!" (which would read as a control marker). Empty falls back to
+    // the URL.
+    const title = typeof context?.title === "string" ? context.title : "";
+    const label = title
+      .replace(/[[\]]/g, "")
+      .replace(/\s+/g, " ")
+      .replace(/^[!\s]+/, "")
+      .trim()
+      .slice(0, MAX_LINK_LABEL_CHARS);
+    links.set(url, `[${label || url}](${url})`);
+  });
+  return [...links.values()].slice(0, MAX_SOURCE_LINKS);
+}
+
+/**
+ * Gemini with a File Search store: Gemini retrieves the passages it needs from
+ * the store inside the same request, so the knowledge no longer has to ride in
+ * the prompt on every turn. The store adds to the prompt; it does not replace
+ * `kbSources`, which the operator shrinks or empties separately. Uses the native
+ * generateContent API, which is where the File Search tool is offered.
+ */
+export function geminiFileSearchRunner(
+  env: Env,
+  store: string,
+  fetcher: AiFetch = fetch,
+): AiRunner {
+  return async (messages) => {
+    const key = env.GEMINI_API_KEY?.trim();
+    if (!key) throw new Error("Gemini API key is not configured");
+    const system = messages
+      .filter((message) => message.role === "system")
+      .map((message) => message.content)
+      .join("\n\n");
+    const response = await fetcher(GEMINI_GENERATE_URL, {
+      method: "POST",
+      headers: { "x-goog-api-key": key, "content-type": "application/json" },
+      body: JSON.stringify({
+        ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+        contents: messages
+          .filter((message) => message.role !== "system")
+          .map((message) => ({
+            role: message.role === "assistant" ? "model" : "user",
+            parts: [{ text: message.content }],
+          })),
+        tools: [{ fileSearch: { fileSearchStoreNames: [store] } }],
+        generationConfig: {
+          maxOutputTokens: Number(env.MAX_OUTPUT_TOKENS) || MAX_OUTPUT_TOKENS,
+          // The native spelling of the compatible path's reasoning_effort: "minimal".
+          thinkingConfig: { thinkingLevel: "minimal" },
+        },
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error(`Gemini API error: ${response.status}`);
+    const result = (await response.json()) as {
+      candidates?: Array<{
+        content?: { parts?: Array<{ text?: unknown; thought?: unknown }> };
+        groundingMetadata?: {
+          groundingChunks?: GroundingChunk[];
+          groundingSupports?: Array<{ groundingChunkIndices?: number[] }>;
+        };
+      }>;
+      usageMetadata?: {
+        promptTokenCount?: number;
+        toolUsePromptTokenCount?: number;
+        candidatesTokenCount?: number;
+        thoughtsTokenCount?: number;
+      };
+    };
+    const candidate = result.candidates?.[0];
+    const text = (candidate?.content?.parts ?? [])
+      .filter((part) => !part.thought && typeof part.text === "string")
+      .map((part) => part.text as string)
+      .join("")
+      .trim();
+    if (!text) throw new Error("empty AI response");
+    const grounding = candidate?.groundingMetadata;
+    const supports = grounding?.groundingSupports;
+    // Only the chunks the reply actually leans on, when Gemini says which.
+    const used = supports?.length
+      ? new Set(supports.flatMap((support) => support.groundingChunkIndices ?? []))
+      : undefined;
+    // A control marker means this turn is not a plain answer, and a "read more"
+    // link under an escalation would be noise. Asked of the same parsers the chat
+    // flow uses, because text appended after a bare terminal !HANDOFF would stop
+    // it being terminal and lose the handoff.
+    const plain = !parseHandoff(text).handoff && parseForm(text).formId === null;
+    const links = plain ? sourceLinks(grounding?.groundingChunks ?? [], used) : [];
+    const counts = result.usageMetadata;
+    const usage: TokenUsage | undefined =
+      counts &&
+      typeof counts.promptTokenCount === "number" &&
+      typeof counts.candidatesTokenCount === "number"
+        ? {
+            // Retrieved passages are billed as input, reported separately.
+            promptTokens: counts.promptTokenCount + (counts.toolUsePromptTokenCount ?? 0),
+            // Thinking, when the model does any, is billed as output.
+            completionTokens: counts.candidatesTokenCount + (counts.thoughtsTokenCount ?? 0),
+            estimated: false,
+          }
+        : undefined;
+    return { text: links.length ? `${text}\n\n${links.join("\n")}` : text, usage };
   };
 }
 

@@ -172,7 +172,9 @@ The app requests them on demand and discards a result when the transcript change
 Uncertain or failed generation returns an empty array; repeated requests are capped
 at 20 per session per hour (`429`; concurrent bursts can exceed the coarse KV counter).
 Direct Gemini remains limited to the approved
-pilot tenant and site.
+pilot tenant and site. When that pilot sets `GEMINI_FILE_SEARCH_STORE`, visitor
+chat retrieves from the store and may end a reply with Markdown links to the
+stored documents it used; drafts are unaffected.
 The server reads the session's recorded site and resolves the ID from that site's
 configured forms/connectors. An optional `siteId` must match. Missing session or ID
 returns `404`, a site mismatch returns `403`, and malformed fields return `400`.

@@ -215,6 +215,11 @@ export interface Env {
   AI_MODEL?: string;
   /** Server-only Gemini API key for the exact KNOWLEDGE_TENANT_ID/SITE_ID pilot. */
   GEMINI_API_KEY?: string;
+  /** Optional Gemini File Search store (`fileSearchStores/…`) for the same pilot.
+   * When set, chat turns also retrieve from the store, so the knowledge can move
+   * out of `kbSources`; the Workers AI fallback cannot read it. A document uploaded
+   * with a `url` custom-metadata entry is linked under the replies it grounds. */
+  GEMINI_FILE_SEARCH_STORE?: string;
   // --- turn-tax cost knobs (all optional; sensible defaults in code) ---
   /** Sliding-window size the AI sees, default MAX_HISTORY_MSGS (8). */
   MAX_HISTORY_MSGS?: string;
