@@ -10,6 +10,15 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+### Changed
+
+- Widget: a reply now also chimes when the chat is open but nobody is looking at
+  the page: a hidden tab, or a browser window without focus (another app in
+  front), so a visitor waiting elsewhere hears the answer arrive. A closed panel
+  behaves as before. The ding's audio is now unlocked by the visitor's first click
+  or keypress on the page, so it can play from a background tab (browsers keep
+  audio first started there silent).
+
 ## [0.4.1] — 2026-09-30
 
 ### Fixed

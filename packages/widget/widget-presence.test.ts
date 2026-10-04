@@ -135,6 +135,75 @@ test("a restored visitor is call-present while the page is open and chat panel s
   }
 });
 
+test("a reply chimes while the page is hidden, even with the chat open", async () => {
+  const app = mount(true);
+  // The chime is two notes, starting at 880 Hz; count those, not audio contexts
+  // (the call ringtone also makes one when audio is unlocked).
+  let chimes = 0;
+  let contexts = 0;
+  class FakeAudio {
+    state = "running";
+    currentTime = 0;
+    destination = {};
+    constructor() {
+      contexts++;
+    }
+    resume() {}
+    createOscillator() {
+      const osc = {
+        frequency: { value: 0 },
+        connect: (n: unknown) => n,
+        start() {
+          if (osc.frequency.value === 880) chimes++;
+        },
+        stop() {},
+      };
+      return osc;
+    }
+    createGain() {
+      const node = {
+        gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+        connect: (n: unknown) => n,
+      };
+      return node;
+    }
+  }
+  Object.defineProperty(app.window, "AudioContext", { configurable: true, value: FakeAudio });
+  const setVisibility = (value: string) =>
+    Object.defineProperty(app.window.document, "visibilityState", { configurable: true, value });
+  const setFocus = (focused: boolean) =>
+    Object.defineProperty(app.window.document, "hasFocus", {
+      configurable: true,
+      value: () => focused,
+    });
+  setFocus(true);
+  try {
+    await Promise.resolve();
+    app.window.krispy?.open(); // opening counts as the interaction that unlocks audio
+    app.sockets[0]!.receive({ type: "operator", text: "Seen right away", ts: 2_000 });
+    expect(chimes).toBe(0); // open and visible: the reply is on screen, no sound
+    // The visitor types (a gesture): the chime's audio is unlocked now, while the
+    // page is in front. Browsers keep audio created later, from a hidden page with
+    // no gesture, silent (Safari always; Chrome without an earlier click).
+    app.window.document.dispatchEvent(new app.window.KeyboardEvent("keydown", { key: "a" }));
+    const unlocked = contexts;
+    setVisibility("hidden");
+    app.sockets[0]!.receive({ type: "operator", text: "Waiting in another tab", ts: 3_000 });
+    expect(chimes).toBe(1);
+    expect(contexts).toBe(unlocked); // played on the unlocked audio, not a new one
+    // Tab in front, but the browser window behind another app: the page still
+    // reports visible, yet nobody is looking at it.
+    setVisibility("visible");
+    setFocus(false);
+    app.sockets[0]!.receive({ type: "operator", text: "Window in the back", ts: 4_000 });
+    expect(chimes).toBe(2);
+  } finally {
+    setVisibility("visible");
+    app.window.dispatchEvent(new app.window.Event("pagehide"));
+    void app.window.happyDOM.abort();
+  }
+});
+
 test("a new visitor registers call presence when the page loads without opening chat", async () => {
   const app = mount(false);
   try {
