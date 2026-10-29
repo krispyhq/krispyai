@@ -44,6 +44,14 @@ docs {
   saved bot token/prompt immediately drives the bot. Requires the `x-tenant-sync-secret`
   header (== TENANT_SYNC_SECRET) or returns 401.
 
+  Optional server-only replyPolicy: { matchCurrentLanguage: true, invitationPricing:
+  { en: "Use your personal invitation for pricing.", he: "המחירים מופיעים בהזמנה האישית.",
+  restrictedAmounts: ["999.50"], restrictedTexts: ["nine hundred ninety nine"],
+  subjectTerms: ["training"] } }. Invalid shapes return 400 invalid_reply_policy.
+  This opt-in masks detected offer-price spans in model copies while retaining context
+  and stored history. Language mismatch alone does not initiate human handoff.
+  No visitor-supplied invitation claim enables prices. Send replyPolicy: {} to disable.
+
   Write caps (trust boundary — invalid configs never reach KV):
   413 avatar_too_large (theme.avatar over 48KB), 413 kb_sources_too_large (kbSources
   total text over 100K chars), 400 avatar_scheme_invalid (avatar must be "buttr" or "none",

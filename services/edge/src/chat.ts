@@ -8,6 +8,17 @@
 import type { ChatMessage, AiResult, TokenUsage } from "./ai";
 import { parseHandoff, parseForm, detectPromptLeak } from "./system-prompt";
 import type { FormSpec, HandoffState } from "./types";
+import {
+  type ReplyPolicy,
+  replyLanguage,
+  languageMismatch,
+  languageInstruction,
+  localizedFallback,
+  isOfferPriceQuestion,
+  guardOfferReply,
+  policyHistory,
+  invitationReply,
+} from "./reply-policy";
 
 export const FALLBACK_REPLY = "Thanks — a teammate will jump in here shortly.";
 
@@ -41,6 +52,7 @@ export interface ChatDeps {
   /** Record real (or estimated) token usage for this turn (optional; no-op if unwired). */
   meterTokens?: (usage: TokenUsage) => Promise<void>;
   systemPrompt: string;
+  replyPolicy?: ReplyPolicy;
   /** The prompt slice detectPromptLeak checks the reply against — the INSTRUCTION portion
    * only (systemPrompt + persona + contracts), EXCLUDING any injected kbSources knowledge.
    * A bot quoting its own knowledge verbatim is correctness, not a leak. Defaults to
@@ -111,6 +123,11 @@ export async function chatFlow(deps: ChatDeps, input: ChatInput): Promise<ChatRe
   }
 
   const history = deps.history ?? [];
+  const language =
+    deps.replyPolicy?.matchCurrentLanguage || deps.replyPolicy?.invitationPricing
+      ? replyLanguage(input.message, history)
+      : undefined;
+  const fallback = localizedFallback(language);
 
   // Turn-tax guard: too many AI turns without resolution → hand to a human instead of
   // paying for another (likely-looping) turn. Counted from the assistant replies so far.
@@ -118,16 +135,48 @@ export async function chatFlow(deps: ChatDeps, input: ChatInput): Promise<ChatRe
   if (aiTurns >= (deps.maxAiTurns ?? MAX_AI_TURNS)) {
     await deps.meter("handoff");
     await toTopic(threadId, "🙋 Long chat with no resolution — bringing in a human.");
-    return { reply: FALLBACK_REPLY, handoff: true, handedOff: false, handoffState: "pending" };
+    return { reply: fallback, handoff: true, handedOff: false, handoffState: "pending" };
   }
 
   // Sliding window: cap the prior turns the AI sees; system + latest user added on top.
-  const windowed = history.slice(-(deps.maxHistoryMsgs ?? MAX_HISTORY_MSGS));
+  const windowed = policyHistory(history, deps.replyPolicy).slice(
+    -(deps.maxHistoryMsgs ?? MAX_HISTORY_MSGS),
+  );
   const messages: ChatMessage[] = [
-    { role: "system", content: deps.systemPrompt },
+    {
+      role: "system",
+      content:
+        deps.systemPrompt +
+        (deps.replyPolicy?.matchCurrentLanguage ? languageInstruction(language) : ""),
+    },
     ...windowed,
-    { role: "user", content: input.message },
+    {
+      role: "user",
+      content: policyHistory(
+        [...history, { role: "user", content: input.message }],
+        deps.replyPolicy,
+      ).at(-1)!.content,
+    },
   ];
+
+  if (
+    deps.replyPolicy?.invitationPricing &&
+    isOfferPriceQuestion(input.message, deps.replyPolicy.invitationPricing)
+  ) {
+    const humanRequested =
+      /\b(?:human|person|agent|operator|support team)\b|נציג|איש צוות|אדם אמיתי/i.test(
+        input.message,
+      );
+    const reply = humanRequested ? fallback : invitationReply(deps.replyPolicy, language);
+    if (humanRequested) await deps.meter("handoff");
+    await toTopic(threadId, `🤖 ${reply}`);
+    return {
+      reply,
+      handoff: humanRequested,
+      handedOff: false,
+      handoffState: humanRequested ? "pending" : "ai",
+    };
+  }
 
   let raw: string;
   try {
@@ -146,7 +195,7 @@ export async function chatFlow(deps: ChatDeps, input: ChatInput): Promise<ChatRe
     // AI down — keep the loop alive by routing to a human.
     await toTopic(threadId, "⚠️ AI unavailable — visitor is waiting for you.");
     return {
-      reply: FALLBACK_REPLY,
+      reply: fallback,
       handoff: true,
       handedOff: false,
       handoffState: "pending",
@@ -159,7 +208,7 @@ export async function chatFlow(deps: ChatDeps, input: ChatInput): Promise<ChatRe
   const parsed = parseForm(text);
   // A bare control-only response still needs a visitor-facing acknowledgement;
   // never return an empty bubble while the handoff is pending.
-  const clean = parsed.text || (handoff ? FALLBACK_REPLY : parsed.text);
+  let clean = parsed.text || (handoff ? fallback : parsed.text);
   const { formId } = parsed;
 
   // Output guardrail: a jailbroken model can leak its system prompt or re-emit control
@@ -170,7 +219,53 @@ export async function chatFlow(deps: ChatDeps, input: ChatInput): Promise<ChatRe
     console.warn("prompt_leak_suppressed");
     await deps.meter("handoff");
     await toTopic(threadId, "🛡️ Suppressed a suspected prompt-leak — bringing in a human.");
-    return { reply: FALLBACK_REPLY, handoff: true, handedOff: false, handoffState: "pending" };
+    return { reply: fallback, handoff: true, handedOff: false, handoffState: "pending" };
+  }
+
+  // Preserve useful reply clauses; withhold only identified offer-price spans.
+  // Model forms are withheld if the text needed pricing repair.
+  let pricingRedacted = false;
+  if (deps.replyPolicy?.invitationPricing) {
+    const guarded = guardOfferReply(
+      clean,
+      input.message,
+      history,
+      deps.replyPolicy.invitationPricing,
+    );
+    pricingRedacted = guarded.redacted;
+    if (guarded.redacted) {
+      let explained = false;
+      clean = guarded.text
+        .split(
+          /(?<=[.!?;])\s+|\n+|\s+(?:and|but)\s+|,\s+(?=[A-Za-z\u05d0-\u05ea])|\s+ו(?=עולה|המחיר)/u,
+        )
+        .map((sentence) => {
+          if (!sentence.includes("[pricing available through personal invitation]"))
+            return sentence;
+          if (explained) return "";
+          explained = true;
+          return invitationReply(deps.replyPolicy!, language);
+        })
+        .filter(Boolean)
+        .map((clause) => (/[.!?]$/.test(clause) ? clause : clause + "."))
+        .join(" ");
+    }
+  }
+  if (deps.replyPolicy?.matchCurrentLanguage && languageMismatch(clean, language)) {
+    if (handoff) await deps.meter("handoff");
+    const reply = handoff
+      ? fallback
+      : language === "he"
+        ? "לא הצלחתי לנסח תשובה בעברית. אפשר לנסות שוב?"
+        : "I couldn't produce a reply in English. Please try again.";
+    await toTopic(threadId, `🤖 ${reply}`);
+    return {
+      reply,
+      handoff,
+      handedOff: false,
+      handoffState: handoff ? "pending" : "ai",
+      degraded: true,
+    };
   }
 
   if (handoff) {
@@ -183,6 +278,6 @@ export async function chatFlow(deps: ChatDeps, input: ChatInput): Promise<ChatRe
     handoff,
     handedOff: false,
     handoffState: handoff ? "pending" : "ai",
-    formId,
+    formId: pricingRedacted ? undefined : formId,
   };
 }

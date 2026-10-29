@@ -346,3 +346,51 @@ new grants stop immediately when the Durable Object state ends. The invitation
 expires after 60 seconds; an accepted call has a one-hour ceiling. The session
 Durable Object schedules both deadlines alongside its existing handoff timer and
 retries room deletion if LiveKit is temporarily unavailable.
+
+## Public chat reply policy (opt-in)
+
+Authenticated tenant config accepts `replyPolicy.matchCurrentLanguage` and
+`replyPolicy.invitationPricing: { en, he, restrictedAmounts, restrictedTexts, subjectTerms }`.
+It is server-only: `/api/chat` accepts no scope override or invitation-eligibility
+proof. Unset leaves other tenants unchanged. Replace the full policy object to
+update it; `{}` disables it. No private/invited pricing mode is implemented.
+
+Language choice: current explicit request, then an earlier explicitly continuing
+user preference (e.g. “for this conversation”), then the current substantive
+English/Hebrew message. Short acknowledgements inherit the latest user language.
+Quoted/negated commands and website-language mentions do not set a preference.
+An observed script mismatch is withheld with a localized retry message; it does
+not initiate human handoff, make a second model call, or erase context. Existing
+model/user handoff still takes precedence. This is bounded EN/HE detection, not a
+general semantic language classifier.
+
+Invitation-only pricing uses approved EN/HE notice text (1–1000 characters each,
+no digits, currency symbols or control markers), up to 50 `restrictedAmounts`
+(decimal strings, nine integer/two decimal digits), up to 50 `restrictedTexts`
+(known worded/formatted price aliases), and 1–50 `subjectTerms` (offer names/nouns).
+Alias/subject strings are 2–160 characters without line breaks or control markers.
+These values are trusted tenant configuration, never accepted from visitors.
+
+The existing history window, order, roles and turn accounting remain. In copies
+sent to the model, only detected offer-price spans are masked; customer storage
+and operator history are unchanged. Prior user goals, format preferences and
+ordinary budgets remain available. A budget can be faithfully restated only if
+that exact numeric value came from a user's own budget statement; it cannot
+authorize saying the amount covers the offer. Explicit offer attribution overrides
+a budget exception. Direct offer-price questions get the configured invitation
+notice without inference. Other questions (tools costs, payment-to-access, dates)
+remain answerable. Before display/mirroring/storage, detected offer-price clauses
+are replaced by the invitation notice, preserving other reply clauses and
+handoff while suppressing model-selected forms for that repaired response.
+
+This is a conservative lexical mitigation, **not universal DLP**: novel numeric
+wording, obfuscation, ambiguous attribution and other languages can evade matching.
+Configured amounts can collide with unrelated values; numeric user budgets,
+explicit ticket IDs, dates and third-party costs have regression coverage, not a
+claim that every ambiguity is solved. Public sources must omit prices, including
+retrieval results; private checkout remains the authority. A claimed invitation,
+email or visitor capability never grants disclosure permission.
+
+Local tests do not prove live model acceptance. Deployment needs the normal
+public-core security/CI gates, exact deployed-baseline review and separate release
+authorization. Building this candidate changes no tenant's live configuration.

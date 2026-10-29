@@ -1962,6 +1962,52 @@ components:
         promptHe: { type: string, maxLength: 120, default: "איך קוראים לך?" }
         afterMessages: { type: integer, minimum: 1, maximum: 5, default: 1 }
 
+    ReplyPolicy:
+      type: object
+      additionalProperties: false
+      description: >
+        Server-only opt-in EN/HE reply matching and invitation-only public pricing.
+        Pricing policy masks detected offer-price spans in model copies while preserving context and storage.
+        Visitor claims never authorize prices. Lexical detection is conservative,
+        not universal DLP. Invalid values return 400 invalid_reply_policy.
+      properties:
+        matchCurrentLanguage: { type: boolean }
+        invitationPricing:
+          type: object
+          additionalProperties: false
+          required: [en, he, restrictedAmounts, restrictedTexts, subjectTerms]
+          properties:
+            en:
+              {
+                type: string,
+                minLength: 1,
+                maxLength: 1000,
+                description: "Approved English fallback; no digits, currency symbols or control markers.",
+              }
+            he:
+              {
+                type: string,
+                minLength: 1,
+                maxLength: 1000,
+                description: "Approved Hebrew fallback; no digits, currency symbols or control markers.",
+              }
+            restrictedAmounts:
+              type: array
+              maxItems: 50
+              items: { type: string, pattern: '^\d{1,9}(?:\.\d{1,2})?$' }
+
+            restrictedTexts:
+              type: array
+              maxItems: 50
+              description: "Known worded price aliases; no line breaks or control markers."
+              items: { type: string, minLength: 2, maxLength: 160 }
+            subjectTerms:
+              type: array
+              minItems: 1
+              maxItems: 50
+              description: "Offer names/nouns for price attribution; no line breaks or control markers."
+              items: { type: string, minLength: 2, maxLength: 160 }
+
     TenantConfig:
       type: object
       description: >
@@ -1975,6 +2021,7 @@ components:
             type: string,
             description: "Optional supergroup id with Topics enabled, e.g. -1001234567890.",
           }
+        replyPolicy: { $ref: "#/components/schemas/ReplyPolicy" }
         systemPrompt: { type: string }
         model: { type: string }
         onboardingStep: { type: integer }
