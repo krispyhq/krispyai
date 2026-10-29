@@ -37,6 +37,8 @@ node scripts/release.mjs <x.y.z> --target=edge
 This creates an annotated `edge-v<x.y.z>` tag on the exact clean, published
 `master` commit after its complete push CI workflow succeeds, then creates a
 GitHub Release with the source SHA and a snapshot of the `[Unreleased]` notes.
+A detached checkout is supported only when it matches current `origin/master`
+exactly, so another owner's local master checkout need not be touched.
 It does not change manifests, create a metadata commit, consume `[Unreleased]`,
 or publish npm packages. The existing CLI publisher only matches `v*`; its
 permissions and checks are unchanged. Existing full releases retain their flow.

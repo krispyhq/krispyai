@@ -173,6 +173,7 @@ else process.exit(2);
 `,
       { mode: 0o755 },
     );
+    if (success) f.git("switch", "--detach", head);
     const r = f.run(["node", "scripts/release.mjs", "0.5.0", "--target=edge"], {
       PATH: tools + ":" + process.env.PATH,
       TEST_RELEASE_HEAD: head,

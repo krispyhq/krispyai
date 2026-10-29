@@ -28,8 +28,9 @@ const tag = (EDGE_ONLY ? "edge-v" : "v") + version;
 const sh = (c) => execSync(c, { encoding: "utf8" }).trim();
 
 // ── guards ──────────────────────────────────────────────────────────────────
-if (sh("git rev-parse --abbrev-ref HEAD") !== "master") {
-  console.error("✘ releases are cut from master only.");
+const branch = sh("git rev-parse --abbrev-ref HEAD");
+if (branch !== "master" && !(EDGE_ONLY && branch === "HEAD")) {
+  console.error("✘ releases require master (Edge also permits its exact detached commit).");
   process.exit(1);
 }
 // Only TRACKED changes block a release; untracked local cruft (.env.local,
