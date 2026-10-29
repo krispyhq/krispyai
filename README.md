@@ -413,3 +413,10 @@ prove notification delivery. Self-hosted installations may leave these unset.
 
 Optional server-side public chat language and pricing guards are documented in
 [`services/edge/README.md`](services/edge/README.md#public-chat-reply-policy-opt-in).
+
+### Edge-only release
+
+For a reviewed Worker-only update, use `node scripts/release.mjs <x.y.z> --target=edge`
+and `./deploy.sh edge production --preserve-secrets`. The Edge tag requires exact
+master CI success and does not trigger CLI publication. See [RELEASING.md](./RELEASING.md)
+for clean-checkout, existing-credential, configuration comparison and rollback requirements.
