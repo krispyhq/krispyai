@@ -24,6 +24,39 @@ The script, in one step:
 4. Commits `chore(release): vx.y.z`, tags `vx.y.z`, pushes both.
 5. Opens the GitHub Release with the changelog section as its notes.
 
+## Edge-only release
+
+To release the Edge Worker without publishing the CLI, use:
+
+```sh
+node scripts/release.mjs <x.y.z> --target=edge --dry-run
+node scripts/release.mjs <x.y.z> --target=edge
+./deploy.sh edge production --preserve-secrets
+```
+
+This creates an annotated `edge-v<x.y.z>` tag on the exact clean, published
+`master` commit after its complete push CI workflow succeeds, then creates a
+GitHub Release with the source SHA and a snapshot of the `[Unreleased]` notes.
+A detached checkout is supported only when it matches current `origin/master`
+exactly, so another owner's local master checkout need not be touched.
+It does not change manifests, create a metadata commit, consume `[Unreleased]`,
+or publish npm packages. The existing CLI publisher only matches `v*`; its
+permissions and checks are unchanged. Existing full releases retain their flow.
+Edge tags are accepted only for Edge deployment, never docs or widget deployment.
+
+`--preserve-secrets` requires a clean checkout and an exact release tag; it cannot
+use the untagged emergency override. It reads no `.env.local` and does not run the
+secret-sync writer. Supply existing Infisical production deployment credentials
+and `PUSH_TOKENS_SECRET` in memory for the unchanged read-only push check.
+Wrangler uses `--keep-vars`; secrets are retained from the previous Worker.
+This flag is not a proof that all config/bindings match: before upload, compare
+Wrangler's named environment with a fresh live binding/settings receipt, including
+KV, DO classes/namespaces, R2, vars, compatibility flags and routes/exposure. Stop
+on drift. Record the active version for rollback, then verify deployed code and
+all preserved settings before tenant-policy activation or bounded live tests.
+Never print secret values, change Infisical sync ownership, or substitute another
+credential when access is denied.
+
 ## Ship it
 
 ```bash

@@ -79,6 +79,29 @@ cd services/edge
 bunx wrangler deploy
 ```
 
+### Repository-managed production releases
+
+For an Edge-only update from a clean repository `master`, after its exact commit
+passes the complete CI workflow:
+
+```sh
+node scripts/release.mjs <x.y.z> --target=edge --dry-run
+node scripts/release.mjs <x.y.z> --target=edge
+./deploy.sh edge production --preserve-secrets
+```
+
+The annotated `edge-v<x.y.z>` tag and GitHub Release identify the reviewed source.
+This tag does not trigger CLI npm publishing and cannot authorize a docs/widget
+production deployment. No manifests or changelog sections are rewritten.
+The protected deploy rejects dirty source and untagged emergency overrides.
+
+Supply the existing Infisical deployment credentials and `PUSH_TOKENS_SECRET`
+in memory for the read-only readiness check. Preserve mode reads no `.env.local`
+and does not reassert Worker secrets; normal preflight, push and smoke checks
+remain. Compare live bindings, routes and compatibility settings with the named
+Wrangler environment before upload, record the rollback version, and verify
+preservation afterward. `--keep-vars` does not replace that comparison.
+
 ## 5. register the Telegram webhook
 
 point Telegram at your deployed Worker so owner replies reach it. the `secret_token` must

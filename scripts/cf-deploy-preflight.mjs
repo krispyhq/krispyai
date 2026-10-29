@@ -11,8 +11,13 @@
 import { readFileSync } from "node:fs";
 
 const env = process.argv[2];
-if (env !== "preview" && env !== "production") {
-  console.error("usage: node scripts/cf-deploy-preflight.mjs <preview|production>");
+const ENV_ONLY = process.argv[3] === "--env-only";
+if (
+  (env !== "preview" && env !== "production") ||
+  process.argv.length > 4 ||
+  (process.argv[3] && !ENV_ONLY)
+) {
+  console.error("usage: node scripts/cf-deploy-preflight.mjs <preview|production> [--env-only]");
   process.exit(2);
 }
 
@@ -20,7 +25,7 @@ if (env !== "preview" && env !== "production") {
 // bug that corrupts a secret by gluing a comment onto it). Best-effort: absent file is fine.
 const L = {};
 try {
-  for (const line of readFileSync(".env.local", "utf8").split("\n")) {
+  for (const line of (ENV_ONLY ? "" : readFileSync(".env.local", "utf8")).split("\n")) {
     const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
     if (m) {
       let raw = m[2];

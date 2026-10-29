@@ -10,21 +10,27 @@
 // Semver, pre-1.0: new features = minor, fixes = patch. The widget is a bare
 // dependency-free widget.js (no package.json); its version is the repo tag.
 import { readFileSync, writeFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 
 const args = process.argv.slice(2);
 const DRY = args.includes("--dry-run");
+const EDGE_ONLY = args.includes("--target=edge");
 const version = args.find((a) => /^\d+\.\d+\.\d+$/.test(a));
-if (!version) {
-  console.error("usage: node scripts/release.mjs <x.y.z> [--dry-run]");
+if (
+  !version ||
+  args.filter((a) => /^\d+\.\d+\.\d+$/.test(a)).length !== 1 ||
+  args.some((a) => a !== version && a !== "--dry-run" && a !== "--target=edge")
+) {
+  console.error("usage: node scripts/release.mjs <x.y.z> [--target=edge] [--dry-run]");
   process.exit(2);
 }
-const tag = "v" + version;
+const tag = (EDGE_ONLY ? "edge-v" : "v") + version;
 const sh = (c) => execSync(c, { encoding: "utf8" }).trim();
 
 // ── guards ──────────────────────────────────────────────────────────────────
-if (sh("git rev-parse --abbrev-ref HEAD") !== "master") {
-  console.error("✘ releases are cut from master only.");
+const branch = sh("git rev-parse --abbrev-ref HEAD");
+if (branch !== "master" && !(EDGE_ONLY && branch === "HEAD")) {
+  console.error("✘ releases require master (Edge also permits its exact detached commit).");
   process.exit(1);
 }
 // Only TRACKED changes block a release; untracked local cruft (.env.local,
@@ -55,6 +61,69 @@ if (!m || !m[1].trim()) {
 const newCl = cl.replace("## [Unreleased]\n", `## [Unreleased]\n\n## [${version}] — ${date}\n`);
 // The release notes for the GitHub Release = just this version's section.
 const notes = m[1].trim();
+
+// Edge-only releases tag the already-reviewed commit. No metadata commit,
+// manifest bump, CLI publication or hook bypass. The CLI workflow matches v*,
+// not edge-v*. Keep the full release path below unchanged.
+if (EDGE_ONLY) {
+  if (sh("git status --porcelain")) throw Error("Edge release requires a clean checkout");
+  const head = sh("git rev-parse HEAD");
+  console.log(`\n→ Edge-only release ${tag} at ${head}${DRY ? " [dry-run]" : ""}`);
+  console.log("  No manifests or CHANGELOG are rewritten; release notes snapshot [Unreleased].");
+  if (DRY) process.exit(0);
+  const remoteHead = sh("git ls-remote origin refs/heads/master").split(/\s+/)[0];
+  if (remoteHead !== head) throw Error("Edge release must match current origin/master");
+  const runs = JSON.parse(
+    execFileSync(
+      "gh",
+      [
+        "run",
+        "list",
+        "--workflow",
+        "ci.yml",
+        "--branch",
+        "master",
+        "--event",
+        "push",
+        "--commit",
+        head,
+        "--limit",
+        "1",
+        "--json",
+        "headSha,status,conclusion",
+      ],
+      { encoding: "utf8" },
+    ),
+  );
+  if (
+    runs.length !== 1 ||
+    runs[0].headSha !== head ||
+    runs[0].status !== "completed" ||
+    runs[0].conclusion !== "success"
+  ) {
+    throw Error("Exact master commit must pass the complete CI workflow before an Edge release");
+  }
+  execFileSync("git", ["tag", "-a", tag, "-m", `Edge-only ${tag}; source ${head}`], {
+    stdio: "inherit",
+  });
+  execFileSync("git", ["push", "origin", `refs/tags/${tag}`], { stdio: "inherit" });
+  execFileSync(
+    "gh",
+    [
+      "release",
+      "create",
+      tag,
+      "--verify-tag",
+      "--title",
+      `Edge ${version}`,
+      "--notes",
+      `Edge Worker only; source ${head}. No CLI, widget or docs publication.\n\n${notes}`,
+    ],
+    { stdio: "inherit" },
+  );
+  console.log(`✔ released ${tag}; eligible for Edge deployment only`);
+  process.exit(0);
+}
 
 // ── apply ─────────────────────────────────────────────────────────────────────
 const bumped = MANIFESTS.map((f) => {

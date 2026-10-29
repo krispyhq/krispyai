@@ -12,6 +12,11 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Added
 
+- Edge-only release tags on exact CI-passing master commits, without CLI npm
+  publication or manifest changes. Edge deployment can preserve existing
+  Infisical-managed secrets while retaining preflight and read-only push checks;
+  the protected mode rejects dirty checkouts and untagged overrides.
+
 - Opt-in, server-only reply policy for current-message English/Hebrew selection
   and validation, plus invitation-only public pricing. History context is preserved while
   detected offer-price spans are masked in model copies without deleting stored

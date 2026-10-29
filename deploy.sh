@@ -12,8 +12,13 @@ cd "$(dirname "$0")"
 
 TARGET="${1:-}"
 ENV="${2:-}"
+MODE="${3:-}"
 case "$TARGET" in edge | docs | widget) ;; *) echo "usage: ./deploy.sh <edge|docs|widget> <preview|production>" >&2; exit 2 ;; esac
 case "$ENV" in preview | production) ;; *) echo "usage: ./deploy.sh <edge|docs|widget> <preview|production>" >&2; exit 2 ;; esac
+if [ "$#" -gt 3 ] || { [ -n "$MODE" ] && { [ "$MODE" != --preserve-secrets ] || [ "$TARGET" != edge ]; }; }; then
+  echo "Only Edge accepts the optional --preserve-secrets flag." >&2
+  exit 2
+fi
 
 # Production ships TAGGED RELEASES only. `git describe --exact-match` succeeds
 # only when HEAD is a `v*` tag, so a prod deploy is always a cut, changelog'd,
@@ -21,13 +26,19 @@ case "$ENV" in preview | production) ;; *) echo "usage: ./deploy.sh <edge|docs|w
 #   node scripts/release.mjs <x.y.z>        (see RELEASING.md)
 # Break-glass for a genuine hotfix: ALLOW_UNTAGGED_DEPLOY=1 ./deploy.sh … production
 if [ "$ENV" = production ]; then
-  if REL_TAG="$(git describe --exact-match --tags --match 'v*' HEAD 2>/dev/null)"; then
+  if [ "$TARGET" = edge ] && [ -n "$(git status --porcelain)" ]; then
+    echo "✘ Edge production deploy requires a clean checkout, including untracked source." >&2
+    exit 1
+  fi
+  TAG_ARGS=(--match 'v*')
+  [ "$TARGET" = edge ] && TAG_ARGS+=(--match 'edge-v*')
+  if REL_TAG="$(git describe --exact-match --tags "${TAG_ARGS[@]}" HEAD 2>/dev/null)"; then
     echo "→ releasing $REL_TAG to production"
-  elif [ "${ALLOW_UNTAGGED_DEPLOY:-}" = 1 ]; then
+  elif [ "$MODE" != --preserve-secrets ] && [ "${ALLOW_UNTAGGED_DEPLOY:-}" = 1 ]; then
     echo "⚠ ALLOW_UNTAGGED_DEPLOY=1 — shipping an UNTAGGED commit to production (break-glass)." >&2
   else
     echo "✘ production deploys ship a tagged release only — HEAD ($(git rev-parse --short HEAD)) is not a v* tag." >&2
-    echo "  Cut one first:  node scripts/release.mjs <x.y.z>   (see RELEASING.md)" >&2
+    echo "  Cut one first: node scripts/release.mjs <x.y.z> [--target=edge] (see RELEASING.md)" >&2
     echo "  Emergency hotfix:  ALLOW_UNTAGGED_DEPLOY=1 ./deploy.sh $TARGET production" >&2
     exit 1
   fi
@@ -35,13 +46,21 @@ fi
 
 # Source Infisical-fed creds. `set -a` exports every var so wrangler + child scripts see them.
 set -a
-[ -f .env.local ] && . .env.local
+if [ "$MODE" != --preserve-secrets ] && [ -f .env.local ]; then . .env.local; fi
 set +a
 
 BUN="${BUN:-bun}"
 
 # 1) Preflight — assert CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID (blocks on missing).
-node scripts/cf-deploy-preflight.mjs "$ENV"
+if [ "$MODE" = --preserve-secrets ]; then
+  node scripts/cf-deploy-preflight.mjs "$ENV" --env-only
+  if [ "$ENV" = production ] && [ -z "${PUSH_TOKENS_SECRET:-}" ]; then
+    echo "✘ PUSH_TOKENS_SECRET is required in the environment for the existing read-only push check." >&2
+    exit 1
+  fi
+else
+  node scripts/cf-deploy-preflight.mjs "$ENV"
+fi
 
 # The deployed base URL to smoke. Prod defaults to the krispyai.com custom domains
 # (attached in the CF dashboard after first deploy — see AGENTS.md §11). Override any
@@ -61,12 +80,19 @@ url_for() {
 case "$TARGET" in
   edge)
     echo "→ deploy edge ($ENV)"
-    ( cd services/edge && "$BUN" x wrangler deploy --env "$ENV" )
+    if [ "$MODE" = --preserve-secrets ]; then
+      # Existing Infisical-managed secrets stay in Cloudflare. Only deployment
+      # credentials and the existing read-only push-check credential are supplied
+      # by the caller; runtime values are never reasserted by this mode.
+      ( cd services/edge && "$BUN" x wrangler deploy --env "$ENV" --keep-vars )
+    else
+      ( cd services/edge && "$BUN" x wrangler deploy --env "$ENV" )
+    fi
     # Re-assert the Worker's secrets from the Infisical-fed .env.local on every deploy
     # (after deploy — the Worker must exist; before smoke — smoke tests WITH secrets).
     # A new bundle reading a secret the Worker never received fails closed silently;
     # syncing here means code + secrets can't drift apart.
-    node scripts/sync-edge-secrets.mjs "$ENV"
+    if [ "$MODE" != --preserve-secrets ]; then node scripts/sync-edge-secrets.mjs "$ENV"; fi
     if [ "$ENV" = production ]; then
       node scripts/check-hosted-push.mjs
     fi

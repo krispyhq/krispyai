@@ -51,6 +51,14 @@ Copy `.env.example` → `.env.local`, fill it in. Keep it clean — **strip inli
 - **Deploy creds** (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`) are fed from Infisical into a git-ignored `.env.local`, which [`deploy.sh`](../deploy.sh) sources (`set -a; . .env.local; set +a`) and [`scripts/cf-deploy-preflight.mjs`](../scripts/cf-deploy-preflight.mjs) asserts are present before any `wrangler deploy`. They are **never** committed and **never** placed in GitHub Actions — deploy is Tilt + wrangler, not CI.
 - The API token needs: **Workers Scripts:Edit**, **Cloudflare Pages:Edit**, **Workers KV Storage:Edit** (Durable Objects are covered by Workers Scripts).
 
+For code-only Edge releases, `./deploy.sh edge production --preserve-secrets`
+uses existing deployment credentials supplied in memory, never reads `.env.local`,
+and skips secret reassertion. Supply the existing `PUSH_TOKENS_SECRET` for the
+read-only post-deploy check; it is checked for presence before uploading. The
+mode retains preflight, tagged-release and smoke gates and does not change
+Infisical ownership. Compare all live bindings/configuration before and after
+release; `--keep-vars` alone is not a complete configuration-preservation check.
+
 ## Rules
 
 - **Bindings are not secrets** (KV, Durable Objects) — they live in `wrangler.toml` / the Cloudflare project config, never in Infisical.
