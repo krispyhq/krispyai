@@ -297,3 +297,7 @@ is not retried on later turns, so conversation traffic cannot spam operators.
 A signed device build, notification permission, registered device token, and
 valid platform push credentials are also required; simulator chat tests do not
 prove notification delivery. Self-hosted installations may leave these unset.
+
+`POST /api/tenant/config` rejects malformed `replyPolicy` with HTTP 400
+`invalid_reply_policy`. It remains secret-authenticated and server-only; `/api/chat`
+accepts no invitation eligibility or reply-policy override. See [tenant config](/docs/reference/tenant-config#public-chat-reply-policy-opt-in).

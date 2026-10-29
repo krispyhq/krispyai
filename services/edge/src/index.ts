@@ -1,3 +1,4 @@
+import { validReplyPolicy } from "./reply-policy";
 // @krispy/edge — the whole live-chat-with-human-handoff backend in one Worker.
 //
 // One Worker (not Pages Functions + a separate companion Worker) because there's
@@ -757,6 +758,7 @@ async function handleChat(
       // Ring-derived (or seed) history in; chatFlow applies the sliding window +
       // counts turns (chokepoint).
       history,
+      replyPolicy: tenant?.replyPolicy,
       maxHistoryMsgs: numEnv(env.MAX_HISTORY_MSGS),
       maxAiTurns: numEnv(env.MAX_AI_TURNS),
       ai: async (messages) => {
@@ -1933,6 +1935,8 @@ const AVATAR_SCHEME = /^(https:\/\/|data:image\/(png|webp|jpeg);base64,)/;
 function tenantConfigCapError(
   cfg: Partial<TenantConfig>,
 ): { error: string; status: number } | null {
+  if (cfg.replyPolicy !== undefined && !validReplyPolicy(cfg.replyPolicy))
+    return { error: "invalid_reply_policy", status: 400 };
   if (cfg.visitorIdentity !== undefined) {
     const identity = cfg.visitorIdentity;
     if (

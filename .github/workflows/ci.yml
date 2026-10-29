@@ -42,7 +42,7 @@ jobs:
 
       # Build gate — compile every workspace that ships a build artifact, so a broken
       # build fails the PR (not the deploy). The docs site (apps/docs) is a standalone
-      # Next.js/Fumadocs app with its OWN bun.lockb, NOT part of the root bun workspace,
+      # Next.js/Fumadocs app with its OWN bun.lock, NOT part of the root bun workspace,
       # so it installs + builds separately. Guarded on presence: a branch that predates
       # the docs merge simply skips it rather than failing.
       - name: Build (docs site)

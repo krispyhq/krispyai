@@ -410,3 +410,6 @@ The claim records one attempt, so a failed delivery is not retried on later turn
 A signed device build, notification permission, registered device token, and
 valid platform push credentials are also required; simulator chat tests do not
 prove notification delivery. Self-hosted installations may leave these unset.
+
+Optional server-side public chat language and pricing guards are documented in
+[`services/edge/README.md`](services/edge/README.md#public-chat-reply-policy-opt-in).

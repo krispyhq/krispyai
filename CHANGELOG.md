@@ -10,6 +10,28 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in, server-only reply policy for current-message English/Hebrew selection
+  and validation, plus invitation-only public pricing. History context is preserved while
+  detected offer-price spans are masked in model copies without deleting stored
+  chats. Attributed price clauses are withheld before display; user budgets,
+  dates and payment-access explanations remain answerable. Language mismatch
+  alone does not initiate human handoff.
+  Ambiguous languages/obfuscation remain limitations; no deployment or tenant
+  activation is included in this change.
+
+### Fixed
+
+- Patch vulnerable development/CLI dependencies: happy-dom 21.0.4, oxfmt
+  0.67.0 (with tinypool 2.1.2) and sharp 0.35.5. Keep the Edge Worker
+  self-contained with no new runtime dependency.
+- Move the standalone docs app to stable Next.js 16.4.1 and patched PostCSS
+  and transitive dependencies while retaining its Fumadocs versions. Commit
+  the text lockfile so the existing recursive vulnerability gate scans docs.
+  Use the supported webpack static-export build with normal type checks;
+  no scanner exclusions or security-gate changes.
+
 ## [0.4.1] — 2026-09-30
 
 ### Fixed

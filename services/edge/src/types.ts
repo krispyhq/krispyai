@@ -132,6 +132,8 @@ export interface KbSuggestion {
 }
 
 export interface TenantConfig {
+  /** Server-only, opt-in public chat disclosure and EN/HE reply guard. */
+  replyPolicy?: import("./reply-policy").ReplyPolicy;
   /** Optional name prompt after a visitor has started chatting; never blocks a message. */
   visitorIdentity?: {
     enabled?: boolean;
